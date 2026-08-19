@@ -1,15 +1,56 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
+import type { AudioDeviceServicePort, AudioDeviceSnapshot } from '../audio/AudioDeviceService'
+import type { StereoAudioPlayerPort } from '../audio/StereoAudioPlayer'
 import { FaceToFaceController } from '../face/FaceToFaceController'
 import { DeterministicMockTranslationPort } from '../translation/TranslationPort'
 import { FaceToFacePage } from './FaceToFacePage'
+
+const readyDevices: AudioDeviceSnapshot = {
+  inputDevices: [{ deviceId: 'mic', groupId: '', kind: 'audioinput', label: 'MacBook Microphone' }],
+  outputDevices: [{ deviceId: 'headphones', groupId: '', kind: 'audiooutput', label: 'AirPods' }],
+  selectedInputDeviceId: 'mic',
+  selectedOutputDeviceId: 'headphones',
+  microphonePermissionGranted: true,
+  outputDisconnected: false,
+  errorMessage: null,
+}
+
+function createReadyDeviceService(): AudioDeviceServicePort {
+  return {
+    getSnapshot: () => readyDevices,
+    subscribe: (listener) => {
+      listener(readyDevices)
+      return () => undefined
+    },
+    requestPermission: async () => undefined,
+    refreshDevices: async () => undefined,
+    selectInput: async () => undefined,
+    selectOutput: async () => undefined,
+    clearOutputSelection: () => undefined,
+    dispose: () => undefined,
+  }
+}
+
+function createAudioPlayer(supportsOutputSelection = true): StereoAudioPlayerPort {
+  return {
+    supportsOutputSelection,
+    selectOutput: async () => undefined,
+    playEarTest: async () => undefined,
+    stop: () => undefined,
+    reset: () => undefined,
+    dispose: () => undefined,
+  }
+}
 
 function renderPage(): void {
   render(
     <FaceToFacePage
       controller={new FaceToFaceController(new DeterministicMockTranslationPort())}
       onBack={() => undefined}
+      deviceService={createReadyDeviceService()}
+      audioPlayer={createAudioPlayer()}
     />,
   )
 }
@@ -83,6 +124,86 @@ describe('FaceToFacePage', () => {
     expect(screen.getByText('RIGHT · 右耳').parentElement).toHaveTextContent('中文')
 
     await user.click(screen.getByRole('button', { name: '测试左耳' }))
-    expect(screen.getByRole('button', { name: /测试左耳/ })).toHaveTextContent('✓ 测试左耳')
+    expect(screen.getByRole('button', { name: /左耳正常/ })).toHaveTextContent('✓ 左耳正常')
+  })
+
+  it('fails closed instead of playing an ear test through the default output', async () => {
+    const user = userEvent.setup()
+    const playEarTest = vi.fn(async () => undefined)
+    render(
+      <FaceToFacePage
+        controller={new FaceToFaceController(new DeterministicMockTranslationPort())}
+        onBack={() => undefined}
+        deviceService={createReadyDeviceService()}
+        audioPlayer={{
+          ...createAudioPlayer(false),
+          playEarTest,
+        }}
+      />,
+    )
+
+    expect(screen.getByRole('button', { name: '测试左耳' })).toBeDisabled()
+    await user.selectOptions(screen.getByLabelText('输出设备'), 'headphones')
+
+    expect(playEarTest).not.toHaveBeenCalled()
+    expect(await screen.findByRole('alert')).toHaveTextContent('不能播放到默认扬声器')
+  })
+
+  it('does not mark an ear test as passed when its output disappears while playback is pending', async () => {
+    let deviceListener: ((snapshot: AudioDeviceSnapshot) => void) | undefined
+    let resolveEarTest: (() => void) | undefined
+    const deviceService: AudioDeviceServicePort = {
+      ...createReadyDeviceService(),
+      subscribe: (listener) => {
+        deviceListener = listener
+        listener(readyDevices)
+        return () => undefined
+      },
+    }
+    const audioPlayer = {
+      ...createAudioPlayer(),
+      playEarTest: vi.fn(() => new Promise<void>((resolve) => { resolveEarTest = resolve })),
+      reset: vi.fn(),
+    }
+    render(
+      <FaceToFacePage
+        controller={new FaceToFaceController(new DeterministicMockTranslationPort())}
+        onBack={() => undefined}
+        deviceService={deviceService}
+        audioPlayer={audioPlayer}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: '测试左耳' }))
+    deviceListener?.({
+      ...readyDevices,
+      outputDevices: [],
+      selectedOutputDeviceId: null,
+      outputDisconnected: true,
+    })
+    resolveEarTest?.()
+
+    await waitFor(() => expect(audioPlayer.reset).toHaveBeenCalledOnce())
+    await waitFor(() => expect(screen.getAllByText('耳机已断开，请重新连接。').length).toBeGreaterThan(0))
+    expect(screen.getByRole('button', { name: '测试左耳' })).toBeDisabled()
+  })
+
+  it('releases the audio player when the page unmounts', () => {
+    const audioPlayer = {
+      ...createAudioPlayer(),
+      dispose: vi.fn(),
+    }
+    const { unmount } = render(
+      <FaceToFacePage
+        controller={new FaceToFaceController(new DeterministicMockTranslationPort())}
+        onBack={() => undefined}
+        deviceService={createReadyDeviceService()}
+        audioPlayer={audioPlayer}
+      />,
+    )
+
+    unmount()
+
+    expect(audioPlayer.dispose).toHaveBeenCalledOnce()
   })
 })

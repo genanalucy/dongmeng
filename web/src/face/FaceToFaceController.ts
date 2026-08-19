@@ -153,6 +153,13 @@ export class FaceToFaceController {
     this.emit()
   }
 
+  public reportExternalError(message: string): void {
+    this.state = 'error'
+    this.activeSide = null
+    this.errorMessage = message
+    this.emit()
+  }
+
   public swapLanguages(): boolean {
     if (this.state !== 'ready') {
       return false

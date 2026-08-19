@@ -54,8 +54,18 @@ h2 { margin-bottom: 0; }
 .ptt-button small { opacity: .85; }
 .half-duplex-note { margin: 0; text-align: center; color: #486581; font-weight: 700; }
 .error-message { padding: 12px 16px; color: #8a1c1c; background: #fee2e2; border-radius: 10px; }
-.subtitle-panel, .ear-test-panel { padding: 22px; border: 1px solid #cbdce5; border-radius: 18px; background: #fff; }
+.subtitle-panel, .ear-test-panel, .device-panel { padding: 22px; border: 1px solid #cbdce5; border-radius: 18px; background: #fff; }
 .section-heading, .ear-test-panel { display: flex; align-items: center; justify-content: space-between; gap: 20px; }
+.device-panel { display: grid; gap: 16px; }
+.device-status { padding: 7px 10px; border-radius: 999px; font-size: .82rem; font-weight: 800; }
+.device-status.ready { color: #0f5132; background: #d9f7e7; }
+.device-status.pending { color: #7a4d00; background: #fff1cc; }
+.device-description { margin: 0; color: #486581; line-height: 1.55; }
+.device-actions { display: flex; flex-wrap: wrap; gap: 10px; }
+.device-select-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.device-select-grid label { display: grid; gap: 7px; color: #334e68; font-weight: 800; }
+.device-select-grid select { width: 100%; padding: 11px 12px; border: 1px solid #a9c1cf; border-radius: 10px; color: #102a43; background: #fff; font: inherit; }
+.fallback-message { margin: 0; padding: 12px 14px; color: #7a4d00; background: #fff8e5; border-radius: 10px; line-height: 1.5; }
 .empty-subtitle { margin: 20px 0 0; color: #627d98; }
 .subtitle-list { display: grid; gap: 14px; padding: 0; list-style: none; }
 .subtitle-turn { max-width: 76%; padding: 15px; border-radius: 12px; background: #eaf7f8; }
@@ -69,7 +79,7 @@ h2 { margin-bottom: 0; }
 
 @media (max-width: 720px) {
   .face-header, .section-heading, .ear-test-panel { align-items: flex-start; flex-direction: column; }
-  .mode-grid, .ptt-grid { grid-template-columns: 1fr; }
+  .mode-grid, .ptt-grid, .device-select-grid { grid-template-columns: 1fr; }
   .language-panel { gap: 10px; grid-template-columns: 1fr auto 1fr; }
   .participant-card { padding: 15px 8px; }
   .participant-card strong { font-size: 1.3rem; }
