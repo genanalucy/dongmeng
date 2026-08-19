@@ -1,1 +1,12 @@
 .codebase-memory/
+
+# Web dependencies and generated artifacts
+node_modules/
+dist/
+*.tsbuildinfo
+*.log
+
+# Local environment files; keep examples trackable
+.env
+.env.*
+!.env.example
