@@ -2,6 +2,22 @@ import { describe, expect, it } from 'vitest'
 import { FaceToFaceController, routeForSide } from './FaceToFaceController'
 import type { TranslationPort } from '../translation/TranslationPort'
 
+interface Deferred<T> {
+  readonly promise: Promise<T>
+  readonly resolve: (value: T) => void
+}
+
+function createDeferred<T>(): Deferred<T> {
+  let resolvePromise: ((value: T) => void) | undefined
+  const promise = new Promise<T>((resolve) => {
+    resolvePromise = resolve
+  })
+  return {
+    promise,
+    resolve: (value) => resolvePromise?.(value),
+  }
+}
+
 const port: TranslationPort = {
   translate: async (request) => ({
     sourceText: request.sourceText,
@@ -62,5 +78,47 @@ describe('FaceToFaceController', () => {
     controller.cancelActiveTurn()
 
     expect(controller.getSnapshot()).toMatchObject({ state: 'ready', activeSide: null })
+  })
+
+  it('ignores a translation that resolves after its active turn is cancelled', async () => {
+    const translation = createDeferred<Awaited<ReturnType<TranslationPort['translate']>>>()
+    const controller = new FaceToFaceController({ translate: () => translation.promise })
+    controller.startSpeaking('left')
+
+    const stopping = controller.stopSpeaking('过期的输入')
+    expect(controller.getSnapshot()).toMatchObject({ state: 'left_translating', activeSide: 'left' })
+    controller.cancelActiveTurn()
+    translation.resolve({
+      sourceText: '过期的输入',
+      translatedText: 'stale input',
+      playbackDurationMs: 1,
+    })
+    await stopping
+
+    expect(controller.getSnapshot()).toMatchObject({
+      state: 'ready',
+      activeSide: null,
+      subtitles: [],
+    })
+    controller.completePlayback()
+    expect(controller.getSnapshot()).toMatchObject({ state: 'ready', activeSide: null })
+  })
+
+  it('recovers from an external device error only through the explicit ready path', async () => {
+    const translation = createDeferred<Awaited<ReturnType<TranslationPort['translate']>>>()
+    const controller = new FaceToFaceController({ translate: () => translation.promise })
+    controller.startSpeaking('right')
+    const stopping = controller.stopSpeaking('stale turn')
+
+    controller.reportExternalError('耳机已断开')
+    expect(controller.getSnapshot()).toMatchObject({ state: 'error', activeSide: null })
+    expect(controller.recoverFromExternalError()).toBe(true)
+    expect(controller.getSnapshot()).toMatchObject({ state: 'ready', activeSide: null, errorMessage: null })
+
+    translation.resolve({ sourceText: 'stale turn', translatedText: '过期译文', playbackDurationMs: 1 })
+    await stopping
+
+    expect(controller.getSnapshot().subtitles).toEqual([])
+    expect(controller.startSpeaking('left')).toBe(true)
   })
 })

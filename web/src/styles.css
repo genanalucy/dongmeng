@@ -54,9 +54,18 @@ h2 { margin-bottom: 0; }
 .ptt-button small { opacity: .85; }
 .half-duplex-note { margin: 0; text-align: center; color: #486581; font-weight: 700; }
 .error-message { padding: 12px 16px; color: #8a1c1c; background: #fee2e2; border-radius: 10px; }
-.subtitle-panel, .ear-test-panel, .device-panel { padding: 22px; border: 1px solid #cbdce5; border-radius: 18px; background: #fff; }
+.subtitle-panel, .ear-test-panel, .device-panel, .microphone-diagnostics { padding: 22px; border: 1px solid #cbdce5; border-radius: 18px; background: #fff; }
 .section-heading, .ear-test-panel { display: flex; align-items: center; justify-content: space-between; gap: 20px; }
-.device-panel { display: grid; gap: 16px; }
+.device-panel, .microphone-diagnostics { display: grid; gap: 16px; }
+.capture-status { padding: 7px 10px; border-radius: 999px; color: #334e68; background: #e7eef3; font-size: .82rem; font-weight: 800; }
+.capture-status.capturing { color: #0f5132; background: #d9f7e7; }
+.capture-status.error { color: #8a1c1c; background: #fee2e2; }
+.capture-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 0; }
+.capture-metrics > div { min-width: 0; padding: 12px; border-radius: 10px; background: #f4f8fa; }
+.capture-metrics dt { color: #627d98; font-size: .78rem; font-weight: 800; }
+.capture-metrics dd { margin: 6px 0 0; font-weight: 800; }
+.audio-level-metric dd { display: flex; align-items: center; gap: 8px; }
+.audio-level-metric progress { width: 100%; accent-color: #087e8b; }
 .device-status { padding: 7px 10px; border-radius: 999px; font-size: .82rem; font-weight: 800; }
 .device-status.ready { color: #0f5132; background: #d9f7e7; }
 .device-status.pending { color: #7a4d00; background: #fff1cc; }
@@ -79,7 +88,7 @@ h2 { margin-bottom: 0; }
 
 @media (max-width: 720px) {
   .face-header, .section-heading, .ear-test-panel { align-items: flex-start; flex-direction: column; }
-  .mode-grid, .ptt-grid, .device-select-grid { grid-template-columns: 1fr; }
+  .mode-grid, .ptt-grid, .device-select-grid, .capture-metrics { grid-template-columns: 1fr; }
   .language-panel { gap: 10px; grid-template-columns: 1fr auto 1fr; }
   .participant-card { padding: 15px 8px; }
   .participant-card strong { font-size: 1.3rem; }

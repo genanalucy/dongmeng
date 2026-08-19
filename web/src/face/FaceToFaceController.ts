@@ -70,8 +70,10 @@ export class FaceToFaceController {
   private activeSide: Side | null = null
   private readonly subtitles: SubtitleTurn[] = []
   private errorMessage: string | null = null
+  private externalError = false
   private readonly listeners = new Set<Listener>()
   private turnCounter = 0
+  private turnGeneration = 0
 
   public constructor(private readonly translationPort: TranslationPort) {}
 
@@ -104,6 +106,7 @@ export class FaceToFaceController {
     this.activeSide = side
     this.state = speakingState[side]
     this.errorMessage = null
+    this.externalError = false
     this.emit()
     return true
   }
@@ -115,6 +118,7 @@ export class FaceToFaceController {
     }
 
     this.state = translatingState[side]
+    const generation = ++this.turnGeneration
     this.emit()
 
     try {
@@ -124,11 +128,18 @@ export class FaceToFaceController {
         targetLanguage: route.targetLanguage,
         sourceText,
       })
+      if (!this.isCurrentTurn(generation, side)) {
+        return
+      }
       this.addSubtitle(side, route, result)
     } catch (error: unknown) {
+      if (!this.isCurrentTurn(generation, side)) {
+        return
+      }
       this.state = 'error'
       this.activeSide = null
       this.errorMessage = error instanceof Error ? error.message : '模拟翻译发生未知错误。'
+      this.externalError = false
       this.emit()
     }
   }
@@ -144,6 +155,7 @@ export class FaceToFaceController {
   }
 
   public cancelActiveTurn(): void {
+    this.turnGeneration += 1
     if (this.activeSide === null) {
       return
     }
@@ -154,10 +166,25 @@ export class FaceToFaceController {
   }
 
   public reportExternalError(message: string): void {
+    this.turnGeneration += 1
     this.state = 'error'
     this.activeSide = null
     this.errorMessage = message
+    this.externalError = true
     this.emit()
+  }
+
+  public recoverFromExternalError(): boolean {
+    if (this.state !== 'error' || this.activeSide !== null || !this.externalError) {
+      return false
+    }
+
+    this.turnGeneration += 1
+    this.state = 'ready'
+    this.errorMessage = null
+    this.externalError = false
+    this.emit()
+    return true
   }
 
   public swapLanguages(): boolean {
@@ -168,6 +195,12 @@ export class FaceToFaceController {
     ;[this.leftLanguage, this.rightLanguage] = [this.rightLanguage, this.leftLanguage]
     this.emit()
     return true
+  }
+
+  private isCurrentTurn(generation: number, side: Side): boolean {
+    return this.turnGeneration === generation
+      && this.activeSide === side
+      && this.state === translatingState[side]
   }
 
   private addSubtitle(side: Side, route: TurnRoute, result: TranslationResult): void {

@@ -10,8 +10,15 @@ import {
   StereoAudioPlayer,
   type StereoAudioPlayerPort,
 } from '../audio/StereoAudioPlayer'
+import {
+  createBrowserMicrophoneEnvironment,
+  MicrophoneService,
+  type MicrophoneServicePort,
+  type MicrophoneSnapshot,
+} from '../audio/MicrophoneService'
 import { AudioDevicePanel } from '../components/AudioDevicePanel'
 import { EarTestPanel } from '../components/EarTestPanel'
+import { MicrophoneDiagnostics } from '../components/MicrophoneDiagnostics'
 import { PushToTalkButton } from '../components/PushToTalkButton'
 import { SubtitlePanel } from '../components/SubtitlePanel'
 import { FaceToFaceController, type FaceToFaceSnapshot } from '../face/FaceToFaceController'
@@ -22,6 +29,7 @@ interface FaceToFacePageProps {
   readonly onBack: () => void
   readonly deviceService?: AudioDeviceServicePort
   readonly audioPlayer?: StereoAudioPlayerPort
+  readonly microphoneService?: MicrophoneServicePort
 }
 
 const initialSnapshot: FaceToFaceSnapshot = {
@@ -40,6 +48,17 @@ const initialDeviceSnapshot: AudioDeviceSnapshot = {
   selectedOutputDeviceId: null,
   microphonePermissionGranted: false,
   outputDisconnected: false,
+  errorMessage: null,
+}
+
+const initialMicrophoneSnapshot: MicrophoneSnapshot = {
+  state: 'idle',
+  inputSampleRate: null,
+  astSampleRate: 16_000,
+  packetDurationMs: 80,
+  latestPacketBytes: 0,
+  packetCount: 0,
+  audioLevel: 0,
   errorMessage: null,
 }
 
@@ -65,11 +84,16 @@ function createDefaultAudioPlayer(): StereoAudioPlayerPort {
   return new StereoAudioPlayer(createBrowserAudioContextFactory())
 }
 
+function createDefaultMicrophoneService(): MicrophoneServicePort {
+  return new MicrophoneService(createBrowserMicrophoneEnvironment())
+}
+
 export function FaceToFacePage({
   controller,
   onBack,
   deviceService: providedDeviceService,
   audioPlayer: providedAudioPlayer,
+  microphoneService: providedMicrophoneService,
 }: FaceToFacePageProps): JSX.Element {
   const [deviceService] = useState<AudioDeviceServicePort>(
     () => providedDeviceService ?? createDefaultDeviceService(),
@@ -77,8 +101,18 @@ export function FaceToFacePage({
   const [audioPlayer] = useState<StereoAudioPlayerPort>(
     () => providedAudioPlayer ?? createDefaultAudioPlayer(),
   )
+  const [microphoneService] = useState<MicrophoneServicePort>(
+    () => providedMicrophoneService ?? createDefaultMicrophoneService(),
+  )
+  const ownsDeviceService = providedDeviceService === undefined
+  const ownsAudioPlayer = providedAudioPlayer === undefined
+  const ownsMicrophoneService = providedMicrophoneService === undefined
+  const deviceServiceLifecycleGeneration = useRef(0)
+  const audioPlayerLifecycleGeneration = useRef(0)
+  const microphoneServiceLifecycleGeneration = useRef(0)
   const [snapshot, setSnapshot] = useState<FaceToFaceSnapshot>(initialSnapshot)
   const [deviceSnapshot, setDeviceSnapshot] = useState<AudioDeviceSnapshot>(initialDeviceSnapshot)
+  const [microphoneSnapshot, setMicrophoneSnapshot] = useState<MicrophoneSnapshot>(initialMicrophoneSnapshot)
   const [testedEars, setTestedEars] = useState<ReadonlySet<Ear>>(() => new Set())
   const [deviceBusy, setDeviceBusy] = useState(false)
   const [deviceActionError, setDeviceActionError] = useState<string | null>(null)
@@ -90,15 +124,41 @@ export function FaceToFacePage({
   useEffect(() => controller.subscribe(setSnapshot), [controller])
 
   useEffect(() => {
+    const lifecycleGeneration = microphoneServiceLifecycleGeneration
+    const generation = ++lifecycleGeneration.current
+    const unsubscribe = microphoneService.subscribe(setMicrophoneSnapshot)
+    return () => {
+      unsubscribe()
+      if (!ownsMicrophoneService) {
+        return
+      }
+      queueMicrotask(() => {
+        if (lifecycleGeneration.current === generation) {
+          microphoneService.dispose()
+        }
+      })
+    }
+  }, [microphoneService, ownsMicrophoneService])
+
+  useEffect(() => {
+    const lifecycleGeneration = deviceServiceLifecycleGeneration
+    const generation = ++lifecycleGeneration.current
     const unsubscribe = deviceService.subscribe((nextSnapshot) => {
       deviceSnapshotRef.current = nextSnapshot
       setDeviceSnapshot(nextSnapshot)
     })
     return () => {
       unsubscribe()
-      deviceService.dispose()
+      if (!ownsDeviceService) {
+        return
+      }
+      queueMicrotask(() => {
+        if (lifecycleGeneration.current === generation) {
+          deviceService.dispose()
+        }
+      })
     }
-  }, [deviceService])
+  }, [deviceService, ownsDeviceService])
 
   const clearPlaybackTimer = useCallback(() => {
     if (playbackTimer.current !== null) {
@@ -110,11 +170,14 @@ export function FaceToFacePage({
   const cancelActiveTurn = useCallback(() => {
     playbackGeneration.current += 1
     clearPlaybackTimer()
+    microphoneService.stop()
     audioPlayer.stop()
     controller.cancelActiveTurn()
-  }, [audioPlayer, clearPlaybackTimer, controller])
+  }, [audioPlayer, clearPlaybackTimer, controller, microphoneService])
 
   useEffect(() => {
+    const lifecycleGeneration = audioPlayerLifecycleGeneration
+    const generation = ++lifecycleGeneration.current
     const onBlur = (): void => cancelActiveTurn()
     const onVisibilityChange = (): void => {
       if (document.visibilityState === 'hidden') {
@@ -129,9 +192,21 @@ export function FaceToFacePage({
       playbackGeneration.current += 1
       clearPlaybackTimer()
       audioPlayer.stop()
-      audioPlayer.dispose()
+      if (!ownsAudioPlayer) {
+        return
+      }
+      queueMicrotask(() => {
+        if (lifecycleGeneration.current === generation) {
+          audioPlayer.dispose()
+        }
+      })
     }
-  }, [audioPlayer, cancelActiveTurn, clearPlaybackTimer])
+  }, [audioPlayer, cancelActiveTurn, clearPlaybackTimer, ownsAudioPlayer])
+
+  const devicesReady = deviceSnapshot.microphonePermissionGranted
+    && deviceSnapshot.selectedInputDeviceId !== null
+    && deviceSnapshot.selectedOutputDeviceId !== null
+    && !deviceSnapshot.outputDisconnected
 
   useEffect(() => {
     if (!deviceSnapshot.outputDisconnected) {
@@ -140,6 +215,7 @@ export function FaceToFacePage({
     let active = true
     playbackGeneration.current += 1
     clearPlaybackTimer()
+    microphoneService.stop()
     audioPlayer.reset()
     queueMicrotask(() => {
       if (!active) {
@@ -152,7 +228,26 @@ export function FaceToFacePage({
     return () => {
       active = false
     }
-  }, [audioPlayer, clearPlaybackTimer, controller, deviceSnapshot.outputDisconnected])
+  }, [audioPlayer, clearPlaybackTimer, controller, deviceSnapshot.outputDisconnected, microphoneService])
+
+  useEffect(() => {
+    if (!devicesReady || !controller.recoverFromExternalError()) {
+      return
+    }
+    let active = true
+    playbackGeneration.current += 1
+    clearPlaybackTimer()
+    microphoneService.stop()
+    audioPlayer.stop()
+    queueMicrotask(() => {
+      if (active) {
+        setEarTestError(null)
+      }
+    })
+    return () => {
+      active = false
+    }
+  }, [audioPlayer, clearPlaybackTimer, controller, devicesReady, microphoneService])
 
   const runDeviceAction = useCallback(async (action: () => Promise<void>): Promise<void> => {
     setDeviceBusy(true)
@@ -206,9 +301,11 @@ export function FaceToFacePage({
   }, [audioPlayer, deviceService, runDeviceAction])
 
   const stopTurn = useCallback((side: Side) => {
-    if (snapshot.activeSide !== side) {
+    const current = controller.getSnapshot()
+    if (current.activeSide !== side || current.state !== `${side}_speaking`) {
       return
     }
+    microphoneService.stop()
     const generation = playbackGeneration.current
     void controller.stopSpeaking(demoPhrases[side]).then(() => {
       if (generation !== playbackGeneration.current) {
@@ -221,13 +318,19 @@ export function FaceToFacePage({
         playbackTimer.current = null
       }, 700)
     })
-  }, [controller, snapshot.activeSide])
+  }, [controller, microphoneService])
 
   const startTurn = (side: Side): void => {
-    if (!devicesReady) {
+    const selectedInputDeviceId = deviceSnapshot.selectedInputDeviceId
+    if (!devicesReady || selectedInputDeviceId === null || !controller.startSpeaking(side)) {
       return
     }
-    controller.startSpeaking(side)
+    void microphoneService.start(selectedInputDeviceId).catch((error: unknown) => {
+      microphoneService.stop()
+      controller.reportExternalError(
+        error instanceof Error ? error.message : '无法开始麦克风采集。',
+      )
+    })
   }
 
   const testEar = useCallback(async (ear: Ear): Promise<void> => {
@@ -255,10 +358,6 @@ export function FaceToFacePage({
     }
   }, [audioPlayer])
 
-  const devicesReady = deviceSnapshot.microphonePermissionGranted
-    && deviceSnapshot.selectedInputDeviceId !== null
-    && deviceSnapshot.selectedOutputDeviceId !== null
-    && !deviceSnapshot.outputDisconnected
   const leftSpeaking = snapshot.state === 'left_speaking'
   const rightSpeaking = snapshot.state === 'right_speaking'
   const controlsLocked = !devicesReady || snapshot.state !== 'ready' && !leftSpeaking && !rightSpeaking
@@ -316,6 +415,8 @@ export function FaceToFacePage({
         </div>
       </section>
 
+      <MicrophoneDiagnostics snapshot={microphoneSnapshot} />
+
       <section className="ptt-grid" aria-label="按住说话控制">
         <PushToTalkButton
           side="left"
@@ -325,6 +426,7 @@ export function FaceToFacePage({
           onPointerDown={() => startTurn('left')}
           onPointerUp={() => stopTurn('left')}
           onPointerCancel={() => stopTurn('left')}
+          onPointerLeave={() => stopTurn('left')}
         />
         <PushToTalkButton
           side="right"
@@ -334,6 +436,7 @@ export function FaceToFacePage({
           onPointerDown={() => startTurn('right')}
           onPointerUp={() => stopTurn('right')}
           onPointerCancel={() => stopTurn('right')}
+          onPointerLeave={() => stopTurn('right')}
         />
       </section>
 

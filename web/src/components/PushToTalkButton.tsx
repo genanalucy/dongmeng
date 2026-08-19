@@ -9,6 +9,7 @@ interface PushToTalkButtonProps {
   readonly onPointerDown: PointerEventHandler<HTMLButtonElement>
   readonly onPointerUp: PointerEventHandler<HTMLButtonElement>
   readonly onPointerCancel: PointerEventHandler<HTMLButtonElement>
+  readonly onPointerLeave: PointerEventHandler<HTMLButtonElement>
 }
 
 const languageLabel: Readonly<Record<LanguageCode, string>> = {
@@ -24,6 +25,7 @@ export function PushToTalkButton({
   onPointerDown,
   onPointerUp,
   onPointerCancel,
+  onPointerLeave,
 }: PushToTalkButtonProps): JSX.Element {
   const instruction = language === 'zh' ? '按住说话' : 'Hold to speak'
 
@@ -36,6 +38,7 @@ export function PushToTalkButton({
       onPointerDown={onPointerDown}
       onPointerUp={onPointerUp}
       onPointerCancel={onPointerCancel}
+      onPointerLeave={onPointerLeave}
     >
       <span className="ptt-ear">{side === 'left' ? 'LEFT EAR' : 'RIGHT EAR'}</span>
       <strong>{speaking ? '正在说话…' : instruction}</strong>
