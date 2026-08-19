@@ -1,0 +1,312 @@
+// Package server implements the loopback HTTP and Browser WebSocket boundary.
+package server
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"log/slog"
+	"net/http"
+	"strings"
+	"time"
+
+	"github.com/coder/websocket"
+	"github.com/coder/websocket/wsjson"
+
+	"translator-agent/internal/ast"
+)
+
+const (
+	DefaultAddress = "127.0.0.1:18765"
+	PCMFrameBytes  = 2560
+	QueueCapacity  = 50
+)
+
+var DefaultOrigins = map[string]struct{}{
+	"http://127.0.0.1:5173": {},
+	"http://localhost:5173": {},
+}
+
+type Options struct {
+	ASTClient ast.Client
+	Origins   map[string]struct{}
+	Logger    *slog.Logger
+}
+
+type Server struct {
+	astClient ast.Client
+	origins   map[string]struct{}
+	logger    *slog.Logger
+}
+
+func New(opts Options) *Server {
+	client := opts.ASTClient
+	if client == nil {
+		client = ast.UnavailableClient{}
+	}
+	origins := opts.Origins
+	if origins == nil {
+		origins = DefaultOrigins
+	}
+	logger := opts.Logger
+	if logger == nil {
+		logger = slog.Default()
+	}
+	return &Server{astClient: client, origins: origins, logger: logger}
+}
+
+func (s *Server) Handler() http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/health", health)
+	mux.HandleFunc("/ws/translate", s.translate)
+	return mux
+}
+
+func health(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = w.Write([]byte(`{"status":"ok","service":"translator-agent"}`))
+}
+
+func (s *Server) translate(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	if _, ok := s.origins[r.Header.Get("Origin")]; !ok {
+		http.Error(w, "forbidden origin", http.StatusForbidden)
+		return
+	}
+
+	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
+	if err != nil {
+		return
+	}
+	defer func() { _ = conn.CloseNow() }()
+
+	s.runConnection(context.Background(), conn)
+}
+
+type startMessage struct {
+	Type              string `json:"type"`
+	SessionID         string `json:"sessionId"`
+	Mode              string `json:"mode"`
+	SourceLanguage    string `json:"sourceLanguage"`
+	TargetLanguage    string `json:"targetLanguage"`
+	TargetAudioFormat string `json:"targetAudioFormat"`
+	TargetAudioRate   int    `json:"targetAudioRate"`
+}
+
+type finishMessage struct {
+	Type string `json:"type"`
+}
+
+type browserEvent struct {
+	Type    string `json:"type"`
+	Code    string `json:"code,omitempty"`
+	Message string `json:"message,omitempty"`
+	LogID   string `json:"logId,omitempty"`
+}
+
+func (s *Server) runConnection(parent context.Context, conn *websocket.Conn) {
+	ctx, cancel := context.WithCancel(parent)
+	defer cancel()
+
+	outgoing := make(chan browserEvent, 16)
+	writerDone := make(chan struct{})
+	go func() {
+		defer close(writerDone)
+		for event := range outgoing {
+			writeCtx, writeCancel := context.WithTimeout(ctx, 5*time.Second)
+			err := wsjson.Write(writeCtx, conn, event)
+			writeCancel()
+			if err != nil {
+				cancel()
+				return
+			}
+		}
+	}()
+	defer func() {
+		close(outgoing)
+		<-writerDone
+	}()
+
+	emit := func(event browserEvent) bool {
+		select {
+		case outgoing <- event:
+			return true
+		case <-ctx.Done():
+			return false
+		}
+	}
+
+	start, err := readStart(ctx, conn)
+	if err != nil {
+		s.logError("", "", "start_rejected", errorCode(err), "")
+		emit(browserEvent{Type: "error", Code: errorCode(err), Message: "invalid start request"})
+		return
+	}
+	direction := start.SourceLanguage + "→" + start.TargetLanguage
+	s.logError(start.SessionID, direction, "start_received", "", "")
+
+	sink := eventSink{emit: func(event ast.Event) {
+		emit(browserEvent{Type: event.Type, Code: event.Code, Message: event.Message, LogID: event.LogID})
+	}}
+	astSession, err := s.astClient.Start(ctx, start, sink)
+	if err != nil {
+		code := "VOLCENGINE_CONNECT_FAILED"
+		if errors.Is(err, ast.ErrCodecUnavailable) {
+			code = "AST_CODEC_UNAVAILABLE"
+		}
+		s.logError(start.SessionID, direction, "ast_start_failed", code, "")
+		emit(browserEvent{Type: "error", Code: code, Message: "translation service is unavailable"})
+		return
+	}
+	defer func() { _ = astSession.Close() }()
+
+	if !emit(browserEvent{Type: "ready"}) {
+		return
+	}
+	queue := make(chan []byte, QueueCapacity)
+	workerDone := make(chan struct{})
+	go func() {
+		defer close(workerDone)
+		for pcm := range queue {
+			if err := astSession.SendAudio(ctx, pcm); err != nil {
+				s.logError(start.SessionID, direction, "audio_send_failed", "VOLCENGINE_SESSION_FAILED", "")
+				emit(browserEvent{Type: "error", Code: "VOLCENGINE_SESSION_FAILED", Message: "translation session failed"})
+				cancel()
+				return
+			}
+		}
+	}()
+	queueClosed := false
+	defer func() {
+		if !queueClosed {
+			close(queue)
+			<-workerDone
+		}
+	}()
+
+	finished := false
+	for ctx.Err() == nil {
+		messageType, payload, err := conn.Read(ctx)
+		if err != nil {
+			return
+		}
+		switch messageType {
+		case websocket.MessageBinary:
+			if finished || len(payload) != PCMFrameBytes {
+				s.logError(start.SessionID, direction, "audio_rejected", "INVALID_PCM_FRAME", "")
+				emit(browserEvent{Type: "error", Code: "INVALID_PCM_FRAME", Message: "audio frame must be exactly 2560 bytes"})
+				return
+			}
+			select {
+			case queue <- payload:
+			case <-ctx.Done():
+				return
+			default:
+				s.logError(start.SessionID, direction, "queue_overflow", "AUDIO_QUEUE_OVERFLOW", "")
+				emit(browserEvent{Type: "error", Code: "AUDIO_QUEUE_OVERFLOW", Message: "audio queue is full"})
+				return
+			}
+		case websocket.MessageText:
+			if err := validateFinish(payload); err != nil {
+				s.logError(start.SessionID, direction, "message_rejected", errorCode(err), "")
+				emit(browserEvent{Type: "error", Code: errorCode(err), Message: "invalid session message"})
+				return
+			}
+			if finished {
+				continue
+			}
+			finished = true
+			close(queue)
+			<-workerDone
+			queueClosed = true
+			if err := astSession.Finish(ctx); err != nil {
+				s.logError(start.SessionID, direction, "finish_failed", "VOLCENGINE_SESSION_FAILED", "")
+				emit(browserEvent{Type: "error", Code: "VOLCENGINE_SESSION_FAILED", Message: "translation session failed"})
+				return
+			}
+			s.logError(start.SessionID, direction, "finish_sent", "", "")
+		default:
+			emit(browserEvent{Type: "error", Code: "INVALID_MESSAGE", Message: "unsupported WebSocket message"})
+			return
+		}
+	}
+}
+
+type eventSink struct{ emit func(ast.Event) }
+
+func (s eventSink) Emit(event ast.Event) { s.emit(event) }
+
+func readStart(ctx context.Context, conn *websocket.Conn) (ast.StartRequest, error) {
+	readCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	messageType, payload, err := conn.Read(readCtx)
+	if err != nil {
+		return ast.StartRequest{}, fmt.Errorf("invalid start: %w", err)
+	}
+	if messageType != websocket.MessageText {
+		return ast.StartRequest{}, errors.New("INVALID_START")
+	}
+	return parseStart(payload)
+}
+
+func parseStart(payload []byte) (ast.StartRequest, error) {
+	var message startMessage
+	decoder := json.NewDecoder(strings.NewReader(string(payload)))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&message); err != nil || decoder.Decode(&struct{}{}) != io.EOF {
+		return ast.StartRequest{}, errors.New("INVALID_START")
+	}
+	if message.Type != "start" || !validUUID(message.SessionID) || message.Mode != "s2s" ||
+		(message.SourceLanguage != "zh" && message.SourceLanguage != "en") ||
+		(message.TargetLanguage != "zh" && message.TargetLanguage != "en") ||
+		message.SourceLanguage == message.TargetLanguage || message.TargetAudioFormat != "pcm" || message.TargetAudioRate != 16000 {
+		return ast.StartRequest{}, errors.New("INVALID_START")
+	}
+	return ast.StartRequest{SessionID: message.SessionID, Mode: message.Mode, SourceLanguage: message.SourceLanguage, TargetLanguage: message.TargetLanguage, TargetAudioFormat: message.TargetAudioFormat, TargetAudioRate: message.TargetAudioRate}, nil
+}
+
+func validateFinish(payload []byte) error {
+	var message finishMessage
+	decoder := json.NewDecoder(strings.NewReader(string(payload)))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&message); err != nil || decoder.Decode(&struct{}{}) != io.EOF || message.Type != "finish" {
+		return errors.New("INVALID_MESSAGE")
+	}
+	return nil
+}
+
+func validUUID(value string) bool {
+	if len(value) != 36 {
+		return false
+	}
+	for i, char := range value {
+		switch i {
+		case 8, 13, 18, 23:
+			if char != '-' {
+				return false
+			}
+		default:
+			if !((char >= '0' && char <= '9') || (char >= 'a' && char <= 'f') || (char >= 'A' && char <= 'F')) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func errorCode(err error) string {
+	if err == nil {
+		return ""
+	}
+	return "INVALID_START"
+}
+
+func (s *Server) logError(session, direction, event, code, logID string) {
+	attrs := []any{"session", session, "direction", direction, "event", event, "error_code", code, "logId", logID}
+	s.logger.Info("agent event", attrs...)
+}
