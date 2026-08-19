@@ -18,11 +18,13 @@
 ## 3. 子 Agent 与 herdr 调度规则
 
 - 积极使用子 Agent，尤其是代码实现、测试、技术调查、官方文档查阅、独立审查等可拆分工作。
-- 调用子 Agent 时，优先通过 `herdr` 创建独立 workspace、tab 或 pane，将子 Agent 的执行过程展示出来；使用明确的 pane 别名，如 `coder`、`tests`、`researcher`、`reviewer`。
+- 调用子 Agent 时，优先通过 `herdr` 创建独立 workspace、tab 或 pane，将子 Agent 的执行过程展示出来。
+- 每个 `herdr` pane 必须使用清晰、唯一且能体现“模块 + 角色”的英文 kebab-case 别名，例如 `ast-researcher`、`phase1-architect`、`go-coder`、`go-tests`；禁止使用 `pane1`、`worker`、`agent` 等含义模糊的名称，也不得遗留匿名 pane。
 - 可并行且互不依赖的任务应并行调度，不得无意义串行等待；存在依赖时必须按依赖顺序执行。
 - 不要为了形式而调用子 Agent。单文件、低风险、答案明确的简单任务可由主 Agent直接完成。
 - 不得让多个 Agent 同时修改同一文件或同一区域；如需并行写代码，应划分互不重叠的文件范围或使用隔离 worktree。
-- 子 Agent 完成后，主 Agent 必须读取实际变更、检查 diff 并运行验证，不能只依据子 Agent 的总结宣布完成。
+- 子 Agent 完成后，主 Agent 必须先读取结果、检查实际变更和运行验证，不能只依据子 Agent 的总结宣布完成；结果已接收且不再需要交互后，必须立即用 `herdr stop` 关闭对应 pane，避免遗留已完成的子 Agent。
+- 只关闭由主 Agent 为当前任务创建且确认已完成的 pane；不得关闭用户创建、用途不明或仍在执行有效任务的 pane。
 
 ### 强制模型调度矩阵
 
