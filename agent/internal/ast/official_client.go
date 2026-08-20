@@ -312,17 +312,34 @@ func (e upstreamTransportError) Error() string { return e.err.Error() }
 func (e upstreamTransportError) Unwrap() error { return e.err }
 func (e upstreamTransportError) LogID() string { return e.logID }
 
+type upstreamSessionError struct {
+	status  int32
+	message string
+}
+
+func (e upstreamSessionError) Error() string {
+	return fmt.Sprintf("AST session failed with status %d: %s", e.status, e.message)
+}
+
 func upstreamFailure(response *astproto.TranslateResponse) error {
 	meta := response.GetResponseMeta()
 	if meta == nil {
 		return errors.New("AST session failed")
 	}
-	return fmt.Errorf("AST session failed with status %d: %s", meta.GetStatusCode(), meta.GetMessage())
+	return upstreamSessionError{status: meta.GetStatusCode(), message: meta.GetMessage()}
 }
 
 func (s *officialSession) fail(err error) {
 	s.setError(err)
-	s.sink.Emit(Event{Type: "error", Code: "VOLCENGINE_SESSION_FAILED", Message: "translation session failed", LogID: s.logID})
+	var sessionErr upstreamSessionError
+	status := int32(0)
+	if errors.As(err, &sessionErr) {
+		status = sessionErr.status
+	}
+	s.sink.Emit(Event{
+		Type: "error", Code: "VOLCENGINE_SESSION_FAILED", Message: "translation session failed",
+		LogID: s.logID, UpstreamStatus: status,
+	})
 }
 
 func (s *officialSession) setError(err error) {

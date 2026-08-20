@@ -1,7 +1,7 @@
 import { StrictMode } from 'react'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { AudioDeviceService, type AudioDeviceServicePort, type AudioDeviceSnapshot } from '../audio/AudioDeviceService'
 import { StereoAudioPlayer, type StereoAudioPlayerPort } from '../audio/StereoAudioPlayer'
 import { MicrophoneService, type MicrophoneServicePort, type MicrophoneSnapshot } from '../audio/MicrophoneService'
@@ -87,6 +87,8 @@ function renderPage(): void {
 }
 
 describe('FaceToFacePage', () => {
+  afterEach(() => vi.useRealTimers())
+
   it('locks the opposite PTT while a participant holds the button and shows a simulated turn', async () => {
     renderPage()
     const leftButton = screen.getByRole('button', { name: /左耳.*按住说话 中文/i })
@@ -125,6 +127,78 @@ describe('FaceToFacePage', () => {
     fireEvent.pointerUp(leftButton)
 
     expect(microphoneService.stop).toHaveBeenCalledOnce()
+  })
+
+  it('automatically finishes a PTT turn before the upstream session timeout', () => {
+    vi.useFakeTimers()
+    const microphoneService = {
+      ...createMicrophoneService(),
+      stop: vi.fn(),
+    }
+    const controller = new FaceToFaceController(new DeterministicMockTranslationPort())
+    render(
+      <FaceToFacePage
+        controller={controller}
+        onBack={() => undefined}
+        deviceService={createReadyDeviceService()}
+        audioPlayer={createAudioPlayer()}
+        microphoneService={microphoneService}
+      />,
+    )
+    fireEvent.pointerDown(screen.getByRole('button', { name: /左耳.*按住说话 中文/i }))
+
+    vi.advanceTimersByTime(25_000)
+
+    expect(microphoneService.stop).toHaveBeenCalled()
+    expect(controller.getSnapshot().state).not.toBe('left_speaking')
+  })
+
+  it('ignores a stale microphone start rejection after the turn has already ended', async () => {
+    let rejectStart: (reason: Error) => void = () => undefined
+    const microphoneService = {
+      ...createMicrophoneService(),
+      start: vi.fn(() => new Promise<'started'>((_resolve, reject) => { rejectStart = reject })),
+    }
+    const controller = new FaceToFaceController(new DeterministicMockTranslationPort())
+    render(
+      <FaceToFacePage
+        controller={controller}
+        onBack={() => undefined}
+        deviceService={createReadyDeviceService()}
+        audioPlayer={createAudioPlayer()}
+        microphoneService={microphoneService}
+      />,
+    )
+    const leftButton = screen.getByRole('button', { name: /左耳.*按住说话 中文/i })
+    fireEvent.pointerDown(leftButton)
+    fireEvent.pointerUp(leftButton)
+
+    rejectStart(new Error('late start failure'))
+    await Promise.resolve()
+
+    expect(controller.getSnapshot().state).not.toBe('error')
+  })
+
+  it('stops microphone capture when the controller terminates a speaking turn', async () => {
+    const microphoneService = {
+      ...createMicrophoneService(),
+      stop: vi.fn(),
+    }
+    const controller = new FaceToFaceController(new DeterministicMockTranslationPort())
+    render(
+      <FaceToFacePage
+        controller={controller}
+        onBack={() => undefined}
+        deviceService={createReadyDeviceService()}
+        audioPlayer={createAudioPlayer()}
+        microphoneService={microphoneService}
+      />,
+    )
+    fireEvent.pointerDown(screen.getByRole('button', { name: /左耳.*按住说话 中文/i }))
+
+    controller.reportExternalError('session terminated')
+
+    await waitFor(() => expect(microphoneService.stop).toHaveBeenCalled())
   })
 
   it('ends an active PTT turn and stops capture when the window loses focus', () => {

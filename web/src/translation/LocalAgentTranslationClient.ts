@@ -126,6 +126,9 @@ class LocalAgentTranslationSession implements TranslationSession {
   private finishedReceived = false
   private sourceFinal = ''
   private translationFinal = ''
+  private sourceLatest = ''
+  private translationLatest = ''
+  private hasTtsAudio = false
   private resolveDone: ((result: TranslationResult) => void) | null = null
   private rejectDone: ((reason: Error) => void) | null = null
   public readonly done: Promise<TranslationResult>
@@ -143,11 +146,25 @@ class LocalAgentTranslationSession implements TranslationSession {
     this.socket.binaryType = 'arraybuffer'
     this.socket.onopen = () => this.sendStart()
     this.socket.onmessage = (event) => this.handleMessage(event.data)
-    this.socket.onerror = () => this.fail('LOCAL_WS_DISCONNECTED', '无法连接本地翻译 Agent，请确认它正在运行。')
-    this.socket.onclose = () => {
-      if (!this.terminal) {
-        this.fail('LOCAL_WS_DISCONNECTED', '本地翻译 Agent 连接已断开。')
+    this.socket.onerror = () => {
+      if (this.finishedReceived) {
+        return
       }
+      if (this.hasUsableOutput()) {
+        this.beginPartialCompletion()
+        return
+      }
+      this.fail('LOCAL_WS_DISCONNECTED', '无法连接本地翻译 Agent，请确认它正在运行。')
+    }
+    this.socket.onclose = () => {
+      if (this.terminal || this.finishedReceived) {
+        return
+      }
+      if (this.hasUsableOutput()) {
+        this.beginPartialCompletion()
+        return
+      }
+      this.fail('LOCAL_WS_DISCONNECTED', '本地翻译 Agent 连接已断开。')
     }
   }
 
@@ -242,20 +259,16 @@ class LocalAgentTranslationSession implements TranslationSession {
           this.failProtocol('本地翻译 Agent 的字幕事件顺序无效。')
           return
         }
-        this.emit({
-          type: 'source_partial',
-          text: previewSegment(this.sourceFinal, event.text, this.request.sourceLanguage),
-        })
+        this.sourceLatest = previewSegment(this.sourceFinal, event.text, this.request.sourceLanguage)
+        this.emit({ type: 'source_partial', text: this.sourceLatest })
         return
       case 'translation_partial':
         if (!this.ready || this.finishedReceived) {
           this.failProtocol('本地翻译 Agent 的字幕事件顺序无效。')
           return
         }
-        this.emit({
-          type: 'translation_partial',
-          text: previewSegment(this.translationFinal, event.text, this.request.targetLanguage),
-        })
+        this.translationLatest = previewSegment(this.translationFinal, event.text, this.request.targetLanguage)
+        this.emit({ type: 'translation_partial', text: this.translationLatest })
         return
       case 'source_final':
         if (!this.ready || this.finishedReceived) {
@@ -263,7 +276,8 @@ class LocalAgentTranslationSession implements TranslationSession {
           return
         }
         this.sourceFinal = appendFinalSegment(this.sourceFinal, event.text, this.request.sourceLanguage)
-        this.emit({ type: 'source_final', text: this.sourceFinal })
+        this.sourceLatest = this.sourceFinal
+        this.emit({ type: 'source_final', text: this.sourceLatest })
         return
       case 'translation_final':
         if (!this.ready || this.finishedReceived) {
@@ -271,7 +285,8 @@ class LocalAgentTranslationSession implements TranslationSession {
           return
         }
         this.translationFinal = appendFinalSegment(this.translationFinal, event.text, this.request.targetLanguage)
-        this.emit({ type: 'translation_final', text: this.translationFinal })
+        this.translationLatest = this.translationFinal
+        this.emit({ type: 'translation_final', text: this.translationLatest })
         return
       case 'finished':
         if (!this.ready || this.finishedReceived) {
@@ -282,6 +297,10 @@ class LocalAgentTranslationSession implements TranslationSession {
         this.finishAfterPlaybackIsScheduled()
         return
       case 'error':
+        if (this.hasUsableOutput()) {
+          this.beginPartialCompletion()
+          return
+        }
         this.fail(event.code, userMessageFor(event.code, event.message), false)
     }
   }
@@ -296,6 +315,7 @@ class LocalAgentTranslationSession implements TranslationSession {
       return
     }
 
+    this.hasTtsAudio = true
     let playback: Promise<void>
     try {
       playback = this.ttsSink.play(pcm, this.request.targetEar)
@@ -309,7 +329,12 @@ class LocalAgentTranslationSession implements TranslationSession {
       this.finishAfterPlaybackIsScheduled()
     }, (error: unknown) => {
       this.pendingPlayback.delete(playback)
-      this.fail('TTS_PLAYBACK_FAILED', `TTS 播放失败：${describeError(error)}`)
+      this.fail(
+        'TTS_PLAYBACK_FAILED',
+        `TTS 播放失败：${describeError(error)}`,
+        true,
+        !this.finishedReceived,
+      )
     })
     this.emit({ type: 'tts_audio', pcm })
   }
@@ -321,8 +346,19 @@ class LocalAgentTranslationSession implements TranslationSession {
     this.terminal = true
     const event = { type: 'finished' } as const
     this.emit(event)
-    this.resolveDone?.({ sourceText: this.sourceFinal, translatedText: this.translationFinal })
+    this.resolveDone?.({ sourceText: this.sourceLatest, translatedText: this.translationLatest })
     this.socket.close(1000, 'finished')
+  }
+
+  private hasUsableOutput(): boolean {
+    return this.hasTtsAudio || this.sourceLatest.trim().length > 0 || this.translationLatest.trim().length > 0
+  }
+
+  private beginPartialCompletion(): void {
+    this.finishSent = true
+    this.finishedReceived = true
+    this.preReadyPackets.length = 0
+    this.finishAfterPlaybackIsScheduled()
   }
 
   private flushPreReadyPackets(): void {
@@ -368,15 +404,24 @@ class LocalAgentTranslationSession implements TranslationSession {
     this.fail('TRANSLATION_PROTOCOL_ERROR', message)
   }
 
-  private fail(code: TranslationErrorCode | string, message: string, close = true): void {
+  private fail(
+    code: TranslationErrorCode | string,
+    message: string,
+    close = true,
+    clearPlayback = true,
+  ): void {
     if (this.terminal) {
       return
     }
     this.terminal = true
     this.preReadyPackets.length = 0
-    this.ttsSink.clear()
+    if (clearPlayback) {
+      this.ttsSink.clear()
+    }
     const error = new TranslationClientError(code, message)
-    this.emit({ type: 'error', code, message })
+    this.emit(clearPlayback
+      ? { type: 'error', code, message }
+      : { type: 'error', code, message, preservePlayback: true })
     this.rejectDone?.(error)
     if (close) {
       this.socket.close(1011, code)

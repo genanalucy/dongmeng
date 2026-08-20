@@ -44,6 +44,10 @@ class FakeWebSocket implements WebSocketPort {
     this.onmessage?.(new MessageEvent('message', { data }))
   }
 
+  public failConnection(): void {
+    this.onerror?.(new Event('error'))
+  }
+
   public disconnect(): void {
     this.readyState = this.CLOSED
     this.onclose?.(new Event('close') as CloseEvent)
@@ -306,6 +310,73 @@ describe('LocalAgentTranslationClient', () => {
     resolvePlayback()
     await expect(session.done).resolves.toEqual({ sourceText: '', translatedText: '' })
     expect(socket.closeCalls).toEqual([{ code: 1000, reason: 'finished' }])
+  })
+
+  it('keeps usable subtitles and queued TTS when the upstream session later fails', async () => {
+    const socket = new FakeWebSocket()
+    const sink = new RecordingTtsSink()
+    const session = createClient(socket, sink).start({ sourceLanguage: 'zh', targetLanguage: 'en', targetEar: 'right' })
+    socket.open()
+    socket.receiveJson({ type: 'ready' })
+    socket.receiveJson({ type: 'source_final', message: '你好' })
+    socket.receiveJson({ type: 'translation_final', message: 'Hello' })
+    const pcm = new ArrayBuffer(4)
+    socket.receiveRaw(pcm)
+    socket.receiveJson({ type: 'error', code: 'VOLCENGINE_SESSION_FAILED' })
+    socket.disconnect()
+
+    await expect(session.done).resolves.toEqual({ sourceText: '你好', translatedText: 'Hello' })
+    expect(sink.packets).toEqual([{ pcm, targetEar: 'right' }])
+    expect(sink.clearCalls).toBe(0)
+  })
+
+  it('preserves usable output across the native onerror then onclose sequence', async () => {
+    const socket = new FakeWebSocket()
+    const sink = new RecordingTtsSink()
+    const session = createClient(socket, sink).start({ sourceLanguage: 'zh', targetLanguage: 'en', targetEar: 'right' })
+    socket.open()
+    socket.receiveJson({ type: 'ready' })
+    socket.receiveJson({ type: 'translation_final', message: 'Hello' })
+
+    socket.failConnection()
+    socket.disconnect()
+
+    await expect(session.done).resolves.toEqual({ sourceText: '', translatedText: 'Hello' })
+    expect(sink.clearCalls).toBe(0)
+  })
+
+  it('reports a playback rejection after partial completion without clearing other queued audio', async () => {
+    const socket = new FakeWebSocket()
+    let rejectPlayback: (reason: Error) => void = () => undefined
+    let clearCalls = 0
+    const sink: TtsPcmSink = {
+      play: () => new Promise<void>((_resolve, reject) => { rejectPlayback = reject }),
+      clear: () => { clearCalls += 1 },
+      isIdle: false,
+      whenIdle: async () => undefined,
+    }
+    const session = createClient(socket, sink).start({ sourceLanguage: 'zh', targetLanguage: 'en', targetEar: 'right' })
+    socket.open()
+    socket.receiveJson({ type: 'ready' })
+    socket.receiveRaw(new ArrayBuffer(2))
+    socket.receiveJson({ type: 'error', code: 'VOLCENGINE_SESSION_FAILED' })
+
+    rejectPlayback(new Error('output disconnected'))
+
+    await expect(session.done).rejects.toMatchObject({ code: 'TTS_PLAYBACK_FAILED' })
+    expect(clearCalls).toBe(0)
+  })
+
+  it('still fails when the upstream session produces no usable output', async () => {
+    const socket = new FakeWebSocket()
+    const sink = new RecordingTtsSink()
+    const session = createClient(socket, sink).start({ sourceLanguage: 'zh', targetLanguage: 'en', targetEar: 'right' })
+    socket.open()
+    socket.receiveJson({ type: 'ready' })
+    socket.receiveJson({ type: 'error', code: 'VOLCENGINE_SESSION_FAILED' })
+
+    await expect(session.done).rejects.toMatchObject({ code: 'VOLCENGINE_SESSION_FAILED' })
+    expect(sink.clearCalls).toBe(1)
   })
 
   it('turns a TTS sink failure into a terminal session error', async () => {

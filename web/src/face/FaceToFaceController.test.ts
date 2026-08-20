@@ -156,6 +156,36 @@ describe('FaceToFaceController', () => {
     expect(routeForSide('left', 'en', 'zh').listenerEar).toBe('right')
   })
 
+  it('keeps the shared playback queue for a playback-preserving terminal error', () => {
+    const port = new MockPort()
+    const playback = new DeferredPlayback()
+    const controller = new FaceToFaceController(port, playback)
+    controller.startSpeaking('left')
+    port.sessions[0].emit({ type: 'source_final', text: '你好' })
+
+    port.sessions[0].emit({
+      type: 'error', code: 'TTS_PLAYBACK_FAILED', message: '一个音频包播放失败', preservePlayback: true,
+    })
+
+    expect(controller.getSnapshot().state).toBe('error')
+    expect(controller.getSnapshot().subtitles).toHaveLength(1)
+    expect(playback.clearCalls).toBe(0)
+  })
+
+  it('preserves already displayed subtitles when the session later fails', () => {
+    const port = new MockPort()
+    const controller = new FaceToFaceController(port)
+    controller.startSpeaking('left')
+    port.sessions[0].emit({ type: 'source_final', text: '你好' })
+    port.sessions[0].emit({ type: 'translation_final', text: 'Hello' })
+
+    port.sessions[0].emit({ type: 'error', code: 'VOLCENGINE_SESSION_FAILED', message: '翻译服务会话失败，请重试。' })
+
+    expect(controller.getSnapshot()).toMatchObject({ state: 'error', activeSide: null })
+    expect(controller.getSnapshot().subtitles).toHaveLength(1)
+    expect(controller.getSnapshot().subtitles[0]).toMatchObject({ sourceText: '你好', translatedText: 'Hello' })
+  })
+
   it('returns to ready and cancels the active streaming session', () => {
     const port = new MockPort()
     const controller = new FaceToFaceController(port)

@@ -72,6 +72,8 @@ const initialMicrophoneSnapshot: MicrophoneSnapshot = {
   errorMessage: null,
 }
 
+const MAX_PTT_DURATION_MS = 25_000
+
 const demoPhrases: Readonly<Record<Side, string>> = {
   left: '你好，我叫李明。',
   right: 'Nice to meet you.',
@@ -140,6 +142,8 @@ export function FaceToFacePage({
   const [earTestError, setEarTestError] = useState<string | null>(null)
   const playbackTimer = useRef<number | null>(null)
   const playbackGeneration = useRef(0)
+  const captureGeneration = useRef(0)
+  const activeCaptureSide = useRef<Side | null>(null)
   const deviceSnapshotRef = useRef<AudioDeviceSnapshot>(initialDeviceSnapshot)
 
   useEffect(() => controller.subscribe(setSnapshot), [controller])
@@ -188,14 +192,30 @@ export function FaceToFacePage({
     }
   }, [])
 
-  const cancelActiveTurn = useCallback(() => {
-    playbackGeneration.current += 1
+  const stopCapture = useCallback(() => {
+    if (activeCaptureSide.current === null) {
+      return
+    }
+    activeCaptureSide.current = null
+    captureGeneration.current += 1
     clearPlaybackTimer()
     microphoneService.stop()
     packetSink.setSink(null)
+  }, [clearPlaybackTimer, microphoneService, packetSink])
+
+  useEffect(() => {
+    const side = activeCaptureSide.current
+    if (side !== null && controller.getSnapshot().state !== `${side}_speaking`) {
+      stopCapture()
+    }
+  }, [controller, snapshot.state, stopCapture])
+
+  const cancelActiveTurn = useCallback(() => {
+    playbackGeneration.current += 1
+    stopCapture()
     audioPlayer.stop()
     controller.cancelActiveTurn()
-  }, [audioPlayer, clearPlaybackTimer, controller, microphoneService, packetSink])
+  }, [audioPlayer, controller, stopCapture])
 
   useEffect(() => {
     const lifecycleGeneration = audioPlayerLifecycleGeneration
@@ -236,9 +256,7 @@ export function FaceToFacePage({
     }
     let active = true
     playbackGeneration.current += 1
-    clearPlaybackTimer()
-    microphoneService.stop()
-    packetSink.setSink(null)
+    stopCapture()
     audioPlayer.reset()
     queueMicrotask(() => {
       if (!active) {
@@ -251,7 +269,7 @@ export function FaceToFacePage({
     return () => {
       active = false
     }
-  }, [audioPlayer, clearPlaybackTimer, controller, deviceSnapshot.outputDisconnected, microphoneService, packetSink])
+  }, [audioPlayer, controller, deviceSnapshot.outputDisconnected, stopCapture])
 
   useEffect(() => {
     if (!devicesReady || !controller.recoverFromExternalError()) {
@@ -259,9 +277,7 @@ export function FaceToFacePage({
     }
     let active = true
     playbackGeneration.current += 1
-    clearPlaybackTimer()
-    microphoneService.stop()
-    packetSink.setSink(null)
+    stopCapture()
     audioPlayer.stop()
     queueMicrotask(() => {
       if (active) {
@@ -271,7 +287,7 @@ export function FaceToFacePage({
     return () => {
       active = false
     }
-  }, [audioPlayer, clearPlaybackTimer, controller, devicesReady, microphoneService, packetSink])
+  }, [audioPlayer, controller, devicesReady, stopCapture])
 
   const runDeviceAction = useCallback(async (action: () => Promise<void>): Promise<void> => {
     setDeviceBusy(true)
@@ -325,14 +341,14 @@ export function FaceToFacePage({
   }, [audioPlayer, deviceService, runDeviceAction])
 
   const stopTurn = useCallback((side: Side) => {
+    clearPlaybackTimer()
     const current = controller.getSnapshot()
     if (current.activeSide !== side || current.state !== `${side}_speaking`) {
       return
     }
-    microphoneService.stop()
-    packetSink.setSink(null)
+    stopCapture()
     void controller.stopSpeaking(demoPhrases[side])
-  }, [controller, microphoneService, packetSink])
+  }, [clearPlaybackTimer, controller, stopCapture])
 
   const startTurn = (side: Side): void => {
     const selectedInputDeviceId = deviceSnapshot.selectedInputDeviceId
@@ -343,10 +359,16 @@ export function FaceToFacePage({
     if (!controller.startSpeaking(side)) {
       return
     }
+    const generation = ++captureGeneration.current
+    activeCaptureSide.current = side
     packetSink.setSink({ push: (packet) => controller.pushAudio(packet) })
+    clearPlaybackTimer()
+    playbackTimer.current = window.setTimeout(() => stopTurn(side), MAX_PTT_DURATION_MS)
     void microphoneService.start(selectedInputDeviceId).catch((error: unknown) => {
-      microphoneService.stop()
-      packetSink.setSink(null)
+      if (captureGeneration.current !== generation) {
+        return
+      }
+      stopCapture()
       controller.reportExternalError(
         error instanceof Error ? error.message : '无法开始麦克风采集。',
       )

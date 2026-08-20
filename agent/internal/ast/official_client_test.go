@@ -256,7 +256,7 @@ func TestOfficialClientMapsSessionFailed(t *testing.T) {
 	}
 	sink.mu.Lock()
 	defer sink.mu.Unlock()
-	if len(sink.events) != 1 || sink.events[0].Type != "error" || sink.events[0].Code != "VOLCENGINE_SESSION_FAILED" || sink.events[0].LogID != "failed-log-id" {
+	if len(sink.events) != 1 || sink.events[0].Type != "error" || sink.events[0].Code != "VOLCENGINE_SESSION_FAILED" || sink.events[0].LogID != "failed-log-id" || sink.events[0].UpstreamStatus != 11200 {
 		t.Fatalf("unexpected SessionFailed mapping: %#v", sink.events)
 	}
 }

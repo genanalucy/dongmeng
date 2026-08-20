@@ -223,7 +223,7 @@ export class FaceToFaceController {
     }
     if (event.type === 'error') {
       this.turnGeneration += 1
-      this.failActiveTurn(event.message)
+      this.failActiveTurn(event.message, event.preservePlayback === true)
       return
     }
     if (event.type === 'source_partial' || event.type === 'source_final') {
@@ -283,9 +283,10 @@ export class FaceToFaceController {
     this.activeSubtitleID = null
   }
 
-  private failActiveTurn(message: string): void {
-    this.playback.clear()
-    this.discardActiveSubtitle()
+  private failActiveTurn(message: string, preservePlayback = false): void {
+    if (!preservePlayback) {
+      this.playback.clear()
+    }
     this.clearSession()
     this.state = 'error'
     this.activeSide = null

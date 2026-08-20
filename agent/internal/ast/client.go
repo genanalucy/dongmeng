@@ -53,11 +53,12 @@ type EventSink interface {
 // Event is a browser-safe AST outcome. Binary carries TTS PCM and is never
 // JSON-serialized. Details must never include credentials.
 type Event struct {
-	Type    string `json:"type"`
-	Code    string `json:"code,omitempty"`
-	Message string `json:"message,omitempty"`
-	LogID   string `json:"logId,omitempty"`
-	Binary  []byte `json:"-"`
+	Type           string `json:"type"`
+	Code           string `json:"code,omitempty"`
+	Message        string `json:"message,omitempty"`
+	LogID          string `json:"logId,omitempty"`
+	Binary         []byte `json:"-"`
+	UpstreamStatus int32  `json:"-"`
 }
 
 // UnavailableClient is the explicit safe default. It never claims the AST

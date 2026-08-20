@@ -23,7 +23,7 @@ export type TranslationSessionEvent =
   | { readonly type: 'translation_final'; readonly text: string }
   | { readonly type: 'tts_audio'; readonly pcm: ArrayBuffer }
   | { readonly type: 'finished' }
-  | { readonly type: 'error'; readonly code: string; readonly message: string }
+  | { readonly type: 'error'; readonly code: string; readonly message: string; readonly preservePlayback?: boolean }
 
 /** A single AST turn. Instances must never be shared by two PTT turns. */
 export interface TranslationSession {

@@ -167,7 +167,7 @@ func (s *Server) runConnection(parent context.Context, conn *websocket.Conn) {
 	var upstreamMu sync.Mutex
 	upstreamTerminal := false
 	sink := &eventSink{emit: func(event ast.Event) {
-		s.logError(start.SessionID, direction, "ast_"+event.Type, event.Code, event.LogID)
+		s.logASTEvent(start.SessionID, direction, event)
 		upstreamMu.Lock()
 		defer upstreamMu.Unlock()
 		if upstreamTerminal {
@@ -379,5 +379,19 @@ func errorCode(err error) string {
 
 func (s *Server) logError(session, direction, event, code, logID string) {
 	attrs := []any{"session", session, "direction", direction, "event", event, "error_code", code, "logId", logID}
+	s.logger.Info("agent event", attrs...)
+}
+
+func (s *Server) logASTEvent(session, direction string, event ast.Event) {
+	attrs := []any{
+		"session", session,
+		"direction", direction,
+		"event", "ast_" + event.Type,
+		"error_code", event.Code,
+		"logId", event.LogID,
+	}
+	if event.Type == "error" && event.UpstreamStatus != 0 {
+		attrs = append(attrs, "upstream_status", event.UpstreamStatus)
+	}
 	s.logger.Info("agent event", attrs...)
 }
