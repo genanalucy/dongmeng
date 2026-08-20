@@ -186,6 +186,9 @@ func (s *Server) runConnection(parent context.Context, conn *websocket.Conn) {
 			}
 			emitMessage(outgoingMessage{binary: append([]byte(nil), event.Binary...)})
 		case "source_partial", "source_final", "translation_partial", "translation_final":
+			if strings.TrimSpace(event.Message) == "" {
+				return
+			}
 			emit(browserEvent{Type: event.Type, Message: event.Message, LogID: event.LogID})
 		case "finished":
 			upstreamTerminal = true

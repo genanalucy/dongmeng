@@ -33,6 +33,8 @@ func (zeroTTSClient) Start(_ context.Context, _ ast.StartRequest, sink ast.Event
 }
 
 func (emittingClient) Start(_ context.Context, _ ast.StartRequest, sink ast.EventSink) (ast.Session, error) {
+	sink.Emit(ast.Event{Type: "source_final", Message: ""})
+	sink.Emit(ast.Event{Type: "translation_final", Message: "   "})
 	sink.Emit(ast.Event{Type: "tts_start"})
 	sink.Emit(ast.Event{Type: "tts_audio", Binary: []byte{1, 2, 3, 4}})
 	sink.Emit(ast.Event{Type: "tts_end"})
@@ -250,7 +252,7 @@ func TestQueueOverflow(t *testing.T) {
 	close(fake.session.blockAudio)
 }
 
-func TestUpstreamEventsUseOneOrderedTextAndBinaryWriter(t *testing.T) {
+func TestUpstreamEventsUseOneOrderedTextAndBinaryWriterAndSkipEmptySubtitles(t *testing.T) {
 	ts := testHTTPServer(emittingClient{})
 	defer ts.Close()
 	conn := dial(t, ts.URL, "http://localhost:5173")
