@@ -192,7 +192,7 @@ func TestOfficialClientHeadersRequestsAndEventMapping(t *testing.T) {
 	sink.mu.Lock()
 	events := append([]Event(nil), sink.events...)
 	sink.mu.Unlock()
-	wantTypes := []string{"source_partial", "source_final", "translation_partial", "translation_final", "tts_start", "tts_audio", "tts_end", "finished"}
+	wantTypes := []string{"source_partial", "source_final", "translation_partial", "translation_final", "tts_audio", "finished"}
 	if len(events) != len(wantTypes) {
 		t.Fatalf("mapped event count = %d, want %d: %#v", len(events), len(wantTypes), events)
 	}
@@ -203,12 +203,12 @@ func TestOfficialClientHeadersRequestsAndEventMapping(t *testing.T) {
 		if index < 4 && events[index].LogID != "test-log-id" {
 			t.Fatalf("text event[%d] has log ID %q", index, events[index].LogID)
 		}
-		if index >= 4 && index != 5 && events[index].LogID != "" {
+		if index >= 4 && index != 4 && events[index].LogID != "" {
 			t.Fatalf("control event[%d] must not expose extra JSON fields: %#v", index, events[index])
 		}
 	}
-	if string(events[5].Binary) != string([]byte{1, 2, 3, 4}) {
-		t.Fatalf("TTS binary = %v", events[5].Binary)
+	if string(events[4].Binary) != string([]byte{1, 2, 3, 4}) {
+		t.Fatalf("TTS binary = %v", events[4].Binary)
 	}
 }
 

@@ -21,8 +21,6 @@ export type TranslationSessionEvent =
   | { readonly type: 'source_final'; readonly text: string }
   | { readonly type: 'translation_partial'; readonly text: string }
   | { readonly type: 'translation_final'; readonly text: string }
-  | { readonly type: 'tts_start' }
-  | { readonly type: 'tts_end' }
   | { readonly type: 'tts_audio'; readonly pcm: ArrayBuffer }
   | { readonly type: 'finished' }
   | { readonly type: 'error'; readonly code: string; readonly message: string }

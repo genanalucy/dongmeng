@@ -170,74 +170,67 @@ describe('LocalAgentTranslationClient', () => {
     socket.receiveJson({ type: 'source_final', message: '你好' })
     socket.receiveJson({ type: 'translation_partial', message: 'Hel' })
     socket.receiveJson({ type: 'translation_final', message: 'Hello' })
-    socket.receiveJson({ type: 'tts_start' })
     const pcm = new ArrayBuffer(4)
     socket.receiveRaw(pcm)
-    socket.receiveJson({ type: 'tts_end' })
     socket.receiveJson({ type: 'finished' })
 
     await expect(session.done).resolves.toEqual({ sourceText: '你好', translatedText: 'Hello' })
     expect(events).toEqual([
       { type: 'ready' }, { type: 'source_partial', text: '你' }, { type: 'source_final', text: '你好' },
       { type: 'translation_partial', text: 'Hel' }, { type: 'translation_final', text: 'Hello' },
-      { type: 'tts_start' }, { type: 'tts_audio', pcm }, { type: 'tts_end' }, { type: 'finished' },
+      { type: 'tts_audio', pcm }, { type: 'finished' },
     ])
     expect(sink.packets).toEqual([{ pcm, targetEar: 'right' }])
     expect(socket.closeCalls).toEqual([{ code: 1000, reason: 'finished' }])
   })
 
-  it('accepts multiple sequential TTS sentences in one translation session', async () => {
+  it('accepts zero TTS and finishes immediately', async () => {
+    const socket = new FakeWebSocket()
+    const session = createClient(socket).start({ sourceLanguage: 'zh', targetLanguage: 'en', targetEar: 'right' })
+    socket.open()
+    socket.receiveJson({ type: 'ready' })
+    socket.receiveJson({ type: 'finished' })
+
+    await expect(session.done).resolves.toEqual({ sourceText: '', translatedText: '' })
+    expect(socket.closeCalls).toEqual([{ code: 1000, reason: 'finished' }])
+  })
+
+  it('accepts multiple PCM chunks without exposing upstream sentence markers', async () => {
     const socket = new FakeWebSocket()
     const sink = new RecordingTtsSink()
     const session = createClient(socket, sink).start({ sourceLanguage: 'zh', targetLanguage: 'en', targetEar: 'right' })
-    const events: TranslationSessionEvent[] = []
-    session.subscribe((event) => events.push(event))
     socket.open()
     socket.receiveJson({ type: 'ready' })
 
     const firstPcm = new ArrayBuffer(2)
-    socket.receiveJson({ type: 'tts_start' })
-    socket.receiveRaw(firstPcm)
-    socket.receiveJson({ type: 'tts_end' })
     const secondPcm = new ArrayBuffer(4)
-    socket.receiveJson({ type: 'tts_start' })
+    socket.receiveRaw(firstPcm)
     socket.receiveRaw(secondPcm)
-    socket.receiveJson({ type: 'tts_end' })
     socket.receiveJson({ type: 'finished' })
 
     await expect(session.done).resolves.toEqual({ sourceText: '', translatedText: '' })
-    expect(events).toEqual([
-      { type: 'ready' },
-      { type: 'tts_start' }, { type: 'tts_audio', pcm: firstPcm }, { type: 'tts_end' },
-      { type: 'tts_start' }, { type: 'tts_audio', pcm: secondPcm }, { type: 'tts_end' },
-      { type: 'finished' },
-    ])
     expect(sink.packets).toEqual([
       { pcm: firstPcm, targetEar: 'right' },
       { pcm: secondPcm, targetEar: 'right' },
     ])
   })
 
+  it('rejects binary PCM before ready', async () => {
+    const socket = new FakeWebSocket()
+    const sink = new RecordingTtsSink()
+    const session = createClient(socket, sink).start({ sourceLanguage: 'zh', targetLanguage: 'en', targetEar: 'right' })
+    socket.open()
+    socket.receiveRaw(new ArrayBuffer(2))
+
+    await expect(session.done).rejects.toMatchObject({ code: 'TRANSLATION_PROTOCOL_ERROR' })
+    expect(sink.clearCalls).toBe(1)
+  })
+
   it.each([
-    ['binary before tts_start', (socket: FakeWebSocket) => socket.receiveRaw(new ArrayBuffer(2))],
-    ['nested tts_start', (socket: FakeWebSocket) => {
-      socket.receiveJson({ type: 'tts_start' })
-      socket.receiveJson({ type: 'tts_start' })
-    }],
-    ['tts_end before tts_start', (socket: FakeWebSocket) => socket.receiveJson({ type: 'tts_end' })],
-    ['empty PCM', (socket: FakeWebSocket) => {
-      socket.receiveJson({ type: 'tts_start' })
-      socket.receiveRaw(new ArrayBuffer(0))
-    }],
-    ['odd-byte PCM', (socket: FakeWebSocket) => {
-      socket.receiveJson({ type: 'tts_start' })
-      socket.receiveRaw(new ArrayBuffer(3))
-    }],
-    ['finished before tts_end', (socket: FakeWebSocket) => {
-      socket.receiveJson({ type: 'tts_start' })
-      socket.receiveJson({ type: 'finished' })
-    }],
-  ])('rejects invalid TTS sequence: %s', async (_name, trigger) => {
+    ['upstream TTS marker', (socket: FakeWebSocket) => socket.receiveJson({ type: 'tts_start' })],
+    ['empty PCM', (socket: FakeWebSocket) => socket.receiveRaw(new ArrayBuffer(0))],
+    ['odd-byte PCM', (socket: FakeWebSocket) => socket.receiveRaw(new ArrayBuffer(3))],
+  ])('rejects invalid simplified stream: %s', async (_name, trigger) => {
     const socket = new FakeWebSocket()
     const sink = new RecordingTtsSink()
     const session = createClient(socket, sink).start({ sourceLanguage: 'zh', targetLanguage: 'en', targetEar: 'right' })
@@ -248,6 +241,28 @@ describe('LocalAgentTranslationClient', () => {
 
     await expect(session.done).rejects.toMatchObject({ code: 'TRANSLATION_PROTOCOL_ERROR' })
     expect(sink.clearCalls).toBe(1)
+  })
+
+  it('waits for all PCM scheduling promises after finished', async () => {
+    const socket = new FakeWebSocket()
+    let resolvePlayback: () => void = () => { throw new Error('playback did not start') }
+    const playbackPromise = new Promise<void>((resolve) => { resolvePlayback = resolve })
+    const sink: TtsPcmSink = {
+      play: () => playbackPromise,
+      clear: () => undefined,
+      isIdle: false,
+      whenIdle: async () => undefined,
+    }
+    const session = createClient(socket, sink).start({ sourceLanguage: 'zh', targetLanguage: 'en', targetEar: 'right' })
+    socket.open()
+    socket.receiveJson({ type: 'ready' })
+    socket.receiveRaw(new ArrayBuffer(2))
+    socket.receiveJson({ type: 'finished' })
+
+    expect(socket.closeCalls).toEqual([])
+    resolvePlayback()
+    await expect(session.done).resolves.toEqual({ sourceText: '', translatedText: '' })
+    expect(socket.closeCalls).toEqual([{ code: 1000, reason: 'finished' }])
   })
 
   it('turns a TTS sink failure into a terminal session error', async () => {
@@ -261,8 +276,6 @@ describe('LocalAgentTranslationClient', () => {
     const session = createClient(socket, sink).start({ sourceLanguage: 'zh', targetLanguage: 'en', targetEar: 'left' })
     socket.open()
     socket.receiveJson({ type: 'ready' })
-    socket.receiveJson({ type: 'tts_start' })
-
     socket.receiveRaw(new ArrayBuffer(2))
 
     await expect(session.done).rejects.toMatchObject({ code: 'TTS_PLAYBACK_FAILED' })

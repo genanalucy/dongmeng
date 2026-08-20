@@ -164,13 +164,39 @@ func (s *Server) runConnection(parent context.Context, conn *websocket.Conn) {
 	direction := start.SourceLanguage + "→" + start.TargetLanguage
 	s.logError(start.SessionID, direction, "start_received", "", "")
 
+	var upstreamMu sync.Mutex
+	upstreamTerminal := false
 	sink := &eventSink{emit: func(event ast.Event) {
 		s.logError(start.SessionID, direction, "ast_"+event.Type, event.Code, event.LogID)
-		if event.Binary != nil {
-			emitMessage(outgoingMessage{binary: append([]byte(nil), event.Binary...)})
+		upstreamMu.Lock()
+		defer upstreamMu.Unlock()
+		if upstreamTerminal {
 			return
 		}
-		emit(browserEvent{Type: event.Type, Code: event.Code, Message: event.Message, LogID: event.LogID})
+		switch event.Type {
+		case "tts_start", "tts_end":
+			// Sentence boundaries are upstream implementation details. The Browser
+			// consumes one continuous PCM stream and must not validate them.
+			return
+		case "tts_audio":
+			if len(event.Binary) == 0 || len(event.Binary)%2 != 0 {
+				upstreamTerminal = true
+				emit(browserEvent{Type: "error", Code: "TRANSLATION_PROTOCOL_ERROR", Message: "translation service returned invalid PCM"})
+				return
+			}
+			emitMessage(outgoingMessage{binary: append([]byte(nil), event.Binary...)})
+		case "source_partial", "source_final", "translation_partial", "translation_final":
+			emit(browserEvent{Type: event.Type, Message: event.Message, LogID: event.LogID})
+		case "finished":
+			upstreamTerminal = true
+			emit(browserEvent{Type: "finished"})
+		case "error":
+			upstreamTerminal = true
+			emit(browserEvent{Type: "error", Code: event.Code, Message: event.Message, LogID: event.LogID})
+		default:
+			upstreamTerminal = true
+			emit(browserEvent{Type: "error", Code: "TRANSLATION_PROTOCOL_ERROR", Message: "translation service returned an unsupported event"})
+		}
 	}}
 	astSession, err := s.astClient.Start(ctx, start, sink)
 	if err != nil {

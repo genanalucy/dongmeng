@@ -1236,14 +1236,6 @@ SessionFailed
 }
 ```
 
-### TTS Start
-
-```json
-{
-  "type": "tts_start"
-}
-```
-
 ### TTS 音频
 
 Binary WebSocket Frame：
@@ -1252,13 +1244,7 @@ Binary WebSocket Frame：
 PCM16 mono / 16000
 ```
 
-### TTS End
-
-```json
-{
-  "type": "tts_end"
-}
-```
+火山上游的 `TTSSentenceStart` / `TTSSentenceEnd` 属于供应商内部句子边界，必须由 Agent 消化，不得转发给 Browser。Browser 将 `ready` 到 `finished` 之间的所有二进制帧视为一个连续、保序的译文 PCM 流。合法会话可以没有任何 TTS 二进制帧，也可以包含任意多个分句的音频帧。
 
 ### Finish
 
@@ -1267,6 +1253,8 @@ PCM16 mono / 16000
   "type": "finished"
 }
 ```
+
+`finished` 只表示 Agent 不会再产生新的字幕或 PCM，不要求此前出现过 TTS。Browser 收到后仍须等待所有本地 PCM 排程 Promise 和实际播放队列清空，才能解除半双工锁定。
 
 ### Error
 

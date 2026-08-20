@@ -136,7 +136,7 @@ curl --fail http://127.0.0.1:18765/api/health
 - **模拟模式（Mock）**：完全在 Web 内运行确定性的演示文案。不会调用 Agent，也不会向外部服务发送麦克风 PCM；适合演示 PTT 流程、语言交换、字幕和左右耳路由。
 - **Local Agent 模式**：Web 会检测 `GET /api/health`，并通过 Vite 代理连接本机 Agent 的 `/ws/translate`。Agent 离线时页面会锁定开始翻译，不会静默回退为 Mock；启动 Agent 后点击“手动检测”。
 
-PTT 为半双工：一侧按住说话时另一侧不可同时开始。当前固定语言为中文 ↔ English；说话者耳静音，译文目标为对方耳。使用 tagged 构建时，Agent 发送官方 protobuf `StartSession`、`TaskRequest`、`FinishSession`，等待 `SessionStarted` 后才向 Browser 报 `ready`，并将字幕事件映射成 JSON、将 TTS PCM 作为二进制 WebSocket 消息发送。
+PTT 为半双工：一侧按住说话时另一侧不可同时开始。当前固定语言为中文 ↔ English；说话者耳静音，译文目标为对方耳。使用 tagged 构建时，Agent 发送官方 protobuf `StartSession`、`TaskRequest`、`FinishSession`，等待 `SessionStarted` 后才向 Browser 报 `ready`，并将字幕映射成 JSON、将 TTS PCM 作为二进制 WebSocket 消息发送。火山的 `TTSSentenceStart` / `TTSSentenceEnd` 只在 Agent 内部消费，不进入 Browser 协议；零 TTS 和多分句 TTS 均由同一套 `ready → PCM* → finished` 生命周期处理，Browser 在 `finished` 且本地播放完全清空后才恢复 READY。
 
 ## `AST_CODEC_UNAVAILABLE` 的含义
 

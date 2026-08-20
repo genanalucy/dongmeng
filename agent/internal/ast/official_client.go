@@ -282,7 +282,8 @@ func (s *officialSession) mapResponse(response *astproto.TranslateResponse) bool
 	case eventproto.Type_TranslationSubtitleEnd:
 		emitText("translation_final")
 	case eventproto.Type_TTSSentenceStart:
-		s.sink.Emit(Event{Type: "tts_start"})
+		// Sentence boundaries are upstream implementation details. The browser
+		// consumes a continuous PCM stream until SessionFinished.
 	case eventproto.Type_TTSResponse:
 		if len(response.GetData()) > 0 {
 			s.sink.Emit(Event{Type: "tts_audio", Binary: append([]byte(nil), response.GetData()...), LogID: s.logID})
@@ -291,7 +292,6 @@ func (s *officialSession) mapResponse(response *astproto.TranslateResponse) bool
 		if len(response.GetData()) > 0 {
 			s.sink.Emit(Event{Type: "tts_audio", Binary: append([]byte(nil), response.GetData()...)})
 		}
-		s.sink.Emit(Event{Type: "tts_end"})
 	case eventproto.Type_SessionFinished:
 		s.sink.Emit(Event{Type: "finished"})
 		s.cancel()

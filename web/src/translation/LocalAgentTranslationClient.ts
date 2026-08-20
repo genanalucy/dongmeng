@@ -115,8 +115,6 @@ export class LocalAgentTranslationClient implements TranslationPort {
   }
 }
 
-type TtsState = 'not_started' | 'streaming' | 'ended'
-
 class LocalAgentTranslationSession implements TranslationSession {
   private readonly listeners = new Set<(event: TranslationSessionEvent) => void>()
   private readonly preReadyPackets: PcmPacket[] = []
@@ -126,7 +124,6 @@ class LocalAgentTranslationSession implements TranslationSession {
   private finishSent = false
   private terminal = false
   private finishedReceived = false
-  private ttsState: TtsState = 'not_started'
   private sourceFinal = ''
   private translationFinal = ''
   private resolveDone: ((result: TranslationResult) => void) | null = null
@@ -240,37 +237,33 @@ class LocalAgentTranslationSession implements TranslationSession {
           this.sendFinish()
         }
         return
-      case 'tts_start':
-        if (!this.ready || this.ttsState === 'streaming') {
-          this.failProtocol('本地翻译 Agent 的 tts_start 顺序无效。')
-          return
-        }
-        this.ttsState = 'streaming'
-        this.emit(event)
-        return
-      case 'tts_end':
-        if (this.ttsState !== 'streaming') {
-          this.failProtocol('本地翻译 Agent 的 tts_end 顺序无效。')
-          return
-        }
-        this.ttsState = 'ended'
-        this.emit(event)
-        return
       case 'source_partial':
       case 'translation_partial':
+        if (!this.ready || this.finishedReceived) {
+          this.failProtocol('本地翻译 Agent 的字幕事件顺序无效。')
+          return
+        }
         this.emit(event)
         return
       case 'source_final':
+        if (!this.ready || this.finishedReceived) {
+          this.failProtocol('本地翻译 Agent 的原文终稿顺序无效。')
+          return
+        }
         this.sourceFinal = event.text
         this.emit(event)
         return
       case 'translation_final':
+        if (!this.ready || this.finishedReceived) {
+          this.failProtocol('本地翻译 Agent 的译文终稿顺序无效。')
+          return
+        }
         this.translationFinal = event.text
         this.emit(event)
         return
       case 'finished':
-        if (!this.ready || this.ttsState !== 'ended' || this.finishedReceived) {
-          this.failProtocol('本地翻译 Agent 的 finished 必须且只能在 tts_end 后发送。')
+        if (!this.ready || this.finishedReceived) {
+          this.failProtocol('本地翻译 Agent 的 finished 顺序无效。')
           return
         }
         this.finishedReceived = true
@@ -282,8 +275,8 @@ class LocalAgentTranslationSession implements TranslationSession {
   }
 
   private handleTtsAudio(pcm: ArrayBuffer): void {
-    if (this.ttsState !== 'streaming') {
-      this.failProtocol('TTS PCM 音频必须位于 tts_start 与 tts_end 之间。')
+    if (!this.ready || this.finishedReceived) {
+      this.failProtocol('TTS PCM 音频必须位于 ready 与 finished 之间。')
       return
     }
     if (pcm.byteLength === 0 || pcm.byteLength % 2 !== 0) {
@@ -397,8 +390,6 @@ function parseAgentEvent(raw: string): AgentEvent | null {
   }
   switch (value.type) {
     case 'ready':
-    case 'tts_start':
-    case 'tts_end':
     case 'finished':
       return Object.keys(value).every((key) => key === 'type') ? { type: value.type } : null
     case 'source_partial':
