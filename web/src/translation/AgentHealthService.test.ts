@@ -14,7 +14,12 @@ describe('AgentHealthService', () => {
 
     await expect(service.check()).resolves.toBe('online')
     expect(fetcher).toHaveBeenCalledWith('/api/health')
-    expect(service.getSnapshot()).toEqual({ status: 'online', checkedAtMs: 42 })
+    expect(service.getSnapshot()).toEqual({
+      status: 'online',
+      checkedAtMs: 42,
+      checking: false,
+      errorMessage: null,
+    })
   })
 
   it.each([
@@ -25,7 +30,12 @@ describe('AgentHealthService', () => {
     const service = new AgentHealthService({ fetcher, now: () => 7 })
 
     await expect(service.check()).resolves.toBe('offline')
-    expect(service.getSnapshot()).toEqual({ status: 'offline', checkedAtMs: 7 })
+    expect(service.getSnapshot()).toEqual({
+      status: 'offline',
+      checkedAtMs: 7,
+      checking: false,
+      errorMessage: expect.any(String),
+    })
   })
 
   it('deduplicates concurrent checks and starts and stops one polling interval', async () => {

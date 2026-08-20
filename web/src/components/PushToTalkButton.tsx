@@ -6,6 +6,7 @@ interface PushToTalkButtonProps {
   readonly language: LanguageCode
   readonly disabled: boolean
   readonly speaking: boolean
+  readonly simulated: boolean
   readonly onPointerDown: PointerEventHandler<HTMLButtonElement>
   readonly onPointerUp: PointerEventHandler<HTMLButtonElement>
   readonly onPointerCancel: PointerEventHandler<HTMLButtonElement>
@@ -22,6 +23,7 @@ export function PushToTalkButton({
   language,
   disabled,
   speaking,
+  simulated,
   onPointerDown,
   onPointerUp,
   onPointerCancel,
@@ -43,7 +45,7 @@ export function PushToTalkButton({
       <span className="ptt-ear">{side === 'left' ? 'LEFT EAR' : 'RIGHT EAR'}</span>
       <strong>{speaking ? '正在说话…' : instruction}</strong>
       <span>{languageLabel[language]}</span>
-      <small>松开后生成模拟翻译</small>
+      <small>{simulated ? '松开后生成模拟翻译' : '松开后开始实时翻译'}</small>
     </button>
   )
 }

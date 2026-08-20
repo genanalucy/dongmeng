@@ -11,7 +11,12 @@ import { HomePage } from '../pages/HomePage'
 type Page = 'home' | 'face-to-face'
 type TranslationMode = 'local' | 'mock'
 
-const initialHealth: AgentHealthSnapshot = { status: 'offline', checkedAtMs: null }
+const initialHealth: AgentHealthSnapshot = {
+  status: 'offline',
+  checkedAtMs: null,
+  checking: false,
+  errorMessage: null,
+}
 
 export function App(): JSX.Element {
   const [page, setPage] = useState<Page>('home')
@@ -57,7 +62,7 @@ export function App(): JSX.Element {
   }, [audioPlayer])
 
   return page === 'home'
-    ? <HomePage onOpenFaceToFace={() => setPage('face-to-face')} />
+    ? <HomePage onOpenFaceToFace={() => setPage('face-to-face')} agentHealth={health} />
     : (
         <FaceToFacePage
           controller={controller}

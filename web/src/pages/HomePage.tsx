@@ -1,8 +1,11 @@
+import type { AgentHealthSnapshot } from '../translation/AgentHealthService'
+
 interface HomePageProps {
   readonly onOpenFaceToFace: () => void
+  readonly agentHealth: AgentHealthSnapshot
 }
 
-export function HomePage({ onOpenFaceToFace }: HomePageProps): JSX.Element {
+export function HomePage({ onOpenFaceToFace, agentHealth }: HomePageProps): JSX.Element {
   return (
     <main className="home-page">
       <section className="hero">
@@ -25,7 +28,13 @@ export function HomePage({ onOpenFaceToFace }: HomePageProps): JSX.Element {
           <button type="button" onClick={onOpenFaceToFace}>进入面对面翻译</button>
         </article>
       </section>
-      <p className="mock-notice">模拟翻译，尚未连接火山服务</p>
+      <p className={agentHealth.status === 'online' ? 'agent-badge' : 'mock-notice'}>
+        {agentHealth.checking
+          ? '正在检测 Local Agent…'
+          : agentHealth.status === 'online'
+            ? 'Local Agent 在线 · 真实火山翻译可用'
+            : 'Local Agent 离线 · 仍可使用模拟模式'}
+      </p>
     </main>
   )
 }

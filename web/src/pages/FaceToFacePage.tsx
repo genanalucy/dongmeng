@@ -80,9 +80,9 @@ const demoPhrases: Readonly<Record<Side, string>> = {
 const stateLabel: Readonly<Record<FaceToFaceSnapshot['state'], string>> = {
   ready: '已就绪 · 可选择一侧按住说话',
   left_speaking: '左侧正在说话 · 右侧已锁定',
-  left_translating: '正在向右耳播放模拟英文译文',
+  left_translating: '正在向右耳播放英文译文',
   right_speaking: '右侧正在说话 · 左侧已锁定',
-  right_translating: '正在向左耳播放模拟中文译文',
+  right_translating: '正在向左耳播放中文译文',
   error: '发生错误 · 请重新准备设备后重试',
 }
 
@@ -106,7 +106,12 @@ export function FaceToFacePage({
   microphoneService: providedMicrophoneService,
   packetSink: providedPacketSink,
   translationMode = 'mock',
-  agentHealth = { status: 'offline', checkedAtMs: null },
+  agentHealth = {
+    status: 'offline',
+    checkedAtMs: null,
+    checking: false,
+    errorMessage: null,
+  },
   onSelectTranslationMode,
   onCheckAgentHealth,
 }: FaceToFacePageProps): JSX.Element {
@@ -379,7 +384,9 @@ export function FaceToFacePage({
   const controlsLocked = !devicesReady || localAgentUnavailable
     || snapshot.state !== 'ready' && !leftSpeaking && !rightSpeaking
   const modeLabel = translationMode === 'local' ? 'Local Agent 模式' : '模拟模式'
-  const healthLabel = agentHealth.status === 'online' ? 'ONLINE' : 'OFFLINE'
+  const healthLabel = agentHealth.checking
+    ? 'CHECKING'
+    : agentHealth.status === 'online' ? 'ONLINE' : 'OFFLINE'
 
   return (
     <main className="face-page">
@@ -418,9 +425,11 @@ export function FaceToFacePage({
           onClick={() => onSelectTranslationMode?.('mock')}
           disabled={snapshot.state !== 'ready'}
         >模拟模式</button>
-        {localAgentUnavailable && (
+        {localAgentUnavailable && !agentHealth.checking && (
           <p role="alert" className="error-message">
-            Local Agent 离线，无法开始翻译；请启动 Agent 后手动检测。不会自动切换到模拟模式。
+            Local Agent 离线，无法开始翻译。{agentHealth.errorMessage === null
+              ? '请启动 Agent 后手动检测。'
+              : `检测失败：${agentHealth.errorMessage}。`}不会自动切换到模拟模式。
           </p>
         )}
       </section>
@@ -466,6 +475,7 @@ export function FaceToFacePage({
           language={snapshot.leftLanguage}
           disabled={controlsLocked || rightSpeaking}
           speaking={leftSpeaking}
+          simulated={translationMode === 'mock'}
           onPointerDown={() => startTurn('left')}
           onPointerUp={() => stopTurn('left')}
           onPointerCancel={() => stopTurn('left')}
@@ -476,6 +486,7 @@ export function FaceToFacePage({
           language={snapshot.rightLanguage}
           disabled={controlsLocked || leftSpeaking}
           speaking={rightSpeaking}
+          simulated={translationMode === 'mock'}
           onPointerDown={() => startTurn('right')}
           onPointerUp={() => stopTurn('right')}
           onPointerCancel={() => stopTurn('right')}
@@ -485,7 +496,7 @@ export function FaceToFacePage({
 
       <p className="half-duplex-note">严格半双工：设备准备完成前不能开始；一侧说话与译文处理期间，另一侧 PTT 保持禁用。</p>
       {snapshot.errorMessage !== null && <p role="alert" className="error-message">{snapshot.errorMessage}</p>}
-      <SubtitlePanel subtitles={snapshot.subtitles} />
+      <SubtitlePanel subtitles={snapshot.subtitles} simulated={translationMode === 'mock'} />
       <EarTestPanel
         testedEars={testedEars}
         disabled={!devicesReady || !audioPlayer.supportsOutputSelection}

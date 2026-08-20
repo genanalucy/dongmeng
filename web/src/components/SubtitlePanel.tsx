@@ -2,9 +2,10 @@ import type { SubtitleTurn } from '../face/FaceToFaceController'
 
 interface SubtitlePanelProps {
   readonly subtitles: readonly SubtitleTurn[]
+  readonly simulated: boolean
 }
 
-export function SubtitlePanel({ subtitles }: SubtitlePanelProps): JSX.Element {
+export function SubtitlePanel({ subtitles, simulated }: SubtitlePanelProps): JSX.Element {
   return (
     <section className="subtitle-panel" aria-labelledby="subtitle-heading">
       <div className="section-heading">
@@ -12,10 +13,14 @@ export function SubtitlePanel({ subtitles }: SubtitlePanelProps): JSX.Element {
           <p className="eyebrow">LIVE SUBTITLES</p>
           <h2 id="subtitle-heading">字幕对话</h2>
         </div>
-        <span className="mock-badge">模拟字幕</span>
+        <span className={simulated ? 'mock-badge' : 'agent-badge'}>
+          {simulated ? '模拟字幕' : '实时字幕'}
+        </span>
       </div>
       {subtitles.length === 0 ? (
-        <p className="empty-subtitle">按住任一侧 PTT 并松开，查看本次模拟翻译的原文与译文。</p>
+        <p className="empty-subtitle">
+          按住任一侧 PTT 并松开，查看本次{simulated ? '模拟' : '实时'}翻译的原文与译文。
+        </p>
       ) : (
         <ol className="subtitle-list">
           {subtitles.map((turn) => (
