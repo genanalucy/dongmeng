@@ -1,0 +1,363 @@
+import {
+  PRE_READY_MAX_PACKETS,
+  type PcmPacket,
+} from '../audio/PcmCapturePipeline'
+import type {
+  TranslationPort,
+  TranslationRequest,
+  TranslationResult,
+  TranslationSession,
+  TranslationSessionEvent,
+} from './TranslationPort'
+
+const MAX_BUFFERED_AMOUNT = 1024 * 1024
+
+export type TranslationErrorCode =
+  | 'AGENT_OFFLINE'
+  | 'LOCAL_WS_BACKPRESSURE'
+  | 'LOCAL_WS_DISCONNECTED'
+  | 'AST_CODEC_UNAVAILABLE'
+  | 'VOLCENGINE_CONNECT_FAILED'
+  | 'VOLCENGINE_SESSION_FAILED'
+  | 'INVALID_LANGUAGE_PAIR'
+  | 'TRANSLATION_PROTOCOL_ERROR'
+
+export class TranslationClientError extends Error {
+  public constructor(
+    public readonly code: TranslationErrorCode | string,
+    message: string,
+  ) {
+    super(message)
+    this.name = 'TranslationClientError'
+  }
+}
+
+export interface WebSocketPort {
+  readonly CONNECTING: number
+  readonly OPEN: number
+  readonly CLOSING: number
+  readonly CLOSED: number
+  readonly readyState: number
+  readonly bufferedAmount: number
+  binaryType: BinaryType
+  onopen: ((event: Event) => void) | null
+  onmessage: ((event: MessageEvent<unknown>) => void) | null
+  onerror: ((event: Event) => void) | null
+  onclose: ((event: CloseEvent) => void) | null
+  send(data: string | ArrayBuffer): void
+  close(code?: number, reason?: string): void
+}
+
+export interface TtsPcmSink {
+  push(pcm: ArrayBuffer, targetEar: TranslationRequest['targetEar']): void
+}
+
+const discardTtsPcmSink: TtsPcmSink = { push: () => undefined }
+
+export class CountingTtsPcmSink implements TtsPcmSink {
+  public packetCount = 0
+  public byteCount = 0
+
+  public push(pcm: ArrayBuffer): void {
+    this.packetCount += 1
+    this.byteCount += pcm.byteLength
+  }
+}
+
+export interface LocalAgentTranslationClientOptions {
+  readonly createWebSocket?: (url: string) => WebSocketPort
+  readonly createSessionId?: () => string
+  readonly webSocketUrl?: string
+  readonly ttsSink?: TtsPcmSink
+}
+
+export class LocalAgentTranslationClient implements TranslationPort {
+  private readonly createWebSocket: (url: string) => WebSocketPort
+  private readonly createSessionId: () => string
+  private readonly webSocketUrl: string
+  private readonly ttsSink: TtsPcmSink
+
+  public constructor(options: LocalAgentTranslationClientOptions = {}) {
+    this.createWebSocket = options.createWebSocket ?? createBrowserWebSocket
+    this.createSessionId = options.createSessionId ?? createSessionId
+    this.webSocketUrl = options.webSocketUrl ?? '/ws/translate'
+    this.ttsSink = options.ttsSink ?? discardTtsPcmSink
+  }
+
+  public start(request: TranslationRequest): TranslationSession {
+    return new LocalAgentTranslationSession(
+      this.createWebSocket(this.webSocketUrl),
+      this.createSessionId(),
+      request,
+      this.ttsSink,
+    )
+  }
+}
+
+class LocalAgentTranslationSession implements TranslationSession {
+  private readonly listeners = new Set<(event: TranslationSessionEvent) => void>()
+  private readonly preReadyPackets: PcmPacket[] = []
+  private ready = false
+  private finishPending = false
+  private finishSent = false
+  private terminal = false
+  private sourceFinal = ''
+  private translationFinal = ''
+  private resolveDone: ((result: TranslationResult) => void) | null = null
+  private rejectDone: ((reason: Error) => void) | null = null
+  public readonly done: Promise<TranslationResult>
+
+  public constructor(
+    private readonly socket: WebSocketPort,
+    private readonly sessionId: string,
+    private readonly request: TranslationRequest,
+    private readonly ttsSink: TtsPcmSink,
+  ) {
+    this.done = new Promise<TranslationResult>((resolve, reject) => {
+      this.resolveDone = resolve
+      this.rejectDone = reject
+    })
+    this.socket.binaryType = 'arraybuffer'
+    this.socket.onopen = () => this.sendStart()
+    this.socket.onmessage = (event) => this.handleMessage(event.data)
+    this.socket.onerror = () => this.fail('LOCAL_WS_DISCONNECTED', '无法连接本地翻译 Agent，请确认它正在运行。')
+    this.socket.onclose = () => {
+      if (!this.terminal) {
+        this.fail('LOCAL_WS_DISCONNECTED', '本地翻译 Agent 连接已断开。')
+      }
+    }
+  }
+
+  public subscribe(listener: (event: TranslationSessionEvent) => void): () => void {
+    this.listeners.add(listener)
+    return () => this.listeners.delete(listener)
+  }
+
+  public pushAudio(packet: PcmPacket): void {
+    if (this.terminal || this.finishSent) {
+      return
+    }
+    if (!this.ready) {
+      if (this.preReadyPackets.length >= PRE_READY_MAX_PACKETS) {
+        this.fail('AGENT_OFFLINE', '翻译服务启动过慢，请重试。')
+        return
+      }
+      this.preReadyPackets.push(packet)
+      return
+    }
+    this.sendPacket(packet)
+  }
+
+  public finish(): void {
+    if (this.terminal || this.finishSent) {
+      return
+    }
+    if (!this.ready) {
+      this.finishPending = true
+      return
+    }
+    this.sendFinish()
+  }
+
+  public cancel(): void {
+    if (this.terminal) {
+      return
+    }
+    this.terminal = true
+    this.preReadyPackets.length = 0
+    this.socket.close(1000, 'cancelled')
+  }
+
+  private sendStart(): void {
+    if (this.terminal) {
+      return
+    }
+    this.sendJson({
+      type: 'start',
+      sessionId: this.sessionId,
+      mode: 's2s',
+      sourceLanguage: this.request.sourceLanguage,
+      targetLanguage: this.request.targetLanguage,
+      targetAudioFormat: 'pcm',
+      targetAudioRate: 16000,
+    })
+  }
+
+  private handleMessage(data: unknown): void {
+    if (this.terminal) {
+      return
+    }
+    if (data instanceof ArrayBuffer) {
+      this.ttsSink.push(data, this.request.targetEar)
+      this.emit({ type: 'tts_audio', pcm: data })
+      return
+    }
+    if (typeof data !== 'string') {
+      this.fail('TRANSLATION_PROTOCOL_ERROR', '本地翻译 Agent 返回了无效消息。')
+      return
+    }
+    const event = parseAgentEvent(data)
+    if (event === null) {
+      this.fail('TRANSLATION_PROTOCOL_ERROR', '本地翻译 Agent 返回了无效协议消息。')
+      return
+    }
+    switch (event.type) {
+      case 'ready':
+        if (this.ready) {
+          this.fail('TRANSLATION_PROTOCOL_ERROR', '本地翻译 Agent 重复发送 ready。')
+          return
+        }
+        this.ready = true
+        this.emit(event)
+        this.flushPreReadyPackets()
+        if (this.finishPending) {
+          this.sendFinish()
+        }
+        return
+      case 'source_partial':
+      case 'translation_partial':
+      case 'tts_start':
+      case 'tts_end':
+        this.emit(event)
+        return
+      case 'source_final':
+        this.sourceFinal = event.text
+        this.emit(event)
+        return
+      case 'translation_final':
+        this.translationFinal = event.text
+        this.emit(event)
+        return
+      case 'finished':
+        this.terminal = true
+        this.emit(event)
+        this.resolveDone?.({ sourceText: this.sourceFinal, translatedText: this.translationFinal })
+        this.socket.close(1000, 'finished')
+        return
+      case 'error':
+        this.fail(event.code, userMessageFor(event.code, event.message), false)
+    }
+  }
+
+  private flushPreReadyPackets(): void {
+    const queued = this.preReadyPackets.splice(0)
+    for (const packet of queued) {
+      if (this.terminal) {
+        return
+      }
+      this.sendPacket(packet)
+    }
+  }
+
+  private sendPacket(packet: PcmPacket): void {
+    if (this.socket.bufferedAmount > MAX_BUFFERED_AMOUNT) {
+      this.fail('LOCAL_WS_BACKPRESSURE', '本地翻译连接繁忙，请松开后重试。')
+      return
+    }
+    try {
+      this.socket.send(packet.data)
+    } catch {
+      this.fail('LOCAL_WS_DISCONNECTED', '本地翻译 Agent 连接已断开。')
+    }
+  }
+
+  private sendFinish(): void {
+    if (this.terminal || this.finishSent) {
+      return
+    }
+    this.finishSent = true
+    this.finishPending = false
+    this.sendJson({ type: 'finish' })
+  }
+
+  private sendJson(value: object): void {
+    try {
+      this.socket.send(JSON.stringify(value))
+    } catch {
+      this.fail('LOCAL_WS_DISCONNECTED', '本地翻译 Agent 连接已断开。')
+    }
+  }
+
+  private fail(code: TranslationErrorCode | string, message: string, close = true): void {
+    if (this.terminal) {
+      return
+    }
+    this.terminal = true
+    this.preReadyPackets.length = 0
+    const error = new TranslationClientError(code, message)
+    this.emit({ type: 'error', code, message })
+    this.rejectDone?.(error)
+    if (close) {
+      this.socket.close(1011, code)
+    }
+  }
+
+  private emit(event: TranslationSessionEvent): void {
+    this.listeners.forEach((listener) => listener(event))
+  }
+}
+
+type AgentEvent = Exclude<TranslationSessionEvent, { readonly type: 'tts_audio' }>
+
+function parseAgentEvent(raw: string): AgentEvent | null {
+  let value: unknown
+  try {
+    value = JSON.parse(raw)
+  } catch {
+    return null
+  }
+  if (!isRecord(value) || typeof value.type !== 'string') {
+    return null
+  }
+  switch (value.type) {
+    case 'ready':
+    case 'tts_start':
+    case 'tts_end':
+    case 'finished':
+      return Object.keys(value).every((key) => key === 'type') ? { type: value.type } : null
+    case 'source_partial':
+    case 'source_final':
+    case 'translation_partial':
+    case 'translation_final':
+      return hasOnlyKeys(value, ['type', 'message', 'logId']) && typeof value.message === 'string'
+        ? { type: value.type, text: value.message }
+        : null
+    case 'error':
+      return hasOnlyKeys(value, ['type', 'code', 'message', 'logId'])
+        && typeof value.code === 'string'
+        && (value.message === undefined || typeof value.message === 'string')
+        ? { type: 'error', code: value.code, message: userMessageFor(value.code, value.message ?? '') }
+        : null
+    default:
+      return null
+  }
+}
+
+function hasOnlyKeys(value: Record<string, unknown>, allowed: readonly string[]): boolean {
+  return Object.keys(value).every((key) => allowed.includes(key))
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function createBrowserWebSocket(url: string): WebSocketPort {
+  return new WebSocket(url)
+}
+
+function createSessionId(): string {
+  return crypto.randomUUID()
+}
+
+function userMessageFor(code: string, fallback: string): string {
+  switch (code) {
+    case 'AST_CODEC_UNAVAILABLE':
+      return '本地 Agent 未安装 AST 编解码支持（AST_CODEC_UNAVAILABLE）。'
+    case 'VOLCENGINE_CONNECT_FAILED':
+      return '翻译服务连接失败，请检查网络或 API 配置。'
+    case 'VOLCENGINE_SESSION_FAILED':
+      return '翻译服务会话失败，请重试。'
+    default:
+      return fallback.length > 0 ? fallback : '翻译服务发生未知错误。'
+  }
+}

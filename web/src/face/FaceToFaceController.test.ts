@@ -1,121 +1,145 @@
 import { describe, expect, it } from 'vitest'
+import type { PcmPacket } from '../audio/PcmCapturePipeline'
 import { FaceToFaceController, routeForSide } from './FaceToFaceController'
-import type { TranslationPort } from '../translation/TranslationPort'
+import type {
+  TranslationPort,
+  TranslationRequest,
+  TranslationResult,
+  TranslationSession,
+  TranslationSessionEvent,
+} from '../translation/TranslationPort'
 
-interface Deferred<T> {
-  readonly promise: Promise<T>
-  readonly resolve: (value: T) => void
-}
+class MockSession implements TranslationSession {
+  private readonly listeners = new Set<(event: TranslationSessionEvent) => void>()
+  private resolveDone: ((value: TranslationResult) => void) | null = null
+  public readonly packets: PcmPacket[] = []
+  public readonly finishTexts: string[] = []
+  public cancelCalls = 0
+  public readonly done = new Promise<TranslationResult>((resolve) => { this.resolveDone = resolve })
 
-function createDeferred<T>(): Deferred<T> {
-  let resolvePromise: ((value: T) => void) | undefined
-  const promise = new Promise<T>((resolve) => {
-    resolvePromise = resolve
-  })
-  return {
-    promise,
-    resolve: (value) => resolvePromise?.(value),
+  public subscribe(listener: (event: TranslationSessionEvent) => void): () => void {
+    this.listeners.add(listener)
+    return () => this.listeners.delete(listener)
+  }
+
+  public pushAudio(packet: PcmPacket): void {
+    this.packets.push(packet)
+  }
+
+  public finish(fallbackSourceText: string): void {
+    this.finishTexts.push(fallbackSourceText)
+  }
+
+  public cancel(): void {
+    this.cancelCalls += 1
+  }
+
+  public complete(result: TranslationResult): void {
+    this.emit({ type: 'translation_final', text: result.translatedText })
+    this.emit({ type: 'finished' })
+    this.resolveDone?.(result)
+  }
+
+  private emit(event: TranslationSessionEvent): void {
+    this.listeners.forEach((listener) => listener(event))
   }
 }
 
-const port: TranslationPort = {
-  translate: async (request) => ({
-    sourceText: request.sourceText,
-    translatedText: `${request.sourceLanguage}->${request.targetLanguage}`,
-    playbackDurationMs: 1,
-  }),
+class MockPort implements TranslationPort {
+  public readonly requests: TranslationRequest[] = []
+  public readonly sessions: MockSession[] = []
+
+  public start(request: TranslationRequest): TranslationSession {
+    const session = new MockSession()
+    this.requests.push(request)
+    this.sessions.push(session)
+    return session
+  }
 }
 
 describe('FaceToFaceController', () => {
   it('maps each speaker to the opposite listening ear and keeps speaker ear silent by contract', () => {
     expect(routeForSide('left', 'zh', 'en')).toEqual({
-      sourceLanguage: 'zh',
-      targetLanguage: 'en',
-      speakerEar: 'left',
-      listenerEar: 'right',
+      sourceLanguage: 'zh', targetLanguage: 'en', speakerEar: 'left', listenerEar: 'right',
     })
     expect(routeForSide('right', 'zh', 'en')).toEqual({
-      sourceLanguage: 'en',
-      targetLanguage: 'zh',
-      speakerEar: 'right',
-      listenerEar: 'left',
+      sourceLanguage: 'en', targetLanguage: 'zh', speakerEar: 'right', listenerEar: 'left',
     })
   })
 
   it('enforces half duplex through speaking, translating, and ready', async () => {
+    const port = new MockPort()
     const controller = new FaceToFaceController(port)
 
     expect(controller.startSpeaking('left')).toBe(true)
     expect(controller.getSnapshot().state).toBe('left_speaking')
     expect(controller.startSpeaking('right')).toBe(false)
+    controller.pushAudio({ data: new ArrayBuffer(2560), audioLevel: 0.2, capturedAtMs: 1 })
+    expect(port.sessions[0].packets).toHaveLength(1)
 
-    await controller.stopSpeaking('你好，我叫李明。')
+    const stopping = controller.stopSpeaking('你好，我叫李明。')
     expect(controller.getSnapshot().state).toBe('left_translating')
+    expect(port.sessions[0].finishTexts).toEqual(['你好，我叫李明。'])
     expect(controller.startSpeaking('right')).toBe(false)
-    expect(controller.getSnapshot().subtitles[0]).toMatchObject({
-      sourceLanguage: 'zh',
-      targetLanguage: 'en',
-      listenerEar: 'right',
-    })
+    port.sessions[0].complete({ sourceText: '你好，我叫李明。', translatedText: 'Hello, my name is Li Ming.' })
+    await stopping
 
+    expect(controller.getSnapshot().subtitles[0]).toMatchObject({
+      sourceLanguage: 'zh', targetLanguage: 'en', listenerEar: 'right',
+    })
     controller.completePlayback()
     expect(controller.getSnapshot().state).toBe('ready')
     expect(controller.startSpeaking('right')).toBe(true)
+    expect(port.requests[1]).toMatchObject({ sourceLanguage: 'en', targetLanguage: 'zh', targetEar: 'left' })
   })
 
   it('swaps only languages while preserving physical ears', () => {
-    const controller = new FaceToFaceController(port)
+    const controller = new FaceToFaceController(new MockPort())
 
     expect(controller.swapLanguages()).toBe(true)
     expect(controller.getSnapshot()).toMatchObject({ leftLanguage: 'en', rightLanguage: 'zh' })
     expect(routeForSide('left', 'en', 'zh').listenerEar).toBe('right')
   })
 
-  it('returns to ready when an active turn is cancelled', () => {
+  it('returns to ready and cancels the active streaming session', () => {
+    const port = new MockPort()
     const controller = new FaceToFaceController(port)
     controller.startSpeaking('right')
 
     controller.cancelActiveTurn()
 
+    expect(port.sessions[0].cancelCalls).toBe(1)
     expect(controller.getSnapshot()).toMatchObject({ state: 'ready', activeSide: null })
   })
 
-  it('ignores a translation that resolves after its active turn is cancelled', async () => {
-    const translation = createDeferred<Awaited<ReturnType<TranslationPort['translate']>>>()
-    const controller = new FaceToFaceController({ translate: () => translation.promise })
+  it('ignores an old session result after its active turn is cancelled', async () => {
+    const port = new MockPort()
+    const controller = new FaceToFaceController(port)
     controller.startSpeaking('left')
-
     const stopping = controller.stopSpeaking('过期的输入')
-    expect(controller.getSnapshot()).toMatchObject({ state: 'left_translating', activeSide: 'left' })
+
     controller.cancelActiveTurn()
-    translation.resolve({
-      sourceText: '过期的输入',
-      translatedText: 'stale input',
-      playbackDurationMs: 1,
-    })
+    port.sessions[0].complete({ sourceText: '过期的输入', translatedText: 'stale input' })
     await stopping
 
-    expect(controller.getSnapshot()).toMatchObject({
-      state: 'ready',
-      activeSide: null,
-      subtitles: [],
-    })
+    expect(controller.getSnapshot()).toMatchObject({ state: 'ready', activeSide: null, subtitles: [] })
     controller.completePlayback()
     expect(controller.getSnapshot()).toMatchObject({ state: 'ready', activeSide: null })
   })
 
   it('recovers from an external device error only through the explicit ready path', async () => {
-    const translation = createDeferred<Awaited<ReturnType<TranslationPort['translate']>>>()
-    const controller = new FaceToFaceController({ translate: () => translation.promise })
+    const port = new MockPort()
+    const controller = new FaceToFaceController(port)
     controller.startSpeaking('right')
     const stopping = controller.stopSpeaking('stale turn')
 
     controller.reportExternalError('耳机已断开')
+    expect(port.sessions[0].cancelCalls).toBe(1)
     expect(controller.getSnapshot()).toMatchObject({ state: 'error', activeSide: null })
     expect(controller.recoverFromExternalError()).toBe(true)
     expect(controller.getSnapshot()).toMatchObject({ state: 'ready', activeSide: null, errorMessage: null })
 
-    translation.resolve({ sourceText: 'stale turn', translatedText: '过期译文', playbackDurationMs: 1 })
+    port.sessions[0].complete({ sourceText: 'stale turn', translatedText: '过期译文' })
     await stopping
 
     expect(controller.getSnapshot().subtitles).toEqual([])

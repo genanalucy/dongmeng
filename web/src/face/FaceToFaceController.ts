@@ -1,4 +1,12 @@
-import type { Ear, LanguageCode, Side, TranslationPort, TranslationResult } from '../translation/TranslationPort'
+import type {
+  Ear,
+  LanguageCode,
+  Side,
+  TranslationPort,
+  TranslationResult,
+  TranslationSession,
+  TranslationSessionEvent,
+} from '../translation/TranslationPort'
 
 export type FaceToFaceState =
   | 'ready'
@@ -39,18 +47,8 @@ export function routeForSide(
   rightLanguage: LanguageCode,
 ): TurnRoute {
   return side === 'left'
-    ? {
-        sourceLanguage: leftLanguage,
-        targetLanguage: rightLanguage,
-        speakerEar: 'left',
-        listenerEar: 'right',
-      }
-    : {
-        sourceLanguage: rightLanguage,
-        targetLanguage: leftLanguage,
-        speakerEar: 'right',
-        listenerEar: 'left',
-      }
+    ? { sourceLanguage: leftLanguage, targetLanguage: rightLanguage, speakerEar: 'left', listenerEar: 'right' }
+    : { sourceLanguage: rightLanguage, targetLanguage: leftLanguage, speakerEar: 'right', listenerEar: 'left' }
 }
 
 const speakingState: Readonly<Record<Side, FaceToFaceState>> = {
@@ -74,6 +72,8 @@ export class FaceToFaceController {
   private readonly listeners = new Set<Listener>()
   private turnCounter = 0
   private turnGeneration = 0
+  private activeSession: TranslationSession | null = null
+  private unsubscribeSession: (() => void) | null = null
 
   public constructor(private readonly translationPort: TranslationPort) {}
 
@@ -102,7 +102,14 @@ export class FaceToFaceController {
     if (!this.canStart(side)) {
       return false
     }
-
+    const route = routeForSide(side, this.leftLanguage, this.rightLanguage)
+    const session = this.translationPort.start({
+      sourceLanguage: route.sourceLanguage,
+      targetLanguage: route.targetLanguage,
+      targetEar: route.listenerEar,
+    })
+    this.activeSession = session
+    this.unsubscribeSession = session.subscribe((event) => this.handleSessionEvent(event, side, route))
     this.activeSide = side
     this.state = speakingState[side]
     this.errorMessage = null
@@ -111,36 +118,31 @@ export class FaceToFaceController {
     return true
   }
 
-  public async stopSpeaking(sourceText: string): Promise<void> {
+  public pushAudio(packet: Parameters<TranslationSession['pushAudio']>[0]): void {
+    this.activeSession?.pushAudio(packet)
+  }
+
+  public async stopSpeaking(fallbackSourceText: string): Promise<void> {
     const side = this.activeSide
-    if (side === null || this.state !== speakingState[side]) {
+    const session = this.activeSession
+    if (side === null || session === null || this.state !== speakingState[side]) {
       return
     }
-
     this.state = translatingState[side]
     const generation = ++this.turnGeneration
     this.emit()
-
+    session.finish(fallbackSourceText)
     try {
-      const route = routeForSide(side, this.leftLanguage, this.rightLanguage)
-      const result = await this.translationPort.translate({
-        sourceLanguage: route.sourceLanguage,
-        targetLanguage: route.targetLanguage,
-        sourceText,
-      })
+      const result = await session.done
       if (!this.isCurrentTurn(generation, side)) {
         return
       }
-      this.addSubtitle(side, route, result)
+      this.addSubtitle(side, routeForSide(side, this.leftLanguage, this.rightLanguage), result)
     } catch (error: unknown) {
       if (!this.isCurrentTurn(generation, side)) {
         return
       }
-      this.state = 'error'
-      this.activeSide = null
-      this.errorMessage = error instanceof Error ? error.message : '模拟翻译发生未知错误。'
-      this.externalError = false
-      this.emit()
+      this.failActiveTurn(error instanceof Error ? error.message : '翻译发生未知错误。')
     }
   }
 
@@ -148,7 +150,7 @@ export class FaceToFaceController {
     if (this.state !== 'left_translating' && this.state !== 'right_translating') {
       return
     }
-
+    this.clearSession()
     this.state = 'ready'
     this.activeSide = null
     this.emit()
@@ -156,10 +158,10 @@ export class FaceToFaceController {
 
   public cancelActiveTurn(): void {
     this.turnGeneration += 1
+    this.clearSession(true)
     if (this.activeSide === null) {
       return
     }
-
     this.state = 'ready'
     this.activeSide = null
     this.emit()
@@ -167,6 +169,7 @@ export class FaceToFaceController {
 
   public reportExternalError(message: string): void {
     this.turnGeneration += 1
+    this.clearSession(true)
     this.state = 'error'
     this.activeSide = null
     this.errorMessage = message
@@ -178,7 +181,6 @@ export class FaceToFaceController {
     if (this.state !== 'error' || this.activeSide !== null || !this.externalError) {
       return false
     }
-
     this.turnGeneration += 1
     this.state = 'ready'
     this.errorMessage = null
@@ -191,10 +193,29 @@ export class FaceToFaceController {
     if (this.state !== 'ready') {
       return false
     }
-
     ;[this.leftLanguage, this.rightLanguage] = [this.rightLanguage, this.leftLanguage]
     this.emit()
     return true
+  }
+
+  private handleSessionEvent(event: TranslationSessionEvent, side: Side, route: TurnRoute): void {
+    if (side !== this.activeSide) {
+      return
+    }
+    if (event.type === 'error') {
+      this.turnGeneration += 1
+      this.failActiveTurn(event.message)
+      return
+    }
+    if (event.type === 'translation_final') {
+      // The final subtitle remains owned by `session.done`, preserving a single terminal boundary.
+      return
+    }
+    if (event.type === 'tts_audio') {
+      // TTS bytes are consumed by the injected client sink; playback is intentionally out of scope.
+      return
+    }
+    void route
   }
 
   private isCurrentTurn(generation: number, side: Side): boolean {
@@ -205,14 +226,27 @@ export class FaceToFaceController {
 
   private addSubtitle(side: Side, route: TurnRoute, result: TranslationResult): void {
     this.turnCounter += 1
-    this.subtitles.push({
-      id: this.turnCounter,
-      side,
-      ...route,
-      sourceText: result.sourceText,
-      translatedText: result.translatedText,
-    })
+    this.subtitles.push({ id: this.turnCounter, side, ...route, sourceText: result.sourceText, translatedText: result.translatedText })
     this.emit()
+  }
+
+  private failActiveTurn(message: string): void {
+    this.clearSession()
+    this.state = 'error'
+    this.activeSide = null
+    this.errorMessage = message
+    this.externalError = false
+    this.emit()
+  }
+
+  private clearSession(cancel = false): void {
+    const session = this.activeSession
+    this.activeSession = null
+    this.unsubscribeSession?.()
+    this.unsubscribeSession = null
+    if (cancel) {
+      session?.cancel()
+    }
   }
 
   private emit(): void {

@@ -77,6 +77,19 @@ interface ActiveCapture {
 
 const discardPacketSink: PcmPacketSink = { push: () => undefined }
 
+/** Routes capture packets to the current independent translation session. */
+export class MutablePcmPacketSink implements PcmPacketSink {
+  private sink: PcmPacketSink = discardPacketSink
+
+  public setSink(sink: PcmPacketSink | null): void {
+    this.sink = sink ?? discardPacketSink
+  }
+
+  public push(packet: PcmPacket): void {
+    this.sink.push(packet)
+  }
+}
+
 export class MicrophoneServiceError extends Error {
   public constructor(message: string) {
     super(message)

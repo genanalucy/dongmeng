@@ -1,3 +1,5 @@
+import type { PcmPacket } from '../audio/PcmCapturePipeline'
+
 export type LanguageCode = 'zh' | 'en'
 export type Ear = 'left' | 'right'
 export type Side = 'left' | 'right'
@@ -5,18 +7,38 @@ export type Side = 'left' | 'right'
 export interface TranslationRequest {
   readonly sourceLanguage: LanguageCode
   readonly targetLanguage: LanguageCode
-  readonly sourceText: string
+  readonly targetEar: Ear
 }
 
 export interface TranslationResult {
   readonly sourceText: string
   readonly translatedText: string
-  readonly playbackDurationMs: number
 }
 
-/** Boundary for the future Local Agent / Volcengine translation adapter. */
+export type TranslationSessionEvent =
+  | { readonly type: 'ready' }
+  | { readonly type: 'source_partial'; readonly text: string }
+  | { readonly type: 'source_final'; readonly text: string }
+  | { readonly type: 'translation_partial'; readonly text: string }
+  | { readonly type: 'translation_final'; readonly text: string }
+  | { readonly type: 'tts_start' }
+  | { readonly type: 'tts_end' }
+  | { readonly type: 'tts_audio'; readonly pcm: ArrayBuffer }
+  | { readonly type: 'finished' }
+  | { readonly type: 'error'; readonly code: string; readonly message: string }
+
+/** A single AST turn. Instances must never be shared by two PTT turns. */
+export interface TranslationSession {
+  subscribe(listener: (event: TranslationSessionEvent) => void): () => void
+  pushAudio(packet: PcmPacket): void
+  finish(fallbackSourceText: string): void
+  cancel(): void
+  readonly done: Promise<TranslationResult>
+}
+
+/** Injectable transport boundary. Every `start` creates an independent session. */
 export interface TranslationPort {
-  translate(request: TranslationRequest): Promise<TranslationResult>
+  start(request: TranslationRequest): TranslationSession
 }
 
 const translations: Readonly<Record<LanguageCode, Readonly<Record<string, string>>>> = {
@@ -38,16 +60,57 @@ const fallbackTexts: Readonly<Record<LanguageCode, string>> = {
   en: 'This is a simulated English translation.',
 }
 
-/** Deterministic UI-only implementation. It never contacts a translation service. */
+/** Deterministic UI-only implementation; useful only when the user explicitly selects mock mode. */
 export class DeterministicMockTranslationPort implements TranslationPort {
-  async translate(request: TranslationRequest): Promise<TranslationResult> {
-    const translatedText = translations[request.sourceLanguage][request.sourceText]
-      ?? fallbackTexts[request.targetLanguage]
+  public start(request: TranslationRequest): TranslationSession {
+    return new DeterministicMockTranslationSession(request)
+  }
+}
 
-    return {
-      sourceText: request.sourceText,
-      translatedText,
-      playbackDurationMs: 700,
+class DeterministicMockTranslationSession implements TranslationSession {
+  private readonly listeners = new Set<(event: TranslationSessionEvent) => void>()
+  private settled = false
+  private resolveDone: ((result: TranslationResult) => void) | null = null
+  public readonly done: Promise<TranslationResult>
+
+  public constructor(private readonly request: TranslationRequest) {
+    this.done = new Promise<TranslationResult>((resolve) => {
+      this.resolveDone = resolve
+    })
+    queueMicrotask(() => this.emit({ type: 'ready' }))
+  }
+
+  public subscribe(listener: (event: TranslationSessionEvent) => void): () => void {
+    this.listeners.add(listener)
+    return () => this.listeners.delete(listener)
+  }
+
+  public pushAudio(): void {
+    // Mock mode intentionally observes no microphone data.
+  }
+
+  public finish(fallbackSourceText: string): void {
+    if (this.settled) {
+      return
     }
+    this.settled = true
+    const translatedText = translations[this.request.sourceLanguage][fallbackSourceText]
+      ?? fallbackTexts[this.request.targetLanguage]
+    const result = { sourceText: fallbackSourceText, translatedText }
+    queueMicrotask(() => {
+      this.emit({ type: 'source_final', text: result.sourceText })
+      this.emit({ type: 'translation_final', text: result.translatedText })
+      this.emit({ type: 'finished' })
+      this.resolveDone?.(result)
+      this.resolveDone = null
+    })
+  }
+
+  public cancel(): void {
+    this.settled = true
+  }
+
+  private emit(event: TranslationSessionEvent): void {
+    this.listeners.forEach((listener) => listener(event))
   }
 }

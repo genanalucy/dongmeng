@@ -13,16 +13,21 @@ import {
 import {
   createBrowserMicrophoneEnvironment,
   MicrophoneService,
+  MutablePcmPacketSink,
   type MicrophoneServicePort,
   type MicrophoneSnapshot,
 } from '../audio/MicrophoneService'
+import type { PcmPacketSink } from '../audio/PcmCapturePipeline'
 import { AudioDevicePanel } from '../components/AudioDevicePanel'
 import { EarTestPanel } from '../components/EarTestPanel'
 import { MicrophoneDiagnostics } from '../components/MicrophoneDiagnostics'
 import { PushToTalkButton } from '../components/PushToTalkButton'
 import { SubtitlePanel } from '../components/SubtitlePanel'
 import { FaceToFaceController, type FaceToFaceSnapshot } from '../face/FaceToFaceController'
+import type { AgentHealthSnapshot } from '../translation/AgentHealthService'
 import type { Ear, Side } from '../translation/TranslationPort'
+
+type TranslationMode = 'local' | 'mock'
 
 interface FaceToFacePageProps {
   readonly controller: FaceToFaceController
@@ -30,6 +35,11 @@ interface FaceToFacePageProps {
   readonly deviceService?: AudioDeviceServicePort
   readonly audioPlayer?: StereoAudioPlayerPort
   readonly microphoneService?: MicrophoneServicePort
+  readonly packetSink?: MutablePcmPacketSink
+  readonly translationMode?: TranslationMode
+  readonly agentHealth?: AgentHealthSnapshot
+  readonly onSelectTranslationMode?: (mode: TranslationMode) => void
+  readonly onCheckAgentHealth?: () => void
 }
 
 const initialSnapshot: FaceToFaceSnapshot = {
@@ -84,8 +94,8 @@ function createDefaultAudioPlayer(): StereoAudioPlayerPort {
   return new StereoAudioPlayer(createBrowserAudioContextFactory())
 }
 
-function createDefaultMicrophoneService(): MicrophoneServicePort {
-  return new MicrophoneService(createBrowserMicrophoneEnvironment())
+function createDefaultMicrophoneService(packetSink: PcmPacketSink): MicrophoneServicePort {
+  return new MicrophoneService(createBrowserMicrophoneEnvironment(), packetSink)
 }
 
 export function FaceToFacePage({
@@ -94,7 +104,13 @@ export function FaceToFacePage({
   deviceService: providedDeviceService,
   audioPlayer: providedAudioPlayer,
   microphoneService: providedMicrophoneService,
+  packetSink: providedPacketSink,
+  translationMode = 'mock',
+  agentHealth = { status: 'offline', checkedAtMs: null },
+  onSelectTranslationMode,
+  onCheckAgentHealth,
 }: FaceToFacePageProps): JSX.Element {
+  const [packetSink] = useState(() => providedPacketSink ?? new MutablePcmPacketSink())
   const [deviceService] = useState<AudioDeviceServicePort>(
     () => providedDeviceService ?? createDefaultDeviceService(),
   )
@@ -102,7 +118,7 @@ export function FaceToFacePage({
     () => providedAudioPlayer ?? createDefaultAudioPlayer(),
   )
   const [microphoneService] = useState<MicrophoneServicePort>(
-    () => providedMicrophoneService ?? createDefaultMicrophoneService(),
+    () => providedMicrophoneService ?? createDefaultMicrophoneService(packetSink),
   )
   const ownsDeviceService = providedDeviceService === undefined
   const ownsAudioPlayer = providedAudioPlayer === undefined
@@ -171,9 +187,10 @@ export function FaceToFacePage({
     playbackGeneration.current += 1
     clearPlaybackTimer()
     microphoneService.stop()
+    packetSink.setSink(null)
     audioPlayer.stop()
     controller.cancelActiveTurn()
-  }, [audioPlayer, clearPlaybackTimer, controller, microphoneService])
+  }, [audioPlayer, clearPlaybackTimer, controller, microphoneService, packetSink])
 
   useEffect(() => {
     const lifecycleGeneration = audioPlayerLifecycleGeneration
@@ -216,6 +233,7 @@ export function FaceToFacePage({
     playbackGeneration.current += 1
     clearPlaybackTimer()
     microphoneService.stop()
+    packetSink.setSink(null)
     audioPlayer.reset()
     queueMicrotask(() => {
       if (!active) {
@@ -228,7 +246,7 @@ export function FaceToFacePage({
     return () => {
       active = false
     }
-  }, [audioPlayer, clearPlaybackTimer, controller, deviceSnapshot.outputDisconnected, microphoneService])
+  }, [audioPlayer, clearPlaybackTimer, controller, deviceSnapshot.outputDisconnected, microphoneService, packetSink])
 
   useEffect(() => {
     if (!devicesReady || !controller.recoverFromExternalError()) {
@@ -238,6 +256,7 @@ export function FaceToFacePage({
     playbackGeneration.current += 1
     clearPlaybackTimer()
     microphoneService.stop()
+    packetSink.setSink(null)
     audioPlayer.stop()
     queueMicrotask(() => {
       if (active) {
@@ -247,7 +266,7 @@ export function FaceToFacePage({
     return () => {
       active = false
     }
-  }, [audioPlayer, clearPlaybackTimer, controller, devicesReady, microphoneService])
+  }, [audioPlayer, clearPlaybackTimer, controller, devicesReady, microphoneService, packetSink])
 
   const runDeviceAction = useCallback(async (action: () => Promise<void>): Promise<void> => {
     setDeviceBusy(true)
@@ -306,6 +325,7 @@ export function FaceToFacePage({
       return
     }
     microphoneService.stop()
+    packetSink.setSink(null)
     const generation = playbackGeneration.current
     void controller.stopSpeaking(demoPhrases[side]).then(() => {
       if (generation !== playbackGeneration.current) {
@@ -318,15 +338,21 @@ export function FaceToFacePage({
         playbackTimer.current = null
       }, 700)
     })
-  }, [controller, microphoneService])
+  }, [controller, microphoneService, packetSink])
 
   const startTurn = (side: Side): void => {
     const selectedInputDeviceId = deviceSnapshot.selectedInputDeviceId
-    if (!devicesReady || selectedInputDeviceId === null || !controller.startSpeaking(side)) {
+    if (!devicesReady || selectedInputDeviceId === null
+      || translationMode === 'local' && agentHealth.status !== 'online') {
       return
     }
+    if (!controller.startSpeaking(side)) {
+      return
+    }
+    packetSink.setSink({ push: (packet) => controller.pushAudio(packet) })
     void microphoneService.start(selectedInputDeviceId).catch((error: unknown) => {
       microphoneService.stop()
+      packetSink.setSink(null)
       controller.reportExternalError(
         error instanceof Error ? error.message : '无法开始麦克风采集。',
       )
@@ -360,7 +386,11 @@ export function FaceToFacePage({
 
   const leftSpeaking = snapshot.state === 'left_speaking'
   const rightSpeaking = snapshot.state === 'right_speaking'
-  const controlsLocked = !devicesReady || snapshot.state !== 'ready' && !leftSpeaking && !rightSpeaking
+  const localAgentUnavailable = translationMode === 'local' && agentHealth.status !== 'online'
+  const controlsLocked = !devicesReady || localAgentUnavailable
+    || snapshot.state !== 'ready' && !leftSpeaking && !rightSpeaking
+  const modeLabel = translationMode === 'local' ? 'Local Agent 模式' : '模拟模式'
+  const healthLabel = agentHealth.status === 'online' ? 'ONLINE' : 'OFFLINE'
 
   return (
     <main className="face-page">
@@ -370,16 +400,40 @@ export function FaceToFacePage({
           <p className="eyebrow">FACE TO FACE · HALF DUPLEX</p>
           <h1>面对面翻译</h1>
         </div>
-        <span className="mock-badge">模拟翻译，尚未连接火山服务</span>
+        <span className={translationMode === 'local' ? 'agent-badge' : 'mock-badge'}>{modeLabel}</span>
       </header>
 
       <section className="connection-strip" aria-label="连接状态">
-        <span className="status-dot" aria-hidden="true" />
-        <strong>TranslationPort Mock 已就绪</strong>
+        <span className={`status-dot ${agentHealth.status}`} aria-hidden="true" />
+        <strong>{modeLabel}</strong>
+        <span>·</span>
+        <span>Agent {healthLabel}</span>
+        <button type="button" className="health-check-button" onClick={onCheckAgentHealth}>手动检测</button>
         <span>·</span>
         <span>{stateLabel[snapshot.state]}</span>
         <span>·</span>
         <span>固定语言：中文 ↔ English</span>
+      </section>
+
+      <section className="translation-mode-panel" aria-label="翻译模式选择">
+        <strong>翻译模式</strong>
+        <button
+          type="button"
+          className={translationMode === 'local' ? 'mode-selected' : 'mode-option'}
+          onClick={() => onSelectTranslationMode?.('local')}
+          disabled={snapshot.state !== 'ready'}
+        >Local Agent 模式</button>
+        <button
+          type="button"
+          className={translationMode === 'mock' ? 'mode-selected' : 'mode-option'}
+          onClick={() => onSelectTranslationMode?.('mock')}
+          disabled={snapshot.state !== 'ready'}
+        >模拟模式</button>
+        {localAgentUnavailable && (
+          <p role="alert" className="error-message">
+            Local Agent 离线，无法开始翻译；请启动 Agent 后手动检测。不会自动切换到模拟模式。
+          </p>
+        )}
       </section>
 
       <AudioDevicePanel
@@ -440,7 +494,7 @@ export function FaceToFacePage({
         />
       </section>
 
-      <p className="half-duplex-note">严格半双工：设备准备完成前不能开始；一侧说话与模拟译文播放期间，另一侧 PTT 保持禁用。</p>
+      <p className="half-duplex-note">严格半双工：设备准备完成前不能开始；一侧说话与译文处理期间，另一侧 PTT 保持禁用。</p>
       {snapshot.errorMessage !== null && <p role="alert" className="error-message">{snapshot.errorMessage}</p>}
       <SubtitlePanel subtitles={snapshot.subtitles} />
       <EarTestPanel
