@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createBrowserMicrophoneEnvironment, MicrophoneService, MutablePcmPacketSink } from '../audio/MicrophoneService'
 import { createBrowserAudioContextFactory, StereoAudioPlayer } from '../audio/StereoAudioPlayer'
+import { AppShell, type AppPage } from '../components/AppShell'
 import { FaceToFaceController } from '../face/FaceToFaceController'
 import { FaceToFacePage } from '../pages/FaceToFacePage'
 import { SoloInterpretationPage } from '../pages/SoloInterpretationPage'
@@ -10,7 +11,6 @@ import { DeterministicMockTranslationPort, type TranslationPort } from '../trans
 import { SoloInterpretationController } from '../solo/SoloInterpretationController'
 import { HomePage } from '../pages/HomePage'
 
-type Page = 'home' | 'solo' | 'face-to-face'
 type TranslationMode = 'local' | 'mock'
 
 const initialHealth: AgentHealthSnapshot = {
@@ -21,7 +21,7 @@ const initialHealth: AgentHealthSnapshot = {
 }
 
 export function App(): JSX.Element {
-  const [page, setPage] = useState<Page>('home')
+  const [page, setPage] = useState<AppPage>('home')
   const [mode, setMode] = useState<TranslationMode>('local')
   const [health, setHealth] = useState<AgentHealthSnapshot>(initialHealth)
   const [packetSink] = useState(() => new MutablePcmPacketSink())
@@ -71,17 +71,17 @@ export function App(): JSX.Element {
     }
   }, [audioPlayer])
 
+  let pageContent: JSX.Element
   if (page === 'home') {
-    return (
+    pageContent = (
       <HomePage
         onOpenSolo={() => setPage('solo')}
         onOpenFaceToFace={() => setPage('face-to-face')}
         agentHealth={health}
       />
     )
-  }
-  if (page === 'solo') {
-    return (
+  } else if (page === 'solo') {
+    pageContent = (
       <SoloInterpretationPage
         controller={soloController}
         onBack={() => setPage('home')}
@@ -92,18 +92,25 @@ export function App(): JSX.Element {
         onCheckAgentHealth={() => { void healthService.check() }}
       />
     )
+  } else {
+    pageContent = (
+      <FaceToFacePage
+        controller={controller}
+        onBack={() => setPage('home')}
+        audioPlayer={audioPlayer}
+        microphoneService={microphoneService}
+        packetSink={packetSink}
+        translationMode={mode}
+        agentHealth={health}
+        onSelectTranslationMode={setMode}
+        onCheckAgentHealth={() => { void healthService.check() }}
+      />
+    )
   }
+
   return (
-        <FaceToFacePage
-          controller={controller}
-          onBack={() => setPage('home')}
-          audioPlayer={audioPlayer}
-          microphoneService={microphoneService}
-          packetSink={packetSink}
-          translationMode={mode}
-          agentHealth={health}
-          onSelectTranslationMode={setMode}
-          onCheckAgentHealth={() => { void healthService.check() }}
-        />
-      )
+    <AppShell currentPage={page} agentHealth={health} onNavigate={setPage}>
+      {pageContent}
+    </AppShell>
+  )
 }
