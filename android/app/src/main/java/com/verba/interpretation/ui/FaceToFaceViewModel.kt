@@ -182,7 +182,8 @@ class FaceToFaceViewModel(application: Application) : AndroidViewModel(applicati
         playbackExecutor.execute {
             var work: FaceToFaceCoordinator.PlaybackWork? = first
             while (work != null && playbackGeneration.get() == generation) {
-                val result = when (val current = work) {
+                val current = work ?: break
+                val result = when (current) {
                     is FaceToFaceCoordinator.PlaybackWork.Chunk -> player.play(current.pcm, current.route)
                     is FaceToFaceCoordinator.PlaybackWork.Drain -> player.awaitDrained()
                 }
@@ -190,8 +191,8 @@ class FaceToFaceViewModel(application: Application) : AndroidViewModel(applicati
                     fail(result.exceptionOrNull()?.message ?: "TTS 播放失败。")
                     return@execute
                 }
-                val drained = work is FaceToFaceCoordinator.PlaybackWork.Drain
-                work = coordinator.playbackWorkFinished(work.turnId, drained)
+                val drained = current is FaceToFaceCoordinator.PlaybackWork.Drain
+                work = coordinator.playbackWorkFinished(current.turnId, drained)
                 publishState()
             }
         }
