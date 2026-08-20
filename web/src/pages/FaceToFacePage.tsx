@@ -74,6 +74,7 @@ const initialMicrophoneSnapshot: MicrophoneSnapshot = {
 }
 
 const MAX_PTT_DURATION_MS = 25_000
+const AUTO_TURN_DURATION_MS = 8_000
 
 const demoPhrases: Readonly<Record<Side, string>> = {
   left: '你好，我叫李明。',
@@ -197,16 +198,22 @@ export function FaceToFacePage({
     }
   }, [])
 
-  const stopCapture = useCallback(() => {
+  const detachCaptureTurn = useCallback((): boolean => {
     if (activeCaptureSide.current === null) {
-      return
+      return false
     }
     activeCaptureSide.current = null
     captureGeneration.current += 1
     clearPlaybackTimer()
-    microphoneService.stop()
     packetSink.setSink(null)
-  }, [clearPlaybackTimer, microphoneService, packetSink])
+    return true
+  }, [clearPlaybackTimer, packetSink])
+
+  const stopCapture = useCallback(() => {
+    if (detachCaptureTurn()) {
+      microphoneService.stop()
+    }
+  }, [detachCaptureTurn, microphoneService])
 
   const stopAutoRun = useCallback((cancelBackground = false) => {
     autoRunningRef.current = false
@@ -403,17 +410,21 @@ export function FaceToFacePage({
     })
   }
 
-  const finishAutoCapture = useCallback((side: Side) => {
+  const finishAutoCapture = useCallback((side: Side, keepMicrophone = false) => {
     const turnId = activeBackgroundTurnId.current
     if (turnId === null || activeCaptureSide.current !== side) {
       return
     }
     activeBackgroundTurnId.current = null
-    stopCapture()
+    if (keepMicrophone) {
+      detachCaptureTurn()
+    } else {
+      stopCapture()
+    }
     controller.finishBackgroundTurn(turnId, demoPhrases[side])
-  }, [controller, stopCapture])
+  }, [controller, detachCaptureTurn, stopCapture])
 
-  function startAutoCapture(side: Side): void {
+  function startAutoCapture(side: Side, reuseMicrophone = false): void {
     const selectedInputDeviceId = deviceSnapshot.selectedInputDeviceId
     if (!autoRunningRef.current || !devicesReady || selectedInputDeviceId === null
       || translationMode === 'local' && agentHealth.status !== 'online') {
@@ -432,9 +443,12 @@ export function FaceToFacePage({
       if (!autoRunningRef.current || captureGeneration.current !== generation) {
         return
       }
-      finishAutoCapture(side)
-      startAutoCapture(side)
-    }, MAX_PTT_DURATION_MS)
+      finishAutoCapture(side, true)
+      startAutoCapture(side, true)
+    }, AUTO_TURN_DURATION_MS)
+    if (reuseMicrophone) {
+      return
+    }
     void microphoneService.start(selectedInputDeviceId).catch((error: unknown) => {
       if (captureGeneration.current !== generation) {
         return
@@ -462,9 +476,9 @@ export function FaceToFacePage({
     }
     const currentSide = activeCaptureSide.current
     if (currentSide !== null) {
-      finishAutoCapture(currentSide)
+      finishAutoCapture(currentSide, true)
     }
-    startAutoCapture(side)
+    startAutoCapture(side, true)
   }
 
   const testEar = useCallback(async (ear: Ear): Promise<void> => {
