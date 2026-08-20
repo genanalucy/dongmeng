@@ -52,9 +52,20 @@ class FakeWebSocket implements WebSocketPort {
 
 class RecordingTtsSink implements TtsPcmSink {
   public readonly packets: { pcm: ArrayBuffer; targetEar: 'left' | 'right' }[] = []
+  public clearCalls = 0
+  public isIdle = true
 
-  public push(pcm: ArrayBuffer, targetEar: 'left' | 'right'): void {
+  public async play(pcm: ArrayBuffer, targetEar: 'left' | 'right'): Promise<void> {
     this.packets.push({ pcm, targetEar })
+  }
+
+  public clear(): void {
+    this.clearCalls += 1
+    this.isIdle = true
+  }
+
+  public async whenIdle(): Promise<void> {
+    // Recording completes immediately.
   }
 }
 
@@ -173,6 +184,52 @@ describe('LocalAgentTranslationClient', () => {
     ])
     expect(sink.packets).toEqual([{ pcm, targetEar: 'right' }])
     expect(socket.closeCalls).toEqual([{ code: 1000, reason: 'finished' }])
+  })
+
+  it.each([
+    ['binary before tts_start', (socket: FakeWebSocket) => socket.receiveRaw(new ArrayBuffer(2))],
+    ['tts_end before tts_start', (socket: FakeWebSocket) => socket.receiveJson({ type: 'tts_end' })],
+    ['empty PCM', (socket: FakeWebSocket) => {
+      socket.receiveJson({ type: 'tts_start' })
+      socket.receiveRaw(new ArrayBuffer(0))
+    }],
+    ['odd-byte PCM', (socket: FakeWebSocket) => {
+      socket.receiveJson({ type: 'tts_start' })
+      socket.receiveRaw(new ArrayBuffer(3))
+    }],
+    ['finished before tts_end', (socket: FakeWebSocket) => {
+      socket.receiveJson({ type: 'tts_start' })
+      socket.receiveJson({ type: 'finished' })
+    }],
+  ])('rejects invalid TTS sequence: %s', async (_name, trigger) => {
+    const socket = new FakeWebSocket()
+    const sink = new RecordingTtsSink()
+    const session = createClient(socket, sink).start({ sourceLanguage: 'zh', targetLanguage: 'en', targetEar: 'right' })
+    socket.open()
+    socket.receiveJson({ type: 'ready' })
+
+    trigger(socket)
+
+    await expect(session.done).rejects.toMatchObject({ code: 'TRANSLATION_PROTOCOL_ERROR' })
+    expect(sink.clearCalls).toBe(1)
+  })
+
+  it('turns a TTS sink failure into a terminal session error', async () => {
+    const socket = new FakeWebSocket()
+    const sink: TtsPcmSink = {
+      play: async () => { throw new Error('output disconnected') },
+      clear: () => undefined,
+      isIdle: true,
+      whenIdle: async () => undefined,
+    }
+    const session = createClient(socket, sink).start({ sourceLanguage: 'zh', targetLanguage: 'en', targetEar: 'left' })
+    socket.open()
+    socket.receiveJson({ type: 'ready' })
+    socket.receiveJson({ type: 'tts_start' })
+
+    socket.receiveRaw(new ArrayBuffer(2))
+
+    await expect(session.done).rejects.toMatchObject({ code: 'TTS_PLAYBACK_FAILED' })
   })
 
   it('accepts Go errors without message or logId and maps their user message', async () => {

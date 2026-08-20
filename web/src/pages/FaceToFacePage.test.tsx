@@ -38,8 +38,12 @@ function createReadyDeviceService(): AudioDeviceServicePort {
 function createAudioPlayer(supportsOutputSelection = true): StereoAudioPlayerPort {
   return {
     supportsOutputSelection,
+    isIdle: true,
     selectOutput: async () => undefined,
     playEarTest: async () => undefined,
+    play: async () => undefined,
+    whenIdle: async () => undefined,
+    clear: () => undefined,
     stop: () => undefined,
     reset: () => undefined,
     dispose: () => undefined,

@@ -326,18 +326,7 @@ export function FaceToFacePage({
     }
     microphoneService.stop()
     packetSink.setSink(null)
-    const generation = playbackGeneration.current
-    void controller.stopSpeaking(demoPhrases[side]).then(() => {
-      if (generation !== playbackGeneration.current) {
-        return
-      }
-      playbackTimer.current = window.setTimeout(() => {
-        if (generation === playbackGeneration.current) {
-          controller.completePlayback()
-        }
-        playbackTimer.current = null
-      }, 700)
-    })
+    void controller.stopSpeaking(demoPhrases[side])
   }, [controller, microphoneService, packetSink])
 
   const startTurn = (side: Side): void => {

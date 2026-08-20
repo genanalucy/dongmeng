@@ -21,6 +21,7 @@ export type TranslationErrorCode =
   | 'VOLCENGINE_SESSION_FAILED'
   | 'INVALID_LANGUAGE_PAIR'
   | 'TRANSLATION_PROTOCOL_ERROR'
+  | 'TTS_PLAYBACK_FAILED'
 
 export class TranslationClientError extends Error {
   public constructor(
@@ -49,18 +50,38 @@ export interface WebSocketPort {
 }
 
 export interface TtsPcmSink {
-  push(pcm: ArrayBuffer, targetEar: TranslationRequest['targetEar']): void
+  play(pcm: ArrayBuffer, targetEar: TranslationRequest['targetEar']): Promise<void>
+  clear(): void
+  readonly isIdle: boolean
+  whenIdle(): Promise<void>
 }
 
-const discardTtsPcmSink: TtsPcmSink = { push: () => undefined }
+const discardTtsPcmSink: TtsPcmSink = {
+  play: async () => undefined,
+  clear: () => undefined,
+  isIdle: true,
+  whenIdle: async () => undefined,
+}
 
 export class CountingTtsPcmSink implements TtsPcmSink {
   public packetCount = 0
   public byteCount = 0
 
-  public push(pcm: ArrayBuffer): void {
+  public get isIdle(): boolean {
+    return true
+  }
+
+  public async play(pcm: ArrayBuffer): Promise<void> {
     this.packetCount += 1
     this.byteCount += pcm.byteLength
+  }
+
+  public clear(): void {
+    // This sink has no playback resources.
+  }
+
+  public async whenIdle(): Promise<void> {
+    // Counting is synchronous, so this sink is always idle.
   }
 }
 
@@ -94,13 +115,18 @@ export class LocalAgentTranslationClient implements TranslationPort {
   }
 }
 
+type TtsState = 'not_started' | 'streaming' | 'ended'
+
 class LocalAgentTranslationSession implements TranslationSession {
   private readonly listeners = new Set<(event: TranslationSessionEvent) => void>()
   private readonly preReadyPackets: PcmPacket[] = []
+  private readonly pendingPlayback = new Set<Promise<void>>()
   private ready = false
   private finishPending = false
   private finishSent = false
   private terminal = false
+  private finishedReceived = false
+  private ttsState: TtsState = 'not_started'
   private sourceFinal = ''
   private translationFinal = ''
   private resolveDone: ((result: TranslationResult) => void) | null = null
@@ -165,6 +191,7 @@ class LocalAgentTranslationSession implements TranslationSession {
     }
     this.terminal = true
     this.preReadyPackets.length = 0
+    this.ttsSink.clear()
     this.socket.close(1000, 'cancelled')
   }
 
@@ -188,23 +215,22 @@ class LocalAgentTranslationSession implements TranslationSession {
       return
     }
     if (data instanceof ArrayBuffer) {
-      this.ttsSink.push(data, this.request.targetEar)
-      this.emit({ type: 'tts_audio', pcm: data })
+      this.handleTtsAudio(data)
       return
     }
     if (typeof data !== 'string') {
-      this.fail('TRANSLATION_PROTOCOL_ERROR', '本地翻译 Agent 返回了无效消息。')
+      this.failProtocol('本地翻译 Agent 返回了无效消息。')
       return
     }
     const event = parseAgentEvent(data)
     if (event === null) {
-      this.fail('TRANSLATION_PROTOCOL_ERROR', '本地翻译 Agent 返回了无效协议消息。')
+      this.failProtocol('本地翻译 Agent 返回了无效协议消息。')
       return
     }
     switch (event.type) {
       case 'ready':
         if (this.ready) {
-          this.fail('TRANSLATION_PROTOCOL_ERROR', '本地翻译 Agent 重复发送 ready。')
+          this.failProtocol('本地翻译 Agent 重复发送 ready。')
           return
         }
         this.ready = true
@@ -214,10 +240,24 @@ class LocalAgentTranslationSession implements TranslationSession {
           this.sendFinish()
         }
         return
+      case 'tts_start':
+        if (!this.ready || this.ttsState !== 'not_started') {
+          this.failProtocol('本地翻译 Agent 的 tts_start 顺序无效。')
+          return
+        }
+        this.ttsState = 'streaming'
+        this.emit(event)
+        return
+      case 'tts_end':
+        if (this.ttsState !== 'streaming') {
+          this.failProtocol('本地翻译 Agent 的 tts_end 顺序无效。')
+          return
+        }
+        this.ttsState = 'ended'
+        this.emit(event)
+        return
       case 'source_partial':
       case 'translation_partial':
-      case 'tts_start':
-      case 'tts_end':
         this.emit(event)
         return
       case 'source_final':
@@ -229,14 +269,55 @@ class LocalAgentTranslationSession implements TranslationSession {
         this.emit(event)
         return
       case 'finished':
-        this.terminal = true
-        this.emit(event)
-        this.resolveDone?.({ sourceText: this.sourceFinal, translatedText: this.translationFinal })
-        this.socket.close(1000, 'finished')
+        if (!this.ready || this.ttsState !== 'ended' || this.finishedReceived) {
+          this.failProtocol('本地翻译 Agent 的 finished 必须且只能在 tts_end 后发送。')
+          return
+        }
+        this.finishedReceived = true
+        this.finishAfterPlaybackIsScheduled()
         return
       case 'error':
         this.fail(event.code, userMessageFor(event.code, event.message), false)
     }
+  }
+
+  private handleTtsAudio(pcm: ArrayBuffer): void {
+    if (this.ttsState !== 'streaming') {
+      this.failProtocol('TTS PCM 音频必须位于 tts_start 与 tts_end 之间。')
+      return
+    }
+    if (pcm.byteLength === 0 || pcm.byteLength % 2 !== 0) {
+      this.failProtocol('TTS PCM16 音频包必须为非空偶数字节。')
+      return
+    }
+
+    let playback: Promise<void>
+    try {
+      playback = this.ttsSink.play(pcm, this.request.targetEar)
+    } catch (error: unknown) {
+      this.fail('TTS_PLAYBACK_FAILED', `TTS 播放失败：${describeError(error)}`)
+      return
+    }
+    this.pendingPlayback.add(playback)
+    void playback.then(() => {
+      this.pendingPlayback.delete(playback)
+      this.finishAfterPlaybackIsScheduled()
+    }, (error: unknown) => {
+      this.pendingPlayback.delete(playback)
+      this.fail('TTS_PLAYBACK_FAILED', `TTS 播放失败：${describeError(error)}`)
+    })
+    this.emit({ type: 'tts_audio', pcm })
+  }
+
+  private finishAfterPlaybackIsScheduled(): void {
+    if (this.terminal || !this.finishedReceived || this.pendingPlayback.size > 0) {
+      return
+    }
+    this.terminal = true
+    const event = { type: 'finished' } as const
+    this.emit(event)
+    this.resolveDone?.({ sourceText: this.sourceFinal, translatedText: this.translationFinal })
+    this.socket.close(1000, 'finished')
   }
 
   private flushPreReadyPackets(): void {
@@ -278,12 +359,17 @@ class LocalAgentTranslationSession implements TranslationSession {
     }
   }
 
+  private failProtocol(message: string): void {
+    this.fail('TRANSLATION_PROTOCOL_ERROR', message)
+  }
+
   private fail(code: TranslationErrorCode | string, message: string, close = true): void {
     if (this.terminal) {
       return
     }
     this.terminal = true
     this.preReadyPackets.length = 0
+    this.ttsSink.clear()
     const error = new TranslationClientError(code, message)
     this.emit({ type: 'error', code, message })
     this.rejectDone?.(error)
@@ -360,4 +446,8 @@ function userMessageFor(code: string, fallback: string): string {
     default:
       return fallback.length > 0 ? fallback : '翻译服务发生未知错误。'
   }
+}
+
+function describeError(error: unknown): string {
+  return error instanceof Error ? error.message : '发生未知错误。'
 }

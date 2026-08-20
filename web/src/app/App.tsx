@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { createBrowserMicrophoneEnvironment, MicrophoneService, MutablePcmPacketSink } from '../audio/MicrophoneService'
+import { createBrowserAudioContextFactory, StereoAudioPlayer } from '../audio/StereoAudioPlayer'
 import { FaceToFaceController } from '../face/FaceToFaceController'
 import { FaceToFacePage } from '../pages/FaceToFacePage'
 import { AgentHealthService, type AgentHealthSnapshot } from '../translation/AgentHealthService'
@@ -21,11 +22,18 @@ export function App(): JSX.Element {
     () => new MicrophoneService(createBrowserMicrophoneEnvironment(), packetSink),
   )
   const [healthService] = useState(() => new AgentHealthService())
+  const [audioPlayer] = useState(() => new StereoAudioPlayer(createBrowserAudioContextFactory()))
+  const audioPlayerLifecycleGeneration = useRef(0)
   const translationPort: TranslationPort = useMemo(
-    () => mode === 'local' ? new LocalAgentTranslationClient() : new DeterministicMockTranslationPort(),
-    [mode],
+    () => mode === 'local'
+      ? new LocalAgentTranslationClient({ ttsSink: audioPlayer })
+      : new DeterministicMockTranslationPort(),
+    [audioPlayer, mode],
   )
-  const controller = useMemo(() => new FaceToFaceController(translationPort), [translationPort])
+  const controller = useMemo(
+    () => new FaceToFaceController(translationPort, audioPlayer),
+    [audioPlayer, translationPort],
+  )
 
   useEffect(() => {
     const unsubscribe = healthService.subscribe(setHealth)
@@ -36,12 +44,25 @@ export function App(): JSX.Element {
     }
   }, [healthService])
 
+  useEffect(() => {
+    const lifecycleGeneration = audioPlayerLifecycleGeneration
+    const generation = ++lifecycleGeneration.current
+    return () => {
+      queueMicrotask(() => {
+        if (lifecycleGeneration.current === generation) {
+          audioPlayer.dispose()
+        }
+      })
+    }
+  }, [audioPlayer])
+
   return page === 'home'
     ? <HomePage onOpenFaceToFace={() => setPage('face-to-face')} />
     : (
         <FaceToFacePage
           controller={controller}
           onBack={() => setPage('home')}
+          audioPlayer={audioPlayer}
           microphoneService={microphoneService}
           packetSink={packetSink}
           translationMode={mode}

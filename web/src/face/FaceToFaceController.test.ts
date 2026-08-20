@@ -45,6 +45,27 @@ class MockSession implements TranslationSession {
   }
 }
 
+class DeferredPlayback {
+  public isIdle = false
+  public clearCalls = 0
+  private resolveIdle: (() => void) | null = null
+
+  public whenIdle(): Promise<void> {
+    return new Promise<void>((resolve) => { this.resolveIdle = resolve })
+  }
+
+  public clear(): void {
+    this.clearCalls += 1
+    this.finish()
+  }
+
+  public finish(): void {
+    this.isIdle = true
+    this.resolveIdle?.()
+    this.resolveIdle = null
+  }
+}
+
 class MockPort implements TranslationPort {
   public readonly requests: TranslationRequest[] = []
   public readonly sessions: MockSession[] = []
@@ -87,10 +108,29 @@ describe('FaceToFaceController', () => {
     expect(controller.getSnapshot().subtitles[0]).toMatchObject({
       sourceLanguage: 'zh', targetLanguage: 'en', listenerEar: 'right',
     })
-    controller.completePlayback()
     expect(controller.getSnapshot().state).toBe('ready')
     expect(controller.startSpeaking('right')).toBe(true)
     expect(port.requests[1]).toMatchObject({ sourceLanguage: 'en', targetLanguage: 'zh', targetEar: 'left' })
+  })
+
+  it('keeps half duplex locked until the session is finished and playback is idle', async () => {
+    const port = new MockPort()
+    const playback = new DeferredPlayback()
+    const controller = new FaceToFaceController(port, playback)
+    controller.startSpeaking('left')
+
+    const stopping = controller.stopSpeaking('你好')
+    port.sessions[0].complete({ sourceText: '你好', translatedText: 'Hello' })
+    await Promise.resolve()
+
+    expect(controller.getSnapshot().state).toBe('left_translating')
+    expect(controller.startSpeaking('right')).toBe(false)
+
+    playback.finish()
+    await stopping
+
+    expect(controller.getSnapshot().state).toBe('ready')
+    expect(controller.startSpeaking('right')).toBe(true)
   })
 
   it('swaps only languages while preserving physical ears', () => {
@@ -123,8 +163,6 @@ describe('FaceToFaceController', () => {
     await stopping
 
     expect(controller.getSnapshot()).toMatchObject({ state: 'ready', activeSide: null, subtitles: [] })
-    controller.completePlayback()
-    expect(controller.getSnapshot()).toMatchObject({ state: 'ready', activeSide: null })
   })
 
   it('recovers from an external device error only through the explicit ready path', async () => {

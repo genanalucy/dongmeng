@@ -41,6 +41,18 @@ export interface FaceToFaceSnapshot {
 
 type Listener = (snapshot: FaceToFaceSnapshot) => void
 
+export interface PlaybackIdlePort {
+  readonly isIdle: boolean
+  whenIdle(): Promise<void>
+  clear(): void
+}
+
+const immediateIdlePlayback: PlaybackIdlePort = {
+  isIdle: true,
+  whenIdle: async () => undefined,
+  clear: () => undefined,
+}
+
 export function routeForSide(
   side: Side,
   leftLanguage: LanguageCode,
@@ -75,7 +87,10 @@ export class FaceToFaceController {
   private activeSession: TranslationSession | null = null
   private unsubscribeSession: (() => void) | null = null
 
-  public constructor(private readonly translationPort: TranslationPort) {}
+  public constructor(
+    private readonly translationPort: TranslationPort,
+    private readonly playback: PlaybackIdlePort = immediateIdlePlayback,
+  ) {}
 
   public subscribe(listener: Listener): () => void {
     this.listeners.add(listener)
@@ -138,6 +153,14 @@ export class FaceToFaceController {
         return
       }
       this.addSubtitle(side, routeForSide(side, this.leftLanguage, this.rightLanguage), result)
+      await this.playback.whenIdle()
+      if (!this.isCurrentTurn(generation, side) || !this.playback.isIdle) {
+        return
+      }
+      this.clearSession()
+      this.state = 'ready'
+      this.activeSide = null
+      this.emit()
     } catch (error: unknown) {
       if (!this.isCurrentTurn(generation, side)) {
         return
@@ -146,18 +169,9 @@ export class FaceToFaceController {
     }
   }
 
-  public completePlayback(): void {
-    if (this.state !== 'left_translating' && this.state !== 'right_translating') {
-      return
-    }
-    this.clearSession()
-    this.state = 'ready'
-    this.activeSide = null
-    this.emit()
-  }
-
   public cancelActiveTurn(): void {
     this.turnGeneration += 1
+    this.playback.clear()
     this.clearSession(true)
     if (this.activeSide === null) {
       return
@@ -169,6 +183,7 @@ export class FaceToFaceController {
 
   public reportExternalError(message: string): void {
     this.turnGeneration += 1
+    this.playback.clear()
     this.clearSession(true)
     this.state = 'error'
     this.activeSide = null
@@ -231,6 +246,7 @@ export class FaceToFaceController {
   }
 
   private failActiveTurn(message: string): void {
+    this.playback.clear()
     this.clearSession()
     this.state = 'error'
     this.activeSide = null
