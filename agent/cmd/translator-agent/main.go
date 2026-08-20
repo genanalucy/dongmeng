@@ -18,14 +18,15 @@ import (
 
 func main() {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
-	if _, err := config.Load(os.Getenv); err != nil {
+	cfg, err := config.Load(os.Getenv)
+	if err != nil {
 		logger.Error("agent configuration invalid", "error_code", "INVALID_CONFIGURATION")
 		os.Exit(1)
 	}
 
 	httpServer := &http.Server{
 		Addr:              server.DefaultAddress,
-		Handler:           server.New(server.Options{ASTClient: ast.UnavailableClient{}, Logger: logger}).Handler(),
+		Handler:           server.New(server.Options{ASTClient: ast.NewConfiguredClient(cfg), Logger: logger}).Handler(),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
 		WriteTimeout:      15 * time.Second,

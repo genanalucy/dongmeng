@@ -1,5 +1,9 @@
 .codebase-memory/
 
+# Official Volcengine AST attachments and generated code (local-only; no redistribution license)
+agent/.official-ast/
+agent/internal/officialastproto/
+
 # Web dependencies and generated artifacts
 node_modules/
 dist/

@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/coder/websocket"
@@ -109,17 +110,27 @@ type browserEvent struct {
 	LogID   string `json:"logId,omitempty"`
 }
 
+type outgoingMessage struct {
+	event  *browserEvent
+	binary []byte
+}
+
 func (s *Server) runConnection(parent context.Context, conn *websocket.Conn) {
 	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
 
-	outgoing := make(chan browserEvent, 16)
+	outgoing := make(chan outgoingMessage, 16)
 	writerDone := make(chan struct{})
 	go func() {
 		defer close(writerDone)
-		for event := range outgoing {
+		for message := range outgoing {
 			writeCtx, writeCancel := context.WithTimeout(ctx, 5*time.Second)
-			err := wsjson.Write(writeCtx, conn, event)
+			var err error
+			if message.event != nil {
+				err = wsjson.Write(writeCtx, conn, *message.event)
+			} else {
+				err = conn.Write(writeCtx, websocket.MessageBinary, message.binary)
+			}
 			writeCancel()
 			if err != nil {
 				cancel()
@@ -132,13 +143,16 @@ func (s *Server) runConnection(parent context.Context, conn *websocket.Conn) {
 		<-writerDone
 	}()
 
-	emit := func(event browserEvent) bool {
+	emitMessage := func(message outgoingMessage) bool {
 		select {
-		case outgoing <- event:
+		case outgoing <- message:
 			return true
 		case <-ctx.Done():
 			return false
 		}
+	}
+	emit := func(event browserEvent) bool {
+		return emitMessage(outgoingMessage{event: &event})
 	}
 
 	start, err := readStart(ctx, conn)
@@ -150,7 +164,12 @@ func (s *Server) runConnection(parent context.Context, conn *websocket.Conn) {
 	direction := start.SourceLanguage + "→" + start.TargetLanguage
 	s.logError(start.SessionID, direction, "start_received", "", "")
 
-	sink := eventSink{emit: func(event ast.Event) {
+	sink := &eventSink{emit: func(event ast.Event) {
+		s.logError(start.SessionID, direction, "ast_"+event.Type, event.Code, event.LogID)
+		if event.Binary != nil {
+			emitMessage(outgoingMessage{binary: append([]byte(nil), event.Binary...)})
+			return
+		}
 		emit(browserEvent{Type: event.Type, Code: event.Code, Message: event.Message, LogID: event.LogID})
 	}}
 	astSession, err := s.astClient.Start(ctx, start, sink)
@@ -159,8 +178,9 @@ func (s *Server) runConnection(parent context.Context, conn *websocket.Conn) {
 		if errors.Is(err, ast.ErrCodecUnavailable) {
 			code = "AST_CODEC_UNAVAILABLE"
 		}
-		s.logError(start.SessionID, direction, "ast_start_failed", code, "")
-		emit(browserEvent{Type: "error", Code: code, Message: "translation service is unavailable"})
+		logID := ast.ErrorLogID(err)
+		s.logError(start.SessionID, direction, "ast_start_failed", code, logID)
+		emit(browserEvent{Type: "error", Code: code, Message: "translation service is unavailable", LogID: logID})
 		return
 	}
 	defer func() { _ = astSession.Close() }()
@@ -168,6 +188,7 @@ func (s *Server) runConnection(parent context.Context, conn *websocket.Conn) {
 	if !emit(browserEvent{Type: "ready"}) {
 		return
 	}
+	sink.activate()
 	queue := make(chan []byte, QueueCapacity)
 	workerDone := make(chan struct{})
 	go func() {
@@ -237,9 +258,33 @@ func (s *Server) runConnection(parent context.Context, conn *websocket.Conn) {
 	}
 }
 
-type eventSink struct{ emit func(ast.Event) }
+type eventSink struct {
+	mu      sync.Mutex
+	active  bool
+	pending []ast.Event
+	emit    func(ast.Event)
+}
 
-func (s eventSink) Emit(event ast.Event) { s.emit(event) }
+func (s *eventSink) Emit(event ast.Event) {
+	event.Binary = append([]byte(nil), event.Binary...)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.active {
+		s.pending = append(s.pending, event)
+		return
+	}
+	s.emit(event)
+}
+
+func (s *eventSink) activate() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.active = true
+	for _, event := range s.pending {
+		s.emit(event)
+	}
+	s.pending = nil
+}
 
 func readStart(ctx context.Context, conn *websocket.Conn) (ast.StartRequest, error) {
 	readCtx, cancel := context.WithTimeout(ctx, 10*time.Second)

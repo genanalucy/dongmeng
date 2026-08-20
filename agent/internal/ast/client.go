@@ -8,6 +8,20 @@ import (
 
 var ErrCodecUnavailable = errors.New("AST_CODEC_UNAVAILABLE")
 
+type logIDError interface {
+	LogID() string
+}
+
+// ErrorLogID returns a safe upstream request identifier without exposing the
+// underlying request headers or credentials.
+func ErrorLogID(err error) string {
+	var withLogID logIDError
+	if errors.As(err, &withLogID) {
+		return withLogID.LogID()
+	}
+	return ""
+}
+
 // StartRequest is the validated Browser-to-Agent session configuration.
 type StartRequest struct {
 	SessionID         string
@@ -36,12 +50,14 @@ type EventSink interface {
 	Emit(Event)
 }
 
-// Event is a browser-safe AST outcome. Details must never include credentials.
+// Event is a browser-safe AST outcome. Binary carries TTS PCM and is never
+// JSON-serialized. Details must never include credentials.
 type Event struct {
 	Type    string `json:"type"`
 	Code    string `json:"code,omitempty"`
 	Message string `json:"message,omitempty"`
 	LogID   string `json:"logId,omitempty"`
+	Binary  []byte `json:"-"`
 }
 
 // UnavailableClient is the explicit safe default. It never claims the AST

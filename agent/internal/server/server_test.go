@@ -24,6 +24,15 @@ type fakeClient struct {
 	session  *fakeSession
 }
 
+type emittingClient struct{}
+
+func (emittingClient) Start(_ context.Context, _ ast.StartRequest, sink ast.EventSink) (ast.Session, error) {
+	sink.Emit(ast.Event{Type: "tts_start"})
+	sink.Emit(ast.Event{Type: "tts_audio", Binary: []byte{1, 2, 3, 4}})
+	sink.Emit(ast.Event{Type: "tts_end"})
+	return &fakeSession{}, nil
+}
+
 func (f *fakeClient) Start(_ context.Context, _ ast.StartRequest, _ ast.EventSink) (ast.Session, error) {
 	if f.startErr != nil {
 		return nil, f.startErr
@@ -232,6 +241,33 @@ func TestQueueOverflow(t *testing.T) {
 		t.Fatalf("expected overflow, got %#v", event)
 	}
 	close(fake.session.blockAudio)
+}
+
+func TestUpstreamEventsUseOneOrderedTextAndBinaryWriter(t *testing.T) {
+	ts := testHTTPServer(emittingClient{})
+	defer ts.Close()
+	conn := dial(t, ts.URL, "http://localhost:5173")
+	defer conn.CloseNow()
+	start(t, conn, nil)
+
+	if event := readEvent(t, conn); event.Type != "ready" {
+		t.Fatalf("first event = %#v, want ready", event)
+	}
+	if event := readEvent(t, conn); event.Type != "tts_start" {
+		t.Fatalf("second event = %#v, want tts_start", event)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	messageType, payload, err := conn.Read(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if messageType != websocket.MessageBinary || string(payload) != string([]byte{1, 2, 3, 4}) {
+		t.Fatalf("binary message = (%v, %v)", messageType, payload)
+	}
+	if event := readEvent(t, conn); event.Type != "tts_end" {
+		t.Fatalf("fourth event = %#v, want tts_end", event)
+	}
 }
 
 func TestUnavailableCodecNeverSendsReady(t *testing.T) {
