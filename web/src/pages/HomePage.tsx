@@ -1,3 +1,4 @@
+import { brand } from '../brand'
 import type { AgentHealthSnapshot } from '../translation/AgentHealthService'
 
 interface HomePageProps {
@@ -17,21 +18,18 @@ export function HomePage({ onOpenSolo, onOpenFaceToFace, agentHealth }: HomePage
     <main className="home-page">
       <section className="hero" aria-labelledby="home-title">
         <div className="hero-copy">
-          <p className="eyebrow">REAL-TIME AI INTERPRETATION</p>
-          <h1 id="home-title">让每一次对话，<br /><span>自然跨越语言。</span></h1>
-          <p className="hero-description">为会议聆听与面对面交流打造的实时 AI 翻译体验。清晰字幕、定向语音，桌面与移动设备随时可用。</p>
+          <p className="eyebrow">{brand.shortName}</p>
+          <h1 id="home-title">实时翻译</h1>
+          <p className="hero-description">{brand.tagline}。选择单人同传聆听会议，或使用面对面模式进行双向交流。</p>
           <div className="hero-actions">
             <button className="primary-action" type="button" onClick={onOpenSolo}>开始单人同传</button>
-            <button className="text-action" type="button" onClick={onOpenFaceToFace}>体验面对面翻译 <span aria-hidden="true">→</span></button>
+            <button className="text-action" type="button" onClick={onOpenFaceToFace}>打开面对面翻译 <span aria-hidden="true">→</span></button>
           </div>
         </div>
-        <div className="hero-visual" aria-hidden="true">
-          <span className="signal-orbit signal-orbit-outer" />
-          <span className="signal-orbit signal-orbit-inner" />
-          <span className="signal-core"><i /><i /><i /><i /><i /></span>
-          <span className="visual-caption visual-caption-source">你好，很高兴认识你</span>
-          <span className="visual-caption visual-caption-target">Nice to meet you</span>
-        </div>
+        <aside className={`home-agent-note home-agent-${agentHealth.status}`} aria-label="服务可用性">
+          <span className="home-agent-indicator" aria-hidden="true" />
+          <div><strong>服务状态</strong><p>{agentMessage}</p></div>
+        </aside>
       </section>
 
       <section className="mode-section" aria-labelledby="mode-heading">
@@ -72,10 +70,6 @@ export function HomePage({ onOpenSolo, onOpenFaceToFace, agentHealth }: HomePage
         </div>
       </section>
 
-      <aside className={`home-agent-note home-agent-${agentHealth.status}`} aria-label="服务可用性">
-        <span className="home-agent-indicator" aria-hidden="true" />
-        <div><strong>服务状态</strong><p>{agentMessage}</p></div>
-      </aside>
     </main>
   )
 }

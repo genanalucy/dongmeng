@@ -148,6 +148,12 @@ curl --fail http://127.0.0.1:18765/api/health
 
 需要真实翻译时，先执行 `make prepare-official-ast`，再使用 `-tags officialast` 构建或运行。真实客户端通过 `github.com/coder/websocket` 的自定义 `HTTPHeader` 发送新版 API Key 或旧版 App ID/Access Token，并保留握手响应的 `X-Tt-Logid` 用于事件和错误排查；日志与浏览器事件都不会包含凭据。
 
+## Web 品牌与字幕体验
+
+Web 品牌配置集中在 `web/src/brand.tsx`，包含产品名称、短标、tagline、主色、强调色，以及可替换的文本 wordmark / mark 渲染接口。Android 如需共享品牌语义，可复用这些字段和色值，不需要依赖 Web 组件实现。
+
+单人同传与面对面翻译的字幕区采用实时消息流：停留在底部时自动跟随最新内容；用户上滑阅读历史后不会被新内容抢回底部，并会显示新消息数量和“回到最新”按钮。字幕列表可获得键盘焦点，动态内容通过 polite live region 提供给屏幕阅读器。
+
 ## 测试与本地 Smoke
 
 执行完整检查：

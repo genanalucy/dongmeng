@@ -1,4 +1,6 @@
+import { useMemo } from 'react'
 import type { SoloTranscriptTurn } from '../solo/SoloInterpretationController'
+import { useFollowLatest } from './useFollowLatest'
 
 interface SoloTranscriptPanelProps {
   readonly turns: readonly SoloTranscriptTurn[]
@@ -24,8 +26,12 @@ export function SoloTranscriptPanel({
   onCopy,
   onExport,
 }: SoloTranscriptPanelProps): JSX.Element {
+  const turnKeys = useMemo(() => turns.map((turn) => turn.id), [turns])
+  const contentVersion = turns.map((turn) => `${turn.id}:${turn.status}:${turn.sourceText}:${turn.translatedText}`).join('|')
+  const { containerRef, isAtBottom, newItemCount, onScroll, scrollToLatest } = useFollowLatest(turnKeys, contentVersion)
+
   return (
-    <section className="subtitle-panel" aria-labelledby="solo-transcript-heading">
+    <section className="subtitle-panel transcript-panel" aria-labelledby="solo-transcript-heading">
       <div className="section-heading">
         <div>
           <p className="eyebrow">LIVE TRANSCRIPT</p>
@@ -39,22 +45,40 @@ export function SoloTranscriptPanel({
       </div>
       {actionMessage !== null && <p role="status">{actionMessage}</p>}
       {turns.length === 0 ? (
-        <p className="device-description">开始录音后，原文与译文会按 Turn 实时显示在这里。</p>
+        <p className="empty-subtitle">开始录音后，原文与译文会实时显示在这里。</p>
       ) : (
-        <ol className="subtitle-list" aria-label="同传 Turn 列表">
-          {turns.map((turn) => (
-            <li key={turn.id} data-status={turn.status}>
-              <div>
-                <strong>Turn {turn.id}</strong>
-                <span>{languageLabel[turn.sourceLanguage]} → {languageLabel[turn.targetLanguage]}</span>
-                <span>{statusLabel[turn.status]}</span>
-              </div>
-              <p><strong>原文：</strong>{turn.sourceText || '…'}</p>
-              <p><strong>译文：</strong>{turn.translatedText || '…'}</p>
-              {turn.error !== null && <p role="alert" className="error-message">{turn.error}</p>}
-            </li>
-          ))}
-        </ol>
+        <div className="transcript-stream">
+          <ol
+            ref={containerRef}
+            className="subtitle-list"
+            aria-label="实时同传消息"
+            aria-live="polite"
+            aria-relevant="additions text"
+            tabIndex={0}
+            onScroll={onScroll}
+          >
+            {turns.map((turn) => (
+              <li key={turn.id} className="transcript-turn" data-status={turn.status}>
+                <div className="turn-header">
+                  <strong>对话 {turn.id}</strong>
+                  <span>{languageLabel[turn.sourceLanguage]} → {languageLabel[turn.targetLanguage]}</span>
+                  <span>{statusLabel[turn.status]}</span>
+                </div>
+                <p className="source-line"><span>原文</span>{turn.sourceText || '正在聆听…'}</p>
+                <p className="translation-line"><span>译文</span>{turn.translatedText || '等待翻译…'}</p>
+                {turn.error !== null && <p role="alert" className="error-message">{turn.error}</p>}
+              </li>
+            ))}
+          </ol>
+          {!isAtBottom && (
+            <div className="latest-message-control" role="status">
+              <button type="button" onClick={scrollToLatest}>
+                {newItemCount > 0 ? `${newItemCount} 条新消息` : '回到最新'}
+                <span aria-hidden="true">↓</span>
+              </button>
+            </div>
+          )}
+        </div>
       )}
     </section>
   )

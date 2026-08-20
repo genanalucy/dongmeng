@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react'
+import { brand, brandThemeStyle } from '../brand'
 import type { AgentHealthSnapshot } from '../translation/AgentHealthService'
 
 export type AppPage = 'home' | 'solo' | 'face-to-face'
@@ -44,14 +45,14 @@ export function AppShell({ currentPage, agentHealth, onNavigate, children }: App
   )
 
   return (
-    <div className="app-shell">
+    <div className="app-shell" style={brandThemeStyle}>
       <header className="app-header">
         <div className="app-header-inner">
-          <button className="brand" type="button" onClick={() => onNavigate('home')} aria-label="返回首页">
-            <span className="brand-mark" aria-hidden="true"><span /></span>
+          <button className="brand" type="button" onClick={() => onNavigate('home')} aria-label={`${brand.name}，返回首页`}>
+            {brand.renderMark({ className: 'brand-mark' })}
             <span className="brand-copy">
-              <strong>VERBA</strong>
-              <small>REAL-TIME INTERPRETATION</small>
+              <strong>{brand.renderWordmark()}</strong>
+              <small>{brand.tagline}</small>
             </span>
           </button>
           {renderNavigation('desktop-nav', '主导航')}

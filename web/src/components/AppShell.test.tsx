@@ -1,5 +1,6 @@
 import { fireEvent, render, screen, within } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
+import { brand } from '../brand'
 import { AppShell } from './AppShell'
 
 const onlineHealth = { status: 'online', checkedAtMs: 1, checking: false, errorMessage: null } as const
@@ -12,7 +13,7 @@ describe('AppShell', () => {
       </AppShell>,
     )
 
-    expect(screen.getByRole('button', { name: '返回首页' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: `${brand.name}，返回首页` })).toHaveTextContent(brand.shortName)
     expect(screen.getByRole('status')).toHaveTextContent('Agent 在线')
 
     const desktopNavigation = screen.getByRole('navigation', { name: '主导航' })
@@ -32,7 +33,7 @@ describe('AppShell', () => {
 
     fireEvent.click(within(screen.getByRole('navigation', { name: '主导航' })).getByRole('button', { name: '面对面' }))
     fireEvent.click(within(screen.getByRole('navigation', { name: '移动端主导航' })).getByRole('button', { name: '单人' }))
-    fireEvent.click(screen.getByRole('button', { name: '返回首页' }))
+    fireEvent.click(screen.getByRole('button', { name: `${brand.name}，返回首页` }))
 
     expect(onNavigate).toHaveBeenNthCalledWith(1, 'face-to-face')
     expect(onNavigate).toHaveBeenNthCalledWith(2, 'solo')

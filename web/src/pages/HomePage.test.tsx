@@ -8,7 +8,7 @@ describe('HomePage', () => {
   it('presents the hero and both translation modes', () => {
     render(<HomePage onOpenSolo={() => undefined} onOpenFaceToFace={() => undefined} agentHealth={health} />)
 
-    expect(screen.getByRole('heading', { level: 1, name: /让每一次对话/ })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { level: 1, name: '实时翻译' })).toBeInTheDocument()
     const modes = screen.getByRole('region', { name: '选择翻译方式' })
     expect(within(modes).getByRole('heading', { name: '单人同声传译' })).toBeInTheDocument()
     expect(within(modes).getByRole('heading', { name: '面对面翻译' })).toBeInTheDocument()
@@ -29,7 +29,7 @@ describe('HomePage', () => {
     const onOpenFaceToFace = vi.fn()
     render(<HomePage onOpenSolo={() => undefined} onOpenFaceToFace={onOpenFaceToFace} agentHealth={health} />)
 
-    fireEvent.click(screen.getByRole('button', { name: /体验面对面翻译/ }))
+    fireEvent.click(screen.getByRole('button', { name: /打开面对面翻译/ }))
     fireEvent.click(screen.getByRole('button', { name: /进入面对面翻译/ }))
 
     expect(onOpenFaceToFace).toHaveBeenCalledTimes(2)
