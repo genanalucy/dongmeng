@@ -186,8 +186,44 @@ describe('LocalAgentTranslationClient', () => {
     expect(socket.closeCalls).toEqual([{ code: 1000, reason: 'finished' }])
   })
 
+  it('accepts multiple sequential TTS sentences in one translation session', async () => {
+    const socket = new FakeWebSocket()
+    const sink = new RecordingTtsSink()
+    const session = createClient(socket, sink).start({ sourceLanguage: 'zh', targetLanguage: 'en', targetEar: 'right' })
+    const events: TranslationSessionEvent[] = []
+    session.subscribe((event) => events.push(event))
+    socket.open()
+    socket.receiveJson({ type: 'ready' })
+
+    const firstPcm = new ArrayBuffer(2)
+    socket.receiveJson({ type: 'tts_start' })
+    socket.receiveRaw(firstPcm)
+    socket.receiveJson({ type: 'tts_end' })
+    const secondPcm = new ArrayBuffer(4)
+    socket.receiveJson({ type: 'tts_start' })
+    socket.receiveRaw(secondPcm)
+    socket.receiveJson({ type: 'tts_end' })
+    socket.receiveJson({ type: 'finished' })
+
+    await expect(session.done).resolves.toEqual({ sourceText: '', translatedText: '' })
+    expect(events).toEqual([
+      { type: 'ready' },
+      { type: 'tts_start' }, { type: 'tts_audio', pcm: firstPcm }, { type: 'tts_end' },
+      { type: 'tts_start' }, { type: 'tts_audio', pcm: secondPcm }, { type: 'tts_end' },
+      { type: 'finished' },
+    ])
+    expect(sink.packets).toEqual([
+      { pcm: firstPcm, targetEar: 'right' },
+      { pcm: secondPcm, targetEar: 'right' },
+    ])
+  })
+
   it.each([
     ['binary before tts_start', (socket: FakeWebSocket) => socket.receiveRaw(new ArrayBuffer(2))],
+    ['nested tts_start', (socket: FakeWebSocket) => {
+      socket.receiveJson({ type: 'tts_start' })
+      socket.receiveJson({ type: 'tts_start' })
+    }],
     ['tts_end before tts_start', (socket: FakeWebSocket) => socket.receiveJson({ type: 'tts_end' })],
     ['empty PCM', (socket: FakeWebSocket) => {
       socket.receiveJson({ type: 'tts_start' })

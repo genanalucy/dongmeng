@@ -241,7 +241,7 @@ class LocalAgentTranslationSession implements TranslationSession {
         }
         return
       case 'tts_start':
-        if (!this.ready || this.ttsState !== 'not_started') {
+        if (!this.ready || this.ttsState === 'streaming') {
           this.failProtocol('本地翻译 Agent 的 tts_start 顺序无效。')
           return
         }
