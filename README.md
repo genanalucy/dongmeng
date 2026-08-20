@@ -1,6 +1,6 @@
 # 面对面实时翻译（本地交付说明）
 
-这是一个本机回环部署的面对面翻译原型：Web 负责设备选择、麦克风采集、半双工 PTT 与左右声道播放；Go Agent 提供 `127.0.0.1:18765` 上的 health 和 WebSocket 边界。浏览器开发服务器默认在 `http://127.0.0.1:5173`，并将 `/api`、`/ws` 代理至 Agent。
+这是一个本机回环部署的面对面翻译原型：Web 负责设备选择、麦克风采集、手动半双工 PTT、自动交替录音与左右声道播放；Go Agent 提供 `127.0.0.1:18765` 上的 health 和 WebSocket 边界。浏览器开发服务器默认在 `http://127.0.0.1:5173`，并将 `/api`、`/ws` 代理至 Agent。
 
 > **构建模式**：默认 Go 构建不依赖本地官方 protobuf，并安全返回 `AST_CODEC_UNAVAILABLE`；使用 `officialast` build tag 的构建会启用真实火山引擎 AST 2.0 WebSocket、字幕与 PCM TTS 链路。官方生成代码不纳入 Git，须先运行固定 URL 与 SHA256 校验的准备脚本。
 
@@ -136,7 +136,9 @@ curl --fail http://127.0.0.1:18765/api/health
 - **模拟模式（Mock）**：完全在 Web 内运行确定性的演示文案。不会调用 Agent，也不会向外部服务发送麦克风 PCM；适合演示 PTT 流程、语言交换、字幕和左右耳路由。
 - **Local Agent 模式**：Web 会检测 `GET /api/health`，并通过 Vite 代理连接本机 Agent 的 `/ws/translate`。Agent 离线时页面会锁定开始翻译，不会静默回退为 Mock；启动 Agent 后点击“手动检测”。
 
-PTT 为半双工：一侧按住说话时另一侧不可同时开始。当前固定语言为中文 ↔ English；说话者耳静音，译文目标为对方耳。使用 tagged 构建时，Agent 发送官方 protobuf `StartSession`、`TaskRequest`、`FinishSession`，等待 `SessionStarted` 后才向 Browser 报 `ready`，并将字幕映射成 JSON、将 TTS PCM 作为二进制 WebSocket 消息发送。火山的 `TTSSentenceStart` / `TTSSentenceEnd` 只在 Agent 内部消费，不进入 Browser 协议；零 TTS 和多分句 TTS 均由同一套 `ready → PCM* → finished` 生命周期处理，Browser 在 `finished` 且本地播放完全清空后才恢复 READY。
+页面提供两种录音控制。**手动 PTT** 保持严格半双工：一侧按住说话时另一侧不可开始，直到翻译和播放结束。**自动交替** 点击开始后默认持续录制左耳侧；右耳用户按住右侧按钮可立即抢话，松开后立即恢复左侧录音。自动模式始终只有一侧麦克风采集，但上一 Turn 的翻译和 TTS 可与下一 Turn 录音并行；多个 TTS Turn 按创建顺序播放，避免中英文 PCM 交错。点击“停止连续录音”只停止采集和自动重启，已说完的后台 Turn 仍会完成翻译与播放；离页、设备断开或全局错误则取消全部后台 Turn。
+
+当前固定语言为中文 ↔ English；说话者耳静音，译文目标为对方耳。使用 tagged 构建时，Agent 发送官方 protobuf `StartSession`、`TaskRequest`、`FinishSession`，等待 `SessionStarted` 后才向 Browser 报 `ready`，并将字幕映射成 JSON、将 TTS PCM 作为二进制 WebSocket 消息发送。火山的 `TTSSentenceStart` / `TTSSentenceEnd` 只在 Agent 内部消费，不进入 Browser 协议；零 TTS 和多分句 TTS 均由同一套 `ready → PCM* → finished` 生命周期处理。
 
 ## `AST_CODEC_UNAVAILABLE` 的含义
 

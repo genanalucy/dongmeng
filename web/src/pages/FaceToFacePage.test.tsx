@@ -105,6 +105,67 @@ describe('FaceToFacePage', () => {
     await waitFor(() => expect(rightButton).toBeEnabled(), { timeout: 1200 })
   })
 
+  it('automatically records left, lets right interrupt immediately, and resumes left on release', () => {
+    const microphoneService = {
+      ...createMicrophoneService(),
+      start: vi.fn(async () => 'started' as const),
+      stop: vi.fn(),
+    }
+    const controller = new FaceToFaceController(new DeterministicMockTranslationPort())
+    render(
+      <FaceToFacePage
+        controller={controller}
+        onBack={() => undefined}
+        deviceService={createReadyDeviceService()}
+        audioPlayer={createAudioPlayer()}
+        microphoneService={microphoneService}
+      />,
+    )
+    fireEvent.click(screen.getByRole('button', { name: '自动交替' }))
+    fireEvent.click(screen.getByRole('button', { name: '开始连续录音' }))
+    expect(controller.getSnapshot()).toMatchObject({ state: 'left_speaking', activeSide: 'left' })
+    expect(microphoneService.start).toHaveBeenCalledTimes(1)
+
+    const rightButton = screen.getByRole('button', { name: /右耳.*按住抢话 English/i })
+    fireEvent.pointerDown(rightButton, { pointerId: 1 })
+    expect(controller.getSnapshot()).toMatchObject({ state: 'right_speaking', activeSide: 'right' })
+    expect(microphoneService.start).toHaveBeenCalledTimes(2)
+
+    fireEvent.pointerUp(rightButton, { pointerId: 1 })
+    expect(controller.getSnapshot()).toMatchObject({ state: 'left_speaking', activeSide: 'left' })
+    expect(microphoneService.start).toHaveBeenCalledTimes(3)
+
+    fireEvent.click(screen.getByRole('button', { name: '停止连续录音' }))
+    expect(controller.getSnapshot().state).toBe('ready')
+    expect(screen.getByRole('button', { name: '开始连续录音' })).toBeInTheDocument()
+  })
+
+  it('rolls an automatic left recording into a new turn after 25 seconds', () => {
+    vi.useFakeTimers()
+    const microphoneService = {
+      ...createMicrophoneService(),
+      start: vi.fn(async () => 'started' as const),
+      stop: vi.fn(),
+    }
+    const controller = new FaceToFaceController(new DeterministicMockTranslationPort())
+    render(
+      <FaceToFacePage
+        controller={controller}
+        onBack={() => undefined}
+        deviceService={createReadyDeviceService()}
+        audioPlayer={createAudioPlayer()}
+        microphoneService={microphoneService}
+      />,
+    )
+    fireEvent.click(screen.getByRole('button', { name: '自动交替' }))
+    fireEvent.click(screen.getByRole('button', { name: '开始连续录音' }))
+
+    vi.advanceTimersByTime(25_000)
+
+    expect(microphoneService.start).toHaveBeenCalledTimes(2)
+    expect(controller.getSnapshot()).toMatchObject({ state: 'left_speaking', activeSide: 'left' })
+  })
+
   it('starts capture immediately from the selected device and stops it on pointerup', () => {
     const microphoneService = {
       ...createMicrophoneService(),
@@ -389,6 +450,31 @@ describe('FaceToFacePage', () => {
     await waitFor(() => expect(audioPlayer.reset).toHaveBeenCalledOnce())
     await waitFor(() => expect(screen.getAllByText('耳机已断开，请重新连接。').length).toBeGreaterThan(0))
     expect(screen.getByRole('button', { name: '测试左耳' })).toBeDisabled()
+  })
+
+  it('stops automatic capture and cancels background turns on unmount', () => {
+    const microphoneService = {
+      ...createMicrophoneService(),
+      start: vi.fn(async () => 'started' as const),
+      stop: vi.fn(),
+    }
+    const controller = new FaceToFaceController(new DeterministicMockTranslationPort())
+    const { unmount } = render(
+      <FaceToFacePage
+        controller={controller}
+        onBack={() => undefined}
+        deviceService={createReadyDeviceService()}
+        audioPlayer={createAudioPlayer()}
+        microphoneService={microphoneService}
+      />,
+    )
+    fireEvent.click(screen.getByRole('button', { name: '自动交替' }))
+    fireEvent.click(screen.getByRole('button', { name: '开始连续录音' }))
+
+    unmount()
+
+    expect(microphoneService.stop).toHaveBeenCalled()
+    expect(controller.getSnapshot()).toMatchObject({ state: 'ready', activeSide: null })
   })
 
   it('keeps injected resources owned by the caller after unmount', () => {

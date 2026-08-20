@@ -28,6 +28,7 @@ import type { AgentHealthSnapshot } from '../translation/AgentHealthService'
 import type { Ear, Side } from '../translation/TranslationPort'
 
 type TranslationMode = 'local' | 'mock'
+type ConversationControlMode = 'manual' | 'auto'
 
 interface FaceToFacePageProps {
   readonly controller: FaceToFaceController
@@ -140,10 +141,14 @@ export function FaceToFacePage({
   const [deviceBusy, setDeviceBusy] = useState(false)
   const [deviceActionError, setDeviceActionError] = useState<string | null>(null)
   const [earTestError, setEarTestError] = useState<string | null>(null)
+  const [conversationControlMode, setConversationControlMode] = useState<ConversationControlMode>('manual')
+  const [autoRunning, setAutoRunning] = useState(false)
   const playbackTimer = useRef<number | null>(null)
   const playbackGeneration = useRef(0)
   const captureGeneration = useRef(0)
   const activeCaptureSide = useRef<Side | null>(null)
+  const activeBackgroundTurnId = useRef<number | null>(null)
+  const autoRunningRef = useRef(false)
   const deviceSnapshotRef = useRef<AudioDeviceSnapshot>(initialDeviceSnapshot)
 
   useEffect(() => controller.subscribe(setSnapshot), [controller])
@@ -203,19 +208,38 @@ export function FaceToFacePage({
     packetSink.setSink(null)
   }, [clearPlaybackTimer, microphoneService, packetSink])
 
+  const stopAutoRun = useCallback((cancelBackground = false) => {
+    autoRunningRef.current = false
+    setAutoRunning(false)
+    const turnId = activeBackgroundTurnId.current
+    activeBackgroundTurnId.current = null
+    stopCapture()
+    if (turnId !== null) {
+      controller.finishBackgroundTurn(turnId, demoPhrases[controller.getSnapshot().activeSide ?? 'left'])
+    }
+    if (cancelBackground) {
+      controller.cancelAllTurns()
+    }
+  }, [controller, stopCapture])
+
   useEffect(() => {
     const side = activeCaptureSide.current
-    if (side !== null && controller.getSnapshot().state !== `${side}_speaking`) {
-      stopCapture()
+    if (side === null || controller.getSnapshot().state === `${side}_speaking`) {
+      return
     }
-  }, [controller, snapshot.state, stopCapture])
+    if (autoRunningRef.current) {
+      stopAutoRun(true)
+      return
+    }
+    stopCapture()
+  }, [controller, snapshot.state, stopAutoRun, stopCapture])
 
   const cancelActiveTurn = useCallback(() => {
     playbackGeneration.current += 1
-    stopCapture()
+    stopAutoRun(true)
     audioPlayer.stop()
     controller.cancelActiveTurn()
-  }, [audioPlayer, controller, stopCapture])
+  }, [audioPlayer, controller, stopAutoRun])
 
   useEffect(() => {
     const lifecycleGeneration = audioPlayerLifecycleGeneration
@@ -232,6 +256,10 @@ export function FaceToFacePage({
       window.removeEventListener('blur', onBlur)
       document.removeEventListener('visibilitychange', onVisibilityChange)
       playbackGeneration.current += 1
+      autoRunningRef.current = false
+      activeBackgroundTurnId.current = null
+      stopCapture()
+      controller.cancelAllTurns()
       clearPlaybackTimer()
       audioPlayer.stop()
       if (!ownsAudioPlayer) {
@@ -243,7 +271,7 @@ export function FaceToFacePage({
         }
       })
     }
-  }, [audioPlayer, cancelActiveTurn, clearPlaybackTimer, ownsAudioPlayer])
+  }, [audioPlayer, cancelActiveTurn, clearPlaybackTimer, controller, ownsAudioPlayer, stopCapture])
 
   const devicesReady = deviceSnapshot.microphonePermissionGranted
     && deviceSnapshot.selectedInputDeviceId !== null
@@ -256,12 +284,12 @@ export function FaceToFacePage({
     }
     let active = true
     playbackGeneration.current += 1
-    stopCapture()
-    audioPlayer.reset()
     queueMicrotask(() => {
       if (!active) {
         return
       }
+      stopAutoRun(true)
+      audioPlayer.reset()
       setTestedEars(new Set())
       setEarTestError('耳机已断开，请重新连接。')
       controller.reportExternalError('耳机已断开，请重新连接。')
@@ -269,7 +297,7 @@ export function FaceToFacePage({
     return () => {
       active = false
     }
-  }, [audioPlayer, controller, deviceSnapshot.outputDisconnected, stopCapture])
+  }, [audioPlayer, controller, deviceSnapshot.outputDisconnected, stopAutoRun])
 
   useEffect(() => {
     if (!devicesReady || !controller.recoverFromExternalError()) {
@@ -375,6 +403,70 @@ export function FaceToFacePage({
     })
   }
 
+  const finishAutoCapture = useCallback((side: Side) => {
+    const turnId = activeBackgroundTurnId.current
+    if (turnId === null || activeCaptureSide.current !== side) {
+      return
+    }
+    activeBackgroundTurnId.current = null
+    stopCapture()
+    controller.finishBackgroundTurn(turnId, demoPhrases[side])
+  }, [controller, stopCapture])
+
+  function startAutoCapture(side: Side): void {
+    const selectedInputDeviceId = deviceSnapshot.selectedInputDeviceId
+    if (!autoRunningRef.current || !devicesReady || selectedInputDeviceId === null
+      || translationMode === 'local' && agentHealth.status !== 'online') {
+      return
+    }
+    const turnId = controller.startBackgroundTurn(side)
+    if (turnId === null) {
+      return
+    }
+    const generation = ++captureGeneration.current
+    activeBackgroundTurnId.current = turnId
+    activeCaptureSide.current = side
+    packetSink.setSink({ push: (packet) => controller.pushAudioForTurn(turnId, packet) })
+    clearPlaybackTimer()
+    playbackTimer.current = window.setTimeout(() => {
+      if (!autoRunningRef.current || captureGeneration.current !== generation) {
+        return
+      }
+      finishAutoCapture(side)
+      startAutoCapture(side)
+    }, MAX_PTT_DURATION_MS)
+    void microphoneService.start(selectedInputDeviceId).catch((error: unknown) => {
+      if (captureGeneration.current !== generation) {
+        return
+      }
+      stopAutoRun(true)
+      controller.reportExternalError(
+        error instanceof Error ? error.message : '无法开始麦克风采集。',
+      )
+    })
+  }
+
+  const startAutoRun = (): void => {
+    if (autoRunningRef.current || !devicesReady || localAgentUnavailable) {
+      return
+    }
+    controller.cancelAllTurns()
+    autoRunningRef.current = true
+    setAutoRunning(true)
+    startAutoCapture('left')
+  }
+
+  const switchAutoCapture = (side: Side): void => {
+    if (!autoRunningRef.current || activeCaptureSide.current === side) {
+      return
+    }
+    const currentSide = activeCaptureSide.current
+    if (currentSide !== null) {
+      finishAutoCapture(currentSide)
+    }
+    startAutoCapture(side)
+  }
+
   const testEar = useCallback(async (ear: Ear): Promise<void> => {
     const selectedOutputDeviceId = deviceSnapshotRef.current.selectedOutputDeviceId
     if (selectedOutputDeviceId === null || deviceSnapshotRef.current.outputDisconnected) {
@@ -405,6 +497,7 @@ export function FaceToFacePage({
   const localAgentUnavailable = translationMode === 'local' && agentHealth.status !== 'online'
   const controlsLocked = !devicesReady || localAgentUnavailable
     || snapshot.state !== 'ready' && !leftSpeaking && !rightSpeaking
+  const autoControlsLocked = !devicesReady || localAgentUnavailable
   const modeLabel = translationMode === 'local' ? 'Local Agent 模式' : '模拟模式'
   const healthLabel = agentHealth.checking
     ? 'CHECKING'
@@ -415,7 +508,7 @@ export function FaceToFacePage({
       <header className="face-header">
         <button type="button" className="back-button" onClick={onBack}>← 返回主页</button>
         <div>
-          <p className="eyebrow">FACE TO FACE · HALF DUPLEX</p>
+          <p className="eyebrow">FACE TO FACE · {conversationControlMode === 'manual' ? 'HALF DUPLEX' : 'AUTO ALTERNATING'}</p>
           <h1>面对面翻译</h1>
         </div>
         <span className={translationMode === 'local' ? 'agent-badge' : 'mock-badge'}>{modeLabel}</span>
@@ -439,13 +532,13 @@ export function FaceToFacePage({
           type="button"
           className={translationMode === 'local' ? 'mode-selected' : 'mode-option'}
           onClick={() => onSelectTranslationMode?.('local')}
-          disabled={snapshot.state !== 'ready'}
+          disabled={snapshot.state !== 'ready' || autoRunning}
         >Local Agent 模式</button>
         <button
           type="button"
           className={translationMode === 'mock' ? 'mode-selected' : 'mode-option'}
           onClick={() => onSelectTranslationMode?.('mock')}
-          disabled={snapshot.state !== 'ready'}
+          disabled={snapshot.state !== 'ready' || autoRunning}
         >模拟模式</button>
         {localAgentUnavailable && !agentHealth.checking && (
           <p role="alert" className="error-message">
@@ -453,6 +546,33 @@ export function FaceToFacePage({
               ? '请启动 Agent 后手动检测。'
               : `检测失败：${agentHealth.errorMessage}。`}不会自动切换到模拟模式。
           </p>
+        )}
+      </section>
+
+      <section className="translation-mode-panel" aria-label="录音控制模式">
+        <strong>录音控制</strong>
+        <button
+          type="button"
+          className={conversationControlMode === 'manual' ? 'mode-selected' : 'mode-option'}
+          disabled={autoRunning || snapshot.state !== 'ready'}
+          onClick={() => setConversationControlMode('manual')}
+        >手动 PTT</button>
+        <button
+          type="button"
+          className={conversationControlMode === 'auto' ? 'mode-selected' : 'mode-option'}
+          disabled={autoRunning || snapshot.state !== 'ready'}
+          onClick={() => setConversationControlMode('auto')}
+        >自动交替</button>
+        {conversationControlMode === 'auto' && (
+          <button
+            type="button"
+            className={autoRunning ? 'stop-auto-button' : 'start-auto-button'}
+            disabled={!autoRunning && autoControlsLocked}
+            onClick={() => autoRunning ? stopAutoRun(false) : startAutoRun()}
+          >{autoRunning ? '停止连续录音' : '开始连续录音'}</button>
+        )}
+        {conversationControlMode === 'auto' && (
+          <span>{autoRunning ? '左耳默认录音；按住右耳按钮抢话，松开恢复左耳。' : '点击开始后自动从左耳录音。'}</span>
         )}
       </section>
 
@@ -495,9 +615,11 @@ export function FaceToFacePage({
         <PushToTalkButton
           side="left"
           language={snapshot.leftLanguage}
-          disabled={controlsLocked || rightSpeaking}
+          disabled={conversationControlMode === 'auto' || controlsLocked || rightSpeaking}
           speaking={leftSpeaking}
           simulated={translationMode === 'mock'}
+          instructionOverride={conversationControlMode === 'auto' ? (autoRunning ? '默认持续录音' : '等待开始') : undefined}
+          detailOverride={conversationControlMode === 'auto' ? '右耳松开后自动恢复' : undefined}
           onPointerDown={() => startTurn('left')}
           onPointerUp={() => stopTurn('left')}
           onPointerCancel={() => stopTurn('left')}
@@ -506,17 +628,29 @@ export function FaceToFacePage({
         <PushToTalkButton
           side="right"
           language={snapshot.rightLanguage}
-          disabled={controlsLocked || leftSpeaking}
+          disabled={conversationControlMode === 'auto' ? !autoRunning || autoControlsLocked : controlsLocked || leftSpeaking}
           speaking={rightSpeaking}
           simulated={translationMode === 'mock'}
-          onPointerDown={() => startTurn('right')}
-          onPointerUp={() => stopTurn('right')}
-          onPointerCancel={() => stopTurn('right')}
-          onPointerLeave={() => stopTurn('right')}
+          instructionOverride={conversationControlMode === 'auto' ? '按住抢话' : undefined}
+          detailOverride={conversationControlMode === 'auto' ? '松开立即恢复左耳录音' : undefined}
+          onPointerDown={(event) => {
+            if (conversationControlMode === 'auto') {
+              event.currentTarget.setPointerCapture?.(event.pointerId)
+              switchAutoCapture('right')
+              return
+            }
+            startTurn('right')
+          }}
+          onPointerUp={() => conversationControlMode === 'auto' ? switchAutoCapture('left') : stopTurn('right')}
+          onPointerCancel={() => conversationControlMode === 'auto' ? switchAutoCapture('left') : stopTurn('right')}
+          onLostPointerCapture={() => { if (conversationControlMode === 'auto') switchAutoCapture('left') }}
+          onPointerLeave={() => { if (conversationControlMode === 'manual') stopTurn('right') }}
         />
       </section>
 
-      <p className="half-duplex-note">严格半双工：设备准备完成前不能开始；一侧说话与译文处理期间，另一侧 PTT 保持禁用。</p>
+      <p className="half-duplex-note">{conversationControlMode === 'manual'
+        ? '严格半双工：设备准备完成前不能开始；一侧说话与译文处理期间，另一侧 PTT 保持禁用。'
+        : '自动交替：同一时刻仅一侧录音；后台翻译和译文播放不会阻塞下一轮录音。'}</p>
       {snapshot.errorMessage !== null && <p role="alert" className="error-message">{snapshot.errorMessage}</p>}
       <SubtitlePanel subtitles={snapshot.subtitles} simulated={translationMode === 'mock'} />
       <EarTestPanel

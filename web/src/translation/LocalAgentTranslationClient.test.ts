@@ -348,9 +348,14 @@ describe('LocalAgentTranslationClient', () => {
   it('reports a playback rejection after partial completion without clearing other queued audio', async () => {
     const socket = new FakeWebSocket()
     let rejectPlayback: (reason: Error) => void = () => undefined
+    let markPlaybackStarted: () => void = () => undefined
+    const playbackStarted = new Promise<void>((resolve) => { markPlaybackStarted = resolve })
     let clearCalls = 0
     const sink: TtsPcmSink = {
-      play: () => new Promise<void>((_resolve, reject) => { rejectPlayback = reject }),
+      play: () => new Promise<void>((_resolve, reject) => {
+        rejectPlayback = reject
+        markPlaybackStarted()
+      }),
       clear: () => { clearCalls += 1 },
       isIdle: false,
       whenIdle: async () => undefined,
@@ -361,6 +366,7 @@ describe('LocalAgentTranslationClient', () => {
     socket.receiveRaw(new ArrayBuffer(2))
     socket.receiveJson({ type: 'error', code: 'VOLCENGINE_SESSION_FAILED' })
 
+    await playbackStarted
     rejectPlayback(new Error('output disconnected'))
 
     await expect(session.done).rejects.toMatchObject({ code: 'TTS_PLAYBACK_FAILED' })
@@ -435,6 +441,43 @@ describe('LocalAgentTranslationClient', () => {
 
     expect(sentKinds(socket)).toEqual(['start', 'finish'])
     expect(socket.closeCalls).toEqual([])
+  })
+
+  it('plays concurrent session TTS in turn creation order', async () => {
+    const firstSocket = new FakeWebSocket()
+    const secondSocket = new FakeWebSocket()
+    const sockets = [firstSocket, secondSocket]
+    let socketIndex = 0
+    const played: number[] = []
+    const sink: TtsPcmSink = {
+      play: async (pcm) => { played.push(new Uint8Array(pcm)[0]) },
+      clear: () => undefined,
+      isIdle: true,
+      whenIdle: async () => undefined,
+    }
+    const client = new LocalAgentTranslationClient({
+      createWebSocket: () => sockets[socketIndex++],
+      createSessionId: () => crypto.randomUUID(),
+      ttsSink: sink,
+    })
+    const first = client.start({ sourceLanguage: 'zh', targetLanguage: 'en', targetEar: 'right' })
+    const second = client.start({ sourceLanguage: 'en', targetLanguage: 'zh', targetEar: 'left' })
+    firstSocket.open()
+    secondSocket.open()
+    firstSocket.receiveJson({ type: 'ready' })
+    secondSocket.receiveJson({ type: 'ready' })
+
+    secondSocket.receiveRaw(new Uint8Array([2, 0]).buffer)
+    await Promise.resolve()
+    expect(played).toEqual([])
+
+    firstSocket.receiveRaw(new Uint8Array([1, 0]).buffer)
+    firstSocket.receiveJson({ type: 'finished' })
+    secondSocket.receiveJson({ type: 'finished' })
+
+    await expect(first.done).resolves.toBeDefined()
+    await expect(second.done).resolves.toBeDefined()
+    expect(played).toEqual([1, 2])
   })
 
   it('creates an independent WebSocket session for every start', () => {

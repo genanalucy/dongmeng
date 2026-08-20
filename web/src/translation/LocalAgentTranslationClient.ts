@@ -85,6 +85,39 @@ export class CountingTtsPcmSink implements TtsPcmSink {
   }
 }
 
+interface TtsPlaybackLane {
+  play(pcm: ArrayBuffer, targetEar: TranslationRequest['targetEar']): Promise<void>
+  finish(): void
+}
+
+class OrderedTtsPlayback {
+  private tail: Promise<void> = Promise.resolve()
+
+  public constructor(private readonly sink: TtsPcmSink) {}
+
+  public createLane(): TtsPlaybackLane {
+    const predecessor = this.tail.catch(() => undefined)
+    let release: () => void = () => undefined
+    const laneDone = new Promise<void>((resolve) => { release = resolve })
+    this.tail = laneDone
+    let playback = predecessor
+    let finished = false
+    return {
+      play: (pcm, targetEar) => {
+        playback = playback.then(() => this.sink.play(pcm, targetEar))
+        return playback
+      },
+      finish: () => {
+        if (finished) {
+          return
+        }
+        finished = true
+        void playback.then(release, release)
+      },
+    }
+  }
+}
+
 export interface LocalAgentTranslationClientOptions {
   readonly createWebSocket?: (url: string) => WebSocketPort
   readonly createSessionId?: () => string
@@ -97,12 +130,14 @@ export class LocalAgentTranslationClient implements TranslationPort {
   private readonly createSessionId: () => string
   private readonly webSocketUrl: string
   private readonly ttsSink: TtsPcmSink
+  private readonly orderedPlayback: OrderedTtsPlayback
 
   public constructor(options: LocalAgentTranslationClientOptions = {}) {
     this.createWebSocket = options.createWebSocket ?? createBrowserWebSocket
     this.createSessionId = options.createSessionId ?? createSessionId
     this.webSocketUrl = options.webSocketUrl ?? '/ws/translate'
     this.ttsSink = options.ttsSink ?? discardTtsPcmSink
+    this.orderedPlayback = new OrderedTtsPlayback(this.ttsSink)
   }
 
   public start(request: TranslationRequest): TranslationSession {
@@ -111,6 +146,7 @@ export class LocalAgentTranslationClient implements TranslationPort {
       this.createSessionId(),
       request,
       this.ttsSink,
+      this.orderedPlayback.createLane(),
     )
   }
 }
@@ -138,6 +174,7 @@ class LocalAgentTranslationSession implements TranslationSession {
     private readonly sessionId: string,
     private readonly request: TranslationRequest,
     private readonly ttsSink: TtsPcmSink,
+    private readonly playbackLane: TtsPlaybackLane,
   ) {
     this.done = new Promise<TranslationResult>((resolve, reject) => {
       this.resolveDone = resolve
@@ -205,6 +242,7 @@ class LocalAgentTranslationSession implements TranslationSession {
     }
     this.terminal = true
     this.preReadyPackets.length = 0
+    this.playbackLane.finish()
     this.ttsSink.clear()
     this.socket.close(1000, 'cancelled')
   }
@@ -294,6 +332,7 @@ class LocalAgentTranslationSession implements TranslationSession {
           return
         }
         this.finishedReceived = true
+        this.playbackLane.finish()
         this.finishAfterPlaybackIsScheduled()
         return
       case 'error':
@@ -318,7 +357,7 @@ class LocalAgentTranslationSession implements TranslationSession {
     this.hasTtsAudio = true
     let playback: Promise<void>
     try {
-      playback = this.ttsSink.play(pcm, this.request.targetEar)
+      playback = this.playbackLane.play(pcm, this.request.targetEar)
     } catch (error: unknown) {
       this.fail('TTS_PLAYBACK_FAILED', `TTS 播放失败：${describeError(error)}`)
       return
@@ -357,6 +396,7 @@ class LocalAgentTranslationSession implements TranslationSession {
   private beginPartialCompletion(): void {
     this.finishSent = true
     this.finishedReceived = true
+    this.playbackLane.finish()
     this.preReadyPackets.length = 0
     this.finishAfterPlaybackIsScheduled()
   }
@@ -415,6 +455,7 @@ class LocalAgentTranslationSession implements TranslationSession {
     }
     this.terminal = true
     this.preReadyPackets.length = 0
+    this.playbackLane.finish()
     if (clearPlayback) {
       this.ttsSink.clear()
     }

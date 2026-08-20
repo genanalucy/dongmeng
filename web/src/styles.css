@@ -39,8 +39,9 @@ h2 { margin-bottom: 0; }
 .connection-strip { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 14px 18px; border-radius: 12px; color: #0f5132; background: #d9f7e7; }
 .status-dot { width: 10px; height: 10px; border-radius: 50%; background: #16a34a; box-shadow: 0 0 0 4px rgb(22 163 74 / .18); }
 .status-dot.offline { background: #dc2626; box-shadow: 0 0 0 4px rgb(220 38 38 / .18); }
-.health-check-button, .mode-option, .mode-selected { border: 1px solid #a9c1cf; border-radius: 8px; padding: 6px 10px; color: #102a43; background: #fff; font-weight: 700; }
-.mode-selected { color: #fff; border-color: #007c91; background: #007c91; }
+.health-check-button, .mode-option, .mode-selected, .start-auto-button, .stop-auto-button { border: 1px solid #a9c1cf; border-radius: 8px; padding: 6px 10px; color: #102a43; background: #fff; font-weight: 700; }
+.mode-selected, .start-auto-button { color: #fff; border-color: #007c91; background: #007c91; }
+.stop-auto-button { color: #fff; border-color: #b42318; background: #b42318; }
 .translation-mode-panel { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 14px 18px; border: 1px solid #cbdce5; border-radius: 12px; background: #fff; }
 .translation-mode-panel .error-message { width: 100%; margin: 4px 0 0; }
 .language-panel { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 20px; }

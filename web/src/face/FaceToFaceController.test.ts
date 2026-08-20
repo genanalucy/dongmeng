@@ -228,4 +228,76 @@ describe('FaceToFaceController', () => {
     expect(controller.getSnapshot().subtitles).toEqual([])
     expect(controller.startSpeaking('left')).toBe(true)
   })
+
+  it('starts a right background turn immediately after finishing left capture', () => {
+    const port = new MockPort()
+    const controller = new FaceToFaceController(port)
+
+    const leftTurnId = controller.startBackgroundTurn('left')
+    expect(leftTurnId).not.toBeNull()
+    controller.finishBackgroundTurn(leftTurnId as number, '你好')
+
+    const rightTurnId = controller.startBackgroundTurn('right')
+    expect(rightTurnId).not.toBeNull()
+    expect(rightTurnId).not.toBe(leftTurnId)
+    expect(controller.getSnapshot()).toMatchObject({ state: 'right_speaking', activeSide: 'right' })
+    expect(port.sessions[0].finishTexts).toEqual(['你好'])
+    expect(port.requests[1]).toMatchObject({ sourceLanguage: 'en', targetLanguage: 'zh', targetEar: 'left' })
+  })
+
+  it('updates the previous background turn subtitle after the next turn starts', () => {
+    const port = new MockPort()
+    const controller = new FaceToFaceController(port)
+
+    const leftTurnId = controller.startBackgroundTurn('left')
+    controller.finishBackgroundTurn(leftTurnId as number, '你好')
+    const rightTurnId = controller.startBackgroundTurn('right')
+    port.sessions[1].emit({ type: 'source_partial', text: 'Hello' })
+    port.sessions[0].emit({ type: 'translation_final', text: 'Late hello' })
+
+    expect(controller.getSnapshot().subtitles).toEqual([
+      expect.objectContaining({ id: leftTurnId, side: 'left', translatedText: 'Late hello' }),
+      expect.objectContaining({ id: rightTurnId, side: 'right', sourceText: 'Hello' }),
+    ])
+    expect(controller.getSnapshot()).toMatchObject({ state: 'right_speaking', activeSide: 'right' })
+  })
+
+  it('does not let an old background turn error disrupt the new capturing turn', () => {
+    const port = new MockPort()
+    const controller = new FaceToFaceController(port)
+
+    const leftTurnId = controller.startBackgroundTurn('left')
+    controller.finishBackgroundTurn(leftTurnId as number, '你好')
+    const rightTurnId = controller.startBackgroundTurn('right')
+    port.sessions[0].emit({ type: 'error', code: 'VOLCENGINE_SESSION_FAILED', message: '旧 Turn 失败' })
+
+    expect(controller.getSnapshot()).toMatchObject({
+      state: 'right_speaking', activeSide: 'right', errorMessage: null,
+    })
+    controller.pushAudioForTurn(rightTurnId as number, {
+      data: new ArrayBuffer(2560), audioLevel: 0.3, capturedAtMs: 2,
+    })
+    expect(port.sessions[1].packets).toHaveLength(1)
+  })
+
+  it('cancels every background turn and removes their partial subtitles', () => {
+    const port = new MockPort()
+    const controller = new FaceToFaceController(port)
+
+    const leftTurnId = controller.startBackgroundTurn('left')
+    port.sessions[0].emit({ type: 'source_partial', text: '你好' })
+    controller.finishBackgroundTurn(leftTurnId as number, '你好')
+    controller.startBackgroundTurn('right')
+    port.sessions[1].emit({ type: 'source_partial', text: 'Hello' })
+
+    controller.cancelAllTurns()
+
+    expect(port.sessions.map((session) => session.cancelCalls)).toEqual([1, 1])
+    expect(controller.getSnapshot()).toMatchObject({
+      state: 'ready', activeSide: null, subtitles: [], errorMessage: null,
+    })
+    port.sessions[0].emit({ type: 'translation_final', text: 'stale' })
+    port.sessions[1].emit({ type: 'translation_final', text: '过期' })
+    expect(controller.getSnapshot().subtitles).toEqual([])
+  })
 })
