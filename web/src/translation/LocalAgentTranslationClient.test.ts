@@ -184,6 +184,49 @@ describe('LocalAgentTranslationClient', () => {
     expect(socket.closeCalls).toEqual([{ code: 1000, reason: 'finished' }])
   })
 
+  it('aggregates incremental final subtitle segments and previews partial text', async () => {
+    const socket = new FakeWebSocket()
+    const session = createClient(socket).start({ sourceLanguage: 'en', targetLanguage: 'zh', targetEar: 'left' })
+    const events: TranslationSessionEvent[] = []
+    session.subscribe((event) => events.push(event))
+    socket.open()
+    socket.receiveJson({ type: 'ready' })
+
+    socket.receiveJson({ type: 'source_final', message: 'Hello.' })
+    socket.receiveJson({ type: 'translation_final', message: '你好。' })
+    socket.receiveJson({ type: 'source_partial', message: 'How are' })
+    socket.receiveJson({ type: 'translation_partial', message: '你最近' })
+    socket.receiveJson({ type: 'source_final', message: 'How are you?' })
+    socket.receiveJson({ type: 'translation_final', message: '你最近怎么样？' })
+    socket.receiveJson({ type: 'finished' })
+
+    await expect(session.done).resolves.toEqual({
+      sourceText: 'Hello. How are you?',
+      translatedText: '你好。你最近怎么样？',
+    })
+    expect(events).toContainEqual({ type: 'source_partial', text: 'Hello. How are' })
+    expect(events).toContainEqual({ type: 'translation_partial', text: '你好。你最近' })
+    expect(events).toContainEqual({ type: 'source_final', text: 'Hello. How are you?' })
+    expect(events).toContainEqual({ type: 'translation_final', text: '你好。你最近怎么样？' })
+  })
+
+  it('does not duplicate cumulative final subtitle payloads', async () => {
+    const socket = new FakeWebSocket()
+    const session = createClient(socket).start({ sourceLanguage: 'en', targetLanguage: 'zh', targetEar: 'left' })
+    socket.open()
+    socket.receiveJson({ type: 'ready' })
+    socket.receiveJson({ type: 'source_final', message: 'Hello.' })
+    socket.receiveJson({ type: 'source_final', message: 'Hello. How are you?' })
+    socket.receiveJson({ type: 'translation_final', message: '你好。' })
+    socket.receiveJson({ type: 'translation_final', message: '你好。你怎么样？' })
+    socket.receiveJson({ type: 'finished' })
+
+    await expect(session.done).resolves.toEqual({
+      sourceText: 'Hello. How are you?',
+      translatedText: '你好。你怎么样？',
+    })
+  })
+
   it('accepts zero TTS and finishes immediately', async () => {
     const socket = new FakeWebSocket()
     const session = createClient(socket).start({ sourceLanguage: 'zh', targetLanguage: 'en', targetEar: 'right' })

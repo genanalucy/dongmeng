@@ -238,28 +238,40 @@ class LocalAgentTranslationSession implements TranslationSession {
         }
         return
       case 'source_partial':
+        if (!this.ready || this.finishedReceived) {
+          this.failProtocol('本地翻译 Agent 的字幕事件顺序无效。')
+          return
+        }
+        this.emit({
+          type: 'source_partial',
+          text: previewSegment(this.sourceFinal, event.text, this.request.sourceLanguage),
+        })
+        return
       case 'translation_partial':
         if (!this.ready || this.finishedReceived) {
           this.failProtocol('本地翻译 Agent 的字幕事件顺序无效。')
           return
         }
-        this.emit(event)
+        this.emit({
+          type: 'translation_partial',
+          text: previewSegment(this.translationFinal, event.text, this.request.targetLanguage),
+        })
         return
       case 'source_final':
         if (!this.ready || this.finishedReceived) {
           this.failProtocol('本地翻译 Agent 的原文终稿顺序无效。')
           return
         }
-        this.sourceFinal = event.text
-        this.emit(event)
+        this.sourceFinal = appendFinalSegment(this.sourceFinal, event.text, this.request.sourceLanguage)
+        this.emit({ type: 'source_final', text: this.sourceFinal })
         return
       case 'translation_final':
         if (!this.ready || this.finishedReceived) {
           this.failProtocol('本地翻译 Agent 的译文终稿顺序无效。')
           return
         }
-        this.translationFinal = event.text
-        this.emit(event)
+        this.translationFinal = appendFinalSegment(this.translationFinal, event.text, this.request.targetLanguage)
+        this.emit({ type: 'translation_final', text: this.translationFinal })
         return
       case 'finished':
         if (!this.ready || this.finishedReceived) {
@@ -408,6 +420,31 @@ function parseAgentEvent(raw: string): AgentEvent | null {
     default:
       return null
   }
+}
+
+function appendFinalSegment(current: string, incoming: string, language: TranslationRequest['sourceLanguage']): string {
+  const base = current.trim()
+  const next = incoming.trim()
+  if (base.length === 0 || next.length === 0) {
+    return base || next
+  }
+  if (next.startsWith(base)) {
+    return next
+  }
+  if (base.endsWith(next)) {
+    return base
+  }
+  const maxOverlap = Math.min(base.length, next.length)
+  for (let length = maxOverlap; length > 0; length -= 1) {
+    if (base.endsWith(next.slice(0, length))) {
+      return base + next.slice(length)
+    }
+  }
+  return `${base}${language === 'en' ? ' ' : ''}${next}`
+}
+
+function previewSegment(finalized: string, partial: string, language: TranslationRequest['sourceLanguage']): string {
+  return appendFinalSegment(finalized, partial, language)
 }
 
 function hasOnlyKeys(value: Record<string, unknown>, allowed: readonly string[]): boolean {

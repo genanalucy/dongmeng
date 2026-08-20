@@ -86,6 +86,7 @@ export class FaceToFaceController {
   private turnGeneration = 0
   private activeSession: TranslationSession | null = null
   private unsubscribeSession: (() => void) | null = null
+  private activeSubtitleID: number | null = null
 
   public constructor(
     private readonly translationPort: TranslationPort,
@@ -124,6 +125,7 @@ export class FaceToFaceController {
       targetEar: route.listenerEar,
     })
     this.activeSession = session
+    this.activeSubtitleID = null
     this.unsubscribeSession = session.subscribe((event) => this.handleSessionEvent(event, side, route))
     this.activeSide = side
     this.state = speakingState[side]
@@ -152,7 +154,7 @@ export class FaceToFaceController {
       if (!this.isCurrentTurn(generation, side)) {
         return
       }
-      this.addSubtitle(side, routeForSide(side, this.leftLanguage, this.rightLanguage), result)
+      this.upsertSubtitle(side, routeForSide(side, this.leftLanguage, this.rightLanguage), result)
       await this.playback.whenIdle()
       if (!this.isCurrentTurn(generation, side) || !this.playback.isIdle) {
         return
@@ -172,6 +174,7 @@ export class FaceToFaceController {
   public cancelActiveTurn(): void {
     this.turnGeneration += 1
     this.playback.clear()
+    this.discardActiveSubtitle()
     this.clearSession(true)
     if (this.activeSide === null) {
       return
@@ -184,6 +187,7 @@ export class FaceToFaceController {
   public reportExternalError(message: string): void {
     this.turnGeneration += 1
     this.playback.clear()
+    this.discardActiveSubtitle()
     this.clearSession(true)
     this.state = 'error'
     this.activeSide = null
@@ -222,8 +226,12 @@ export class FaceToFaceController {
       this.failActiveTurn(event.message)
       return
     }
-    if (event.type === 'translation_final') {
-      // The final subtitle remains owned by `session.done`, preserving a single terminal boundary.
+    if (event.type === 'source_partial' || event.type === 'source_final') {
+      this.upsertSubtitle(side, route, { sourceText: event.text, translatedText: this.activeSubtitle()?.translatedText ?? '' })
+      return
+    }
+    if (event.type === 'translation_partial' || event.type === 'translation_final') {
+      this.upsertSubtitle(side, route, { sourceText: this.activeSubtitle()?.sourceText ?? '', translatedText: event.text })
       return
     }
     if (event.type === 'tts_audio') {
@@ -239,14 +247,45 @@ export class FaceToFaceController {
       && this.state === translatingState[side]
   }
 
-  private addSubtitle(side: Side, route: TurnRoute, result: TranslationResult): void {
-    this.turnCounter += 1
-    this.subtitles.push({ id: this.turnCounter, side, ...route, sourceText: result.sourceText, translatedText: result.translatedText })
+  private upsertSubtitle(side: Side, route: TurnRoute, result: TranslationResult): void {
+    const existingIndex = this.activeSubtitleID === null
+      ? -1
+      : this.subtitles.findIndex((subtitle) => subtitle.id === this.activeSubtitleID)
+    if (existingIndex >= 0) {
+      this.subtitles[existingIndex] = {
+        ...this.subtitles[existingIndex],
+        sourceText: result.sourceText,
+        translatedText: result.translatedText,
+      }
+    } else {
+      this.turnCounter += 1
+      this.activeSubtitleID = this.turnCounter
+      this.subtitles.push({ id: this.turnCounter, side, ...route, sourceText: result.sourceText, translatedText: result.translatedText })
+    }
     this.emit()
+  }
+
+  private activeSubtitle(): SubtitleTurn | null {
+    if (this.activeSubtitleID === null) {
+      return null
+    }
+    return this.subtitles.find((subtitle) => subtitle.id === this.activeSubtitleID) ?? null
+  }
+
+  private discardActiveSubtitle(): void {
+    if (this.activeSubtitleID === null) {
+      return
+    }
+    const index = this.subtitles.findIndex((subtitle) => subtitle.id === this.activeSubtitleID)
+    if (index >= 0) {
+      this.subtitles.splice(index, 1)
+    }
+    this.activeSubtitleID = null
   }
 
   private failActiveTurn(message: string): void {
     this.playback.clear()
+    this.discardActiveSubtitle()
     this.clearSession()
     this.state = 'error'
     this.activeSide = null
@@ -258,6 +297,7 @@ export class FaceToFaceController {
   private clearSession(cancel = false): void {
     const session = this.activeSession
     this.activeSession = null
+    this.activeSubtitleID = null
     this.unsubscribeSession?.()
     this.unsubscribeSession = null
     if (cancel) {

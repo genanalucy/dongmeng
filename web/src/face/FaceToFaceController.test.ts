@@ -35,12 +35,13 @@ class MockSession implements TranslationSession {
   }
 
   public complete(result: TranslationResult): void {
+    this.emit({ type: 'source_final', text: result.sourceText })
     this.emit({ type: 'translation_final', text: result.translatedText })
     this.emit({ type: 'finished' })
     this.resolveDone?.(result)
   }
 
-  private emit(event: TranslationSessionEvent): void {
+  public emit(event: TranslationSessionEvent): void {
     this.listeners.forEach((listener) => listener(event))
   }
 }
@@ -111,6 +112,20 @@ describe('FaceToFaceController', () => {
     expect(controller.getSnapshot().state).toBe('ready')
     expect(controller.startSpeaking('right')).toBe(true)
     expect(port.requests[1]).toMatchObject({ sourceLanguage: 'en', targetLanguage: 'zh', targetEar: 'left' })
+  })
+
+  it('shows and updates streaming subtitles before the session is finished', () => {
+    const port = new MockPort()
+    const controller = new FaceToFaceController(port)
+    controller.startSpeaking('left')
+
+    port.sessions[0].emit({ type: 'source_partial', text: '你好' })
+    expect(controller.getSnapshot().subtitles).toHaveLength(1)
+    expect(controller.getSnapshot().subtitles[0]).toMatchObject({ sourceText: '你好', translatedText: '' })
+
+    port.sessions[0].emit({ type: 'translation_partial', text: 'Hello' })
+    expect(controller.getSnapshot().subtitles).toHaveLength(1)
+    expect(controller.getSnapshot().subtitles[0]).toMatchObject({ sourceText: '你好', translatedText: 'Hello' })
   })
 
   it('keeps half duplex locked until the session is finished and playback is idle', async () => {
