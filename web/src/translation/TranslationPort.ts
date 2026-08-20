@@ -2,12 +2,13 @@ import type { PcmPacket } from '../audio/PcmCapturePipeline'
 
 export type LanguageCode = 'zh' | 'en'
 export type Ear = 'left' | 'right'
+export type TranslationPlaybackTarget = Ear | 'both' | 'captions'
 export type Side = 'left' | 'right'
 
 export interface TranslationRequest {
   readonly sourceLanguage: LanguageCode
   readonly targetLanguage: LanguageCode
-  readonly targetEar: Ear
+  readonly targetEar: TranslationPlaybackTarget
 }
 
 export interface TranslationResult {

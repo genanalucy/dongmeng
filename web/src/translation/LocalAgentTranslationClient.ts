@@ -8,6 +8,7 @@ import type {
   TranslationResult,
   TranslationSession,
   TranslationSessionEvent,
+  TranslationPlaybackTarget,
 } from './TranslationPort'
 
 const MAX_BUFFERED_AMOUNT = 1024 * 1024
@@ -49,8 +50,10 @@ export interface WebSocketPort {
   close(code?: number, reason?: string): void
 }
 
+type AudiblePlaybackTarget = Exclude<TranslationPlaybackTarget, 'captions'>
+
 export interface TtsPcmSink {
-  play(pcm: ArrayBuffer, targetEar: TranslationRequest['targetEar']): Promise<void>
+  play(pcm: ArrayBuffer, targetEar: AudiblePlaybackTarget): Promise<void>
   clear(): void
   readonly isIdle: boolean
   whenIdle(): Promise<void>
@@ -86,7 +89,7 @@ export class CountingTtsPcmSink implements TtsPcmSink {
 }
 
 interface TtsPlaybackLane {
-  play(pcm: ArrayBuffer, targetEar: TranslationRequest['targetEar']): Promise<void>
+  play(pcm: ArrayBuffer, targetEar: AudiblePlaybackTarget): Promise<void>
   finish(): void
 }
 
@@ -355,6 +358,9 @@ class LocalAgentTranslationSession implements TranslationSession {
     }
 
     this.hasTtsAudio = true
+    if (this.request.targetEar === 'captions') {
+      return
+    }
     let playback: Promise<void>
     try {
       playback = this.playbackLane.play(pcm, this.request.targetEar)

@@ -25,6 +25,7 @@ h2 { margin-bottom: 0; }
 .mode-card h2 { margin: 18px 0 8px; }
 .mode-card p { min-height: 30px; color: #486581; }
 .future-mode { background: #f6f9fb; }
+.solo-mode { border-color: #78bac3; background: linear-gradient(145deg, #fff, #eaf7f8); }
 .future-note { font-size: .875rem; }
 .mode-card button, .secondary-button { border: 0; border-radius: 10px; padding: 12px 16px; font-weight: 800; color: #fff; background: #007c91; }
 .mock-notice, .mock-badge { color: #7a4d00; background: #fff1cc; border: 1px solid #f0c66b; }
@@ -89,11 +90,18 @@ h2 { margin-bottom: 0; }
 .subtitle-turn p { margin-bottom: 8px; font-size: 1.05rem; }
 .turn-meta, .subtitle-turn small { color: #486581; font-size: .82rem; }
 .translation-line { font-weight: 800; }
+.subtitle-list > li:not(.subtitle-turn) { display: grid; gap: 8px; padding: 16px; border: 1px solid #d5e5eb; border-radius: 14px; background: #f7fbfc; }
+.subtitle-list > li:not(.subtitle-turn) > div { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px 14px; color: #486581; }
+.subtitle-list > li:not(.subtitle-turn) p { margin: 0; line-height: 1.55; }
+.subtitle-list > li[data-status="capturing"] { border-color: #42a7b3; box-shadow: 0 0 0 3px rgb(66 167 179 / .12); }
+.language-panel fieldset { min-width: 0; display: flex; flex-wrap: wrap; gap: 10px 16px; grid-column: 1 / -1; padding: 14px 16px; border: 1px solid #cbdce5; border-radius: 12px; background: #fff; }
+.language-panel fieldset label { display: inline-flex; align-items: center; gap: 6px; }
 .ear-tests { display: flex; gap: 10px; flex-wrap: wrap; }
 .secondary-button { background: #425b76; }
 .ear-test-note { max-width: 370px; margin: 0; color: #627d98; font-size: .875rem; line-height: 1.5; }
 
 @media (max-width: 720px) {
+  .home-page, .face-page { width: min(100% - 20px, 1120px); padding-top: 22px; padding-bottom: calc(48px + env(safe-area-inset-bottom)); }
   .face-header, .section-heading, .ear-test-panel { align-items: flex-start; flex-direction: column; }
   .mode-grid, .ptt-grid, .device-select-grid, .capture-metrics { grid-template-columns: 1fr; }
   .language-panel { gap: 10px; grid-template-columns: 1fr auto 1fr; }

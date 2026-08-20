@@ -1,25 +1,26 @@
 import type { AgentHealthSnapshot } from '../translation/AgentHealthService'
 
 interface HomePageProps {
+  readonly onOpenSolo: () => void
   readonly onOpenFaceToFace: () => void
   readonly agentHealth: AgentHealthSnapshot
 }
 
-export function HomePage({ onOpenFaceToFace, agentHealth }: HomePageProps): JSX.Element {
+export function HomePage({ onOpenSolo, onOpenFaceToFace, agentHealth }: HomePageProps): JSX.Element {
   return (
     <main className="home-page">
       <section className="hero">
         <p className="eyebrow">REAL-TIME AI TRANSLATION</p>
         <h1>实时 AI 翻译</h1>
-        <p>为两人各戴一只耳机的面对面沟通准备的半双工翻译体验。</p>
+        <p>连续单人同传与双人面对面翻译，面向桌面和移动设备的实时语音体验。</p>
       </section>
       <section className="mode-grid" aria-label="翻译模式">
-        <article className="mode-card future-mode">
+        <article className="mode-card solo-mode">
           <span aria-hidden="true">🎧</span>
           <h2>单人同声传译</h2>
           <p>会议、演讲与日常沟通。</p>
-          <p className="future-note">后续功能：本轮不连接音频或翻译服务。</p>
-          <button type="button" disabled>后续开放</button>
+          <p className="future-note">连续录音、实时字幕与可选双耳同传语音。</p>
+          <button type="button" onClick={onOpenSolo}>进入单人同传</button>
         </article>
         <article className="mode-card featured-mode">
           <span aria-hidden="true">🎧🎧</span>

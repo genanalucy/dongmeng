@@ -231,6 +231,22 @@ describe('LocalAgentTranslationClient', () => {
     })
   })
 
+  it('consumes captions-only PCM without playing it', async () => {
+    const socket = new FakeWebSocket()
+    const sink = new RecordingTtsSink()
+    const session = createClient(socket, sink).start({ sourceLanguage: 'zh', targetLanguage: 'en', targetEar: 'captions' })
+    const events: TranslationSessionEvent[] = []
+    session.subscribe((event) => events.push(event))
+    socket.open()
+    socket.receiveJson({ type: 'ready' })
+    socket.receiveRaw(new ArrayBuffer(2))
+    socket.receiveJson({ type: 'finished' })
+
+    await expect(session.done).resolves.toEqual({ sourceText: '', translatedText: '' })
+    expect(sink.packets).toEqual([])
+    expect(events.some((event) => event.type === 'tts_audio')).toBe(false)
+  })
+
   it('accepts zero TTS and finishes immediately', async () => {
     const socket = new FakeWebSocket()
     const session = createClient(socket).start({ sourceLanguage: 'zh', targetLanguage: 'en', targetEar: 'right' })

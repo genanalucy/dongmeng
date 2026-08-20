@@ -9,6 +9,9 @@ interface AudioDevicePanelProps {
   readonly onRefresh: () => Promise<void>
   readonly onSelectInput: (deviceId: string) => Promise<void>
   readonly onSelectOutput: (deviceId: string) => Promise<void>
+  readonly title?: string
+  readonly description?: string
+  readonly requireOutput?: boolean
 }
 
 function deviceLabel(label: string, index: number, kind: '输入' | '输出'): string {
@@ -24,22 +27,25 @@ export function AudioDevicePanel({
   onRefresh,
   onSelectInput,
   onSelectOutput,
+  title = '面对面准备',
+  description = '先明确授权麦克风，再分别选择输入麦克风和耳机输出。',
+  requireOutput = true,
 }: AudioDevicePanelProps): JSX.Element {
   const inputReady = snapshot.microphonePermissionGranted && snapshot.selectedInputDeviceId !== null
-  const outputReady = snapshot.selectedOutputDeviceId !== null && !snapshot.outputDisconnected
+  const outputReady = !requireOutput || snapshot.selectedOutputDeviceId !== null && !snapshot.outputDisconnected
 
   return (
     <section className="device-panel" aria-labelledby="device-heading">
       <div className="section-heading">
         <div>
           <p className="eyebrow">DEVICE PREPARATION</p>
-          <h2 id="device-heading">面对面准备</h2>
+          <h2 id="device-heading">{title}</h2>
         </div>
         <span className={`device-status ${inputReady && outputReady ? 'ready' : 'pending'}`}>
           {inputReady && outputReady ? '设备已准备' : '等待设备准备'}
         </span>
       </div>
-      <p className="device-description">先在此页明确授权麦克风，再分别选择输入麦克风和耳机输出。翻译仍为 Mock，不会连接火山服务。</p>
+      <p className="device-description">{description}</p>
       <div className="device-actions">
         <button type="button" className="secondary-button" disabled={busy} onClick={() => { void onRequestPermission() }}>
           {snapshot.microphonePermissionGranted ? '重新授权麦克风' : '授权麦克风'}
@@ -77,7 +83,7 @@ export function AudioDevicePanel({
       {!outputSelectionSupported && (
         <p className="fallback-message">此浏览器无法直接选择音频输出。请在 macOS 系统设置中将蓝牙耳机设为默认音频输出。</p>
       )}
-      {snapshot.outputDisconnected && <p role="alert" className="error-message">耳机已断开，请重新连接。</p>}
+      {requireOutput && snapshot.outputDisconnected && <p role="alert" className="error-message">耳机已断开，请重新连接。</p>}
       {snapshot.errorMessage !== null && <p role="alert" className="error-message">{snapshot.errorMessage}</p>}
       {actionError !== null && <p role="alert" className="error-message">{actionError}</p>}
     </section>
