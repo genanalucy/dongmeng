@@ -1,0 +1,222 @@
+package com.verba.interpretation.ui
+
+import android.app.Application
+import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.viewModelScope
+import com.verba.interpretation.audio.CaptureResult
+import com.verba.interpretation.audio.MicrophoneCapture
+import com.verba.interpretation.audio.TtsPlayer
+import com.verba.interpretation.protocol.AgentEvent
+import com.verba.interpretation.protocol.AgentSocket
+import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicLong
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
+
+class FaceToFaceViewModel(application: Application) : AndroidViewModel(application) {
+    private val coordinator = FaceToFaceCoordinator<AgentSocket>()
+    private val mutableState = MutableStateFlow(coordinator.state())
+    val state: StateFlow<FaceToFaceState> = mutableState.asStateFlow()
+    private val microphone = MicrophoneCapture(application)
+    private val player = TtsPlayer()
+    private val playbackExecutor = Executors.newSingleThreadExecutor { task ->
+        Thread(task, "verba-face-tts").apply { isDaemon = true }
+    }
+    private val actionLock = Any()
+    private val playbackGeneration = AtomicLong()
+    private var timerJob: Job? = null
+    private var nextTurnId = 1L
+
+    fun setMode(mode: FaceToFaceMode) = synchronized(actionLock) {
+        if (coordinator.setMode(mode)) publishState()
+    }
+
+    fun manualPress(side: FaceToFaceSide) = synchronized(actionLock) {
+        if (coordinator.state().mode != FaceToFaceMode.MANUAL || coordinator.state().phase != FaceToFacePhase.IDLE) return
+        val created = createSession(side)
+        if (!startSocket(created)) return
+        applyTransition(coordinator.manualPress(created.turnId, side, created.socket))
+    }
+
+    fun manualRelease() = synchronized(actionLock) {
+        applyTransition(coordinator.endManualInput())
+    }
+
+    fun startAuto() = synchronized(actionLock) {
+        if (coordinator.state().mode != FaceToFaceMode.AUTO || coordinator.state().phase != FaceToFacePhase.IDLE) return
+        val created = createSession(FaceToFaceSide.LEFT)
+        if (!startSocket(created)) return
+        applyTransition(coordinator.startAuto(created.turnId, created.socket))
+    }
+
+    fun pressRightAuto() = switchAuto(FaceToFaceSide.RIGHT)
+
+    fun releaseRightAuto() = switchAuto(FaceToFaceSide.LEFT)
+
+    fun stopAuto() = synchronized(actionLock) {
+        applyTransition(coordinator.stopAuto())
+    }
+
+    fun microphonePermissionDenied() = fail("未授予麦克风权限。")
+
+    fun clearError() = synchronized(actionLock) {
+        coordinator.clearError()
+        publishState()
+    }
+
+    /** Navigation, ON_STOP and fatal errors discard all background work instead of draining it. */
+    fun cancel() = synchronized(actionLock) {
+        playbackGeneration.incrementAndGet()
+        applyTransition(coordinator.cancelAll())
+        player.stop()
+    }
+
+    private fun switchAuto(side: FaceToFaceSide) = synchronized(actionLock) {
+        val snapshot = coordinator.state()
+        if (snapshot.mode != FaceToFaceMode.AUTO || snapshot.phase != FaceToFacePhase.LISTENING || !snapshot.captureActive || snapshot.activeSide == side) return
+        val created = createSession(side)
+        if (!startSocket(created)) return
+        applyTransition(coordinator.switchAuto(created.turnId, side, created.socket))
+    }
+
+    private fun rollAuto(expectedTurnId: Long) = synchronized(actionLock) {
+        val snapshot = coordinator.state()
+        val side = snapshot.activeSide ?: return
+        if (snapshot.mode != FaceToFaceMode.AUTO || snapshot.phase != FaceToFacePhase.LISTENING || !snapshot.captureActive) return
+        val created = createSession(side)
+        if (!startSocket(created)) return
+        applyTransition(coordinator.rollAuto(expectedTurnId, created.turnId, created.socket))
+    }
+
+    private data class CreatedSession(val turnId: Long, val side: FaceToFaceSide, val socket: AgentSocket)
+
+    private fun createSession(side: FaceToFaceSide): CreatedSession {
+        val turnId = nextTurnId++
+        val socket = AgentSocket(
+            onEvent = { event -> synchronized(actionLock) { handleEvent(turnId, event) } },
+            onTts = { pcm -> synchronized(actionLock) { queuePlayback(coordinator.offerTts(turnId, pcm)) } },
+            onFailure = { message -> synchronized(actionLock) { handleSessionFailure(turnId, message) } },
+        )
+        return CreatedSession(turnId, side, socket)
+    }
+
+    private fun startSocket(created: CreatedSession): Boolean {
+        val source = if (created.side == FaceToFaceSide.LEFT) "zh" else "en"
+        val target = if (created.side == FaceToFaceSide.LEFT) "en" else "zh"
+        if (created.socket.start(source, target)) return true
+        fail("无法创建翻译会话。")
+        return false
+    }
+
+    private fun applyTransition(transition: FaceToFaceCoordinator.Transition<AgentSocket>) {
+        if (transition.cancelTimer) {
+            timerJob?.cancel()
+            timerJob = null
+        }
+        transition.cancelSessions.forEach { it.cancel() }
+        transition.finishSessions.forEach { it.finish() }
+        if (transition.stopCapture) microphone.stop()
+        if (transition.startCapture) startCapture()
+        transition.timer?.let(::scheduleTimer)
+        publishState()
+    }
+
+    private fun startCapture() {
+        when (val result = microphone.start(
+            onPacket = { packet ->
+                if (!coordinator.sendToActive { it.sendAudio(packet) }) fail("音频包无法发送，连接尚未就绪或已断开。")
+            },
+            onError = ::fail,
+        )) {
+            CaptureResult.Started -> Unit
+            CaptureResult.AlreadyRunning -> fail("麦克风已在录音。")
+            CaptureResult.Stopped -> fail("麦克风未启动。")
+            is CaptureResult.Error -> fail(result.message)
+        }
+    }
+
+    private fun scheduleTimer(intent: FaceToFaceCoordinator.TimerIntent) {
+        timerJob?.cancel()
+        timerJob = viewModelScope.launch {
+            delay(intent.delayMillis)
+            if (coordinator.state().mode == FaceToFaceMode.MANUAL) {
+                synchronized(actionLock) { applyTransition(coordinator.endManualInput(intent.turnId)) }
+            } else {
+                rollAuto(intent.turnId)
+            }
+        }
+    }
+
+    private fun handleEvent(turnId: Long, event: AgentEvent) {
+        if (!coordinator.containsTurn(turnId)) return
+        when (event) {
+            AgentEvent.Ready -> Unit
+            AgentEvent.Finished -> {
+                queuePlayback(coordinator.sessionFinished(turnId))
+                publishState()
+            }
+            is AgentEvent.Subtitle -> {
+                coordinator.updateSubtitle(turnId, event.kind.toSubtitleKind(), event.text)
+                publishState()
+            }
+            is AgentEvent.Error -> handleSessionFailure(turnId, "${event.code}: ${event.message}")
+        }
+    }
+
+    private fun handleSessionFailure(turnId: Long, message: String) {
+        if (coordinator.isActiveTurn(turnId)) {
+            fail(message)
+            return
+        }
+        queuePlayback(coordinator.sessionFinished(turnId))
+        publishState()
+    }
+
+    private fun queuePlayback(first: FaceToFaceCoordinator.PlaybackWork?) {
+        if (first == null) return
+        val generation = playbackGeneration.get()
+        playbackExecutor.execute {
+            var work: FaceToFaceCoordinator.PlaybackWork? = first
+            while (work != null && playbackGeneration.get() == generation) {
+                val result = when (val current = work) {
+                    is FaceToFaceCoordinator.PlaybackWork.Chunk -> player.play(current.pcm, current.route)
+                    is FaceToFaceCoordinator.PlaybackWork.Drain -> player.awaitDrained()
+                }
+                if (result.isFailure) {
+                    fail(result.exceptionOrNull()?.message ?: "TTS 播放失败。")
+                    return@execute
+                }
+                val drained = work is FaceToFaceCoordinator.PlaybackWork.Drain
+                work = coordinator.playbackWorkFinished(work.turnId, drained)
+                publishState()
+            }
+        }
+    }
+
+    private fun fail(message: String) = synchronized(actionLock) {
+        playbackGeneration.incrementAndGet()
+        applyTransition(coordinator.cancelAll(message))
+        player.stop()
+    }
+
+    private fun publishState() {
+        mutableState.value = coordinator.state()
+    }
+
+    override fun onCleared() {
+        cancel()
+        playbackExecutor.shutdownNow()
+        super.onCleared()
+    }
+}
+
+private fun AgentEvent.Subtitle.Kind.toSubtitleKind(): SubtitleKind = when (this) {
+    AgentEvent.Subtitle.Kind.SOURCE_PARTIAL -> SubtitleKind.SOURCE_PARTIAL
+    AgentEvent.Subtitle.Kind.SOURCE_FINAL -> SubtitleKind.SOURCE_FINAL
+    AgentEvent.Subtitle.Kind.TRANSLATION_PARTIAL -> SubtitleKind.TRANSLATION_PARTIAL
+    AgentEvent.Subtitle.Kind.TRANSLATION_FINAL -> SubtitleKind.TRANSLATION_FINAL
+}

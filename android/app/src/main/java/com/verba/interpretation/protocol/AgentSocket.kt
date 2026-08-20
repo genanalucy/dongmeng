@@ -19,12 +19,14 @@ class AgentSocket(
     private var socket: WebSocket? = null
     private var ready = false
     private var finishing = false
+    private var terminalDelivered = false
     private val pendingAudio = ArrayDeque<ByteArray>()
 
     fun start(sourceLanguage: String, targetLanguage: String): Boolean = synchronized(lock) {
         if (socket != null) return false
         ready = false
         finishing = false
+        terminalDelivered = false
         pendingAudio.clear()
         val requestBuilder = Request.Builder().url(BuildConfig.TRANSLATION_WS_URL)
         if (BuildConfig.TRANSLATION_ORIGIN.isNotEmpty()) requestBuilder.header("Origin", BuildConfig.TRANSLATION_ORIGIN)
@@ -39,21 +41,26 @@ class AgentSocket(
                     fail(error.message ?: "Agent 协议错误。")
                     return
                 }
-                synchronized(lock) {
+                val deliver = synchronized(lock) {
                     when (event) {
                         AgentEvent.Ready -> {
+                            if (terminalDelivered) return@synchronized false
                             ready = true
                             while (pendingAudio.isNotEmpty()) webSocket.send(ByteString.of(*pendingAudio.removeFirst()))
                             if (finishing) webSocket.send(AgentProtocol.FINISH)
+                            true
                         }
                         AgentEvent.Finished, is AgentEvent.Error -> {
+                            if (terminalDelivered) return@synchronized false
+                            terminalDelivered = true
                             closeLocked(webSocket)
                             webSocket.close(1000, "finished")
+                            true
                         }
-                        is AgentEvent.Subtitle -> Unit
+                        is AgentEvent.Subtitle -> !terminalDelivered
                     }
                 }
-                onEvent(event)
+                if (deliver) onEvent(event)
             }
 
             override fun onMessage(webSocket: WebSocket, bytes: ByteString) {
@@ -63,8 +70,13 @@ class AgentSocket(
             }
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-                synchronized(lock) { closeLocked(webSocket) }
-                onFailure(t.message ?: "WebSocket 连接失败。")
+                val deliver = synchronized(lock) {
+                    if (terminalDelivered) return@synchronized false
+                    terminalDelivered = true
+                    closeLocked(webSocket)
+                    true
+                }
+                if (deliver) onFailure(t.message ?: "WebSocket 连接失败。")
             }
         })
         true
@@ -89,16 +101,20 @@ class AgentSocket(
     }
 
     fun cancel() = synchronized(lock) {
+        terminalDelivered = true
         socket?.close(1000, "cancelled")
         clearLocked()
     }
 
     private fun fail(message: String) {
-        synchronized(lock) {
+        val deliver = synchronized(lock) {
+            if (terminalDelivered) return@synchronized false
+            terminalDelivered = true
             socket?.close(1011, "protocol_error")
             clearLocked()
+            true
         }
-        onFailure(message)
+        if (deliver) onFailure(message)
     }
 
     private fun closeLocked(webSocket: WebSocket) {

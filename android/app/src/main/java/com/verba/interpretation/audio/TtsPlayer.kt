@@ -7,6 +7,9 @@ import android.media.AudioTrack
 class TtsPlayer {
     private val lock = Any()
     private var track: AudioTrack? = null
+    private var writtenFrames = 0L
+    private var renderedFrames = 0L
+    private var lastPlaybackHead = 0L
 
     fun play(monoPcm: ByteArray, route: PlaybackRoute): Result<Unit> = runCatching {
         val stereo = StereoRouter.routeMonoPcm16(monoPcm, route)
@@ -18,6 +21,23 @@ class TtsPlayer {
             }
             val written = audioTrack.write(stereo, 0, stereo.size, AudioTrack.WRITE_BLOCKING)
             check(written == stereo.size) { "TTS 音频写入不完整：$written/${stereo.size}" }
+            writtenFrames += written / (Short.SIZE_BYTES * 2)
+        }
+    }
+
+    /** Waits until AudioTrack has rendered every frame accepted by [play]. */
+    fun awaitDrained(): Result<Unit> = runCatching {
+        while (true) {
+            val drained = synchronized(lock) {
+                val audioTrack = track ?: return@runCatching
+                val currentHead = Integer.toUnsignedLong(audioTrack.playbackHeadPosition)
+                val renderedDelta = (currentHead - lastPlaybackHead) and UINT32_MASK
+                renderedFrames += renderedDelta
+                lastPlaybackHead = currentHead
+                renderedFrames >= writtenFrames
+            }
+            if (drained) return@runCatching
+            Thread.sleep(10)
         }
     }
 
@@ -28,6 +48,9 @@ class TtsPlayer {
             audioTrack.release()
         }
         track = null
+        writtenFrames = 0L
+        renderedFrames = 0L
+        lastPlaybackHead = 0L
     }
 
     private fun createTrack(): AudioTrack {
@@ -53,5 +76,9 @@ class TtsPlayer {
             .setBufferSizeInBytes(maxOf(minBuffer, PcmPacketizer.PACKET_BYTES * 4))
             .setTransferMode(AudioTrack.MODE_STREAM)
             .build()
+    }
+
+    private companion object {
+        const val UINT32_MASK = 0xffff_ffffL
     }
 }
