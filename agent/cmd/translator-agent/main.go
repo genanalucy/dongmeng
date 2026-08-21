@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -15,6 +16,19 @@ import (
 	"translator-agent/internal/config"
 	"translator-agent/internal/server"
 )
+
+func allowedOrigins(extra string) map[string]struct{} {
+	origins := make(map[string]struct{}, len(server.DefaultOrigins))
+	for origin := range server.DefaultOrigins {
+		origins[origin] = struct{}{}
+	}
+	for _, origin := range strings.Split(extra, ",") {
+		if normalized := strings.TrimSpace(origin); normalized != "" {
+			origins[normalized] = struct{}{}
+		}
+	}
+	return origins
+}
 
 func main() {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
@@ -26,7 +40,7 @@ func main() {
 
 	httpServer := &http.Server{
 		Addr:              server.DefaultAddress,
-		Handler:           server.New(server.Options{ASTClient: ast.NewConfiguredClient(cfg), Logger: logger}).Handler(),
+		Handler:           server.New(server.Options{ASTClient: ast.NewConfiguredClient(cfg), Origins: allowedOrigins(os.Getenv("TRANSLATOR_AGENT_EXTRA_ORIGINS")), Logger: logger}).Handler(),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
 		WriteTimeout:      15 * time.Second,
