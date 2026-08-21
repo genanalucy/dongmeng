@@ -60,12 +60,17 @@ func New(opts Options) *Server {
 
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /api/health", health)
+	mux.HandleFunc("GET /api/health", s.health)
 	mux.HandleFunc("/ws/translate", s.translate)
 	return mux
 }
 
-func health(w http.ResponseWriter, _ *http.Request) {
+func (s *Server) health(w http.ResponseWriter, r *http.Request) {
+	origin := r.Header.Get("Origin")
+	if _, ok := s.origins[origin]; ok {
+		w.Header().Set("Access-Control-Allow-Origin", origin)
+		w.Header().Set("Vary", "Origin")
+	}
 	w.Header().Set("Content-Type", "application/json")
 	_, _ = w.Write([]byte(`{"status":"ok","service":"translator-agent"}`))
 }

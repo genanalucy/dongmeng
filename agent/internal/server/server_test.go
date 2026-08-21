@@ -144,6 +144,35 @@ func TestHealth(t *testing.T) {
 	}
 }
 
+func TestHealthCORSAllowsOnlyConfiguredOrigins(t *testing.T) {
+	ts := testHTTPServer(&fakeClient{})
+	defer ts.Close()
+
+	for _, testCase := range []struct {
+		origin string
+		want   string
+	}{
+		{origin: "http://127.0.0.1:5173", want: "http://127.0.0.1:5173"},
+		{origin: "http://evil.example", want: ""},
+		{origin: "", want: ""},
+	} {
+		req, err := http.NewRequest(http.MethodGet, ts.URL+"/api/health", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Origin", testCase.origin)
+		response, err := ts.Client().Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := response.Header.Get("Access-Control-Allow-Origin"); got != testCase.want {
+			response.Body.Close()
+			t.Fatalf("origin %q: got CORS origin %q, want %q", testCase.origin, got, testCase.want)
+		}
+		response.Body.Close()
+	}
+}
+
 func TestOriginValidation(t *testing.T) {
 	ts := testHTTPServer(&fakeClient{})
 	defer ts.Close()
