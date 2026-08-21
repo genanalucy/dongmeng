@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -146,6 +147,9 @@ private fun InterpretationApp(viewModel: InterpretationViewModel = viewModel()) 
     var screen by remember { mutableStateOf(ProductScreen.TRANSLATE) }
     val interpretationState by viewModel.state.collectAsStateWithLifecycle()
     val showBottomBar = ProductNavigationPolicy.showsBottomBar(screen)
+    BackHandler(enabled = screen != ProductScreen.TRANSLATE) {
+        screen = ProductNavigationPolicy.exitTarget(screen)
+    }
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,

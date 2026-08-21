@@ -25,9 +25,9 @@ android {
         debug {
             applicationIdSuffix = ".debug"
             versionNameSuffix = "-debug"
-            buildConfigField("String", "AGENT_HTTP_URL", "\"http://127.0.0.1:18765\"")
-            buildConfigField("String", "TRANSLATION_WS_URL", "\"ws://127.0.0.1:18765/ws/translate\"")
-            buildConfigField("String", "TRANSLATION_ORIGIN", "\"http://127.0.0.1:5173\"")
+            buildConfigField("String", "AGENT_HTTP_URL", "\"http://114.132.83.144:18765\"")
+            buildConfigField("String", "TRANSLATION_WS_URL", "\"ws://114.132.83.144:18765/ws/translate\"")
+            buildConfigField("String", "TRANSLATION_ORIGIN", "\"http://114.132.83.144:15173\"")
         }
         release {
             isMinifyEnabled = false

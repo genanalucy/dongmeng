@@ -31,6 +31,13 @@ class ProductNavigationPolicyTest {
     }
 
     @Test
+    fun systemBackExitsSecondLevelScreensWithoutLeavingTheActivity() {
+        assertEquals(ProductScreen.TRANSLATE, ProductNavigationPolicy.exitTarget(ProductScreen.INTERPRETATION_WORKBENCH))
+        assertEquals(ProductScreen.TRANSLATE, ProductNavigationPolicy.exitTarget(ProductScreen.FACE_TO_FACE_WORKBENCH))
+        assertEquals(ProductScreen.PROFILE, ProductNavigationPolicy.exitTarget(ProductScreen.ENDPOINT_SETTINGS))
+    }
+
+    @Test
     fun immersiveWorkbenchExitsHomeWhileSettingsReturnsToProfile() {
         assertEquals(ProductScreen.TRANSLATE, ProductNavigationPolicy.exitTarget(ProductScreen.INTERPRETATION_WORKBENCH))
         assertEquals(ProductScreen.TRANSLATE, ProductNavigationPolicy.exitTarget(ProductScreen.FACE_TO_FACE_WORKBENCH))
