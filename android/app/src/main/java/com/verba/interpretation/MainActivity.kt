@@ -130,6 +130,7 @@ import com.verba.interpretation.ui.ProductNavigationPolicy
 import com.verba.interpretation.ui.ProductScreen
 import com.verba.interpretation.ui.SessionPhase
 import com.verba.interpretation.ui.SubtitleTurn
+import com.verba.interpretation.ui.TranslationLanguage
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -171,8 +172,8 @@ private fun InterpretationApp(viewModel: InterpretationViewModel = viewModel()) 
             ProductScreen.TRANSLATE -> TranslationHome(
                 modifier = Modifier.padding(padding),
                 interpretationPhase = interpretationState.phase,
-                onLanguagePair = { target ->
-                    viewModel.setTarget(target)
+                onLanguagePair = { source, target ->
+                    viewModel.setLanguages(source, target)
                     screen = ProductScreen.INTERPRETATION_WORKBENCH
                 },
                 onInterpretation = { screen = ProductScreen.INTERPRETATION_WORKBENCH },
@@ -259,7 +260,7 @@ private fun ProductDestination.icon(): ImageVector = when (this) {
 private fun TranslationHome(
     modifier: Modifier,
     interpretationPhase: SessionPhase,
-    onLanguagePair: (String) -> Unit,
+    onLanguagePair: (String, String) -> Unit,
     onInterpretation: () -> Unit,
     onFaceToFace: () -> Unit,
 ) {
@@ -276,13 +277,13 @@ private fun TranslationHome(
                     modifier = Modifier.weight(1f),
                     source = "中文",
                     target = "English",
-                    onClick = { onLanguagePair("en") },
+                    onClick = { onLanguagePair("zh", "en") },
                 )
                 LanguagePairCard(
                     modifier = Modifier.weight(1f),
                     source = "English",
                     target = "中文",
-                    onClick = { onLanguagePair("zh") },
+                    onClick = { onLanguagePair("en", "zh") },
                 )
             }
         }
@@ -488,22 +489,28 @@ private fun SoloWorkbench(modifier: Modifier, viewModel: InterpretationViewModel
             shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
         ) {
             Column(Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 14.dp)) {
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    LanguageSelector(
-                        modifier = Modifier.weight(1f),
-                        selected = state.targetLanguage == "en",
-                        title = "中文 → English",
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text("翻译语言", style = MaterialTheme.typography.labelLarge, modifier = Modifier.weight(1f))
+                    OutlinedButton(
+                        onClick = viewModel::swapLanguages,
                         enabled = state.phase == SessionPhase.IDLE,
-                        onClick = { viewModel.setTarget("en") },
-                    )
-                    LanguageSelector(
-                        modifier = Modifier.weight(1f),
-                        selected = state.targetLanguage == "zh",
-                        title = "English → 中文",
-                        enabled = state.phase == SessionPhase.IDLE,
-                        onClick = { viewModel.setTarget("zh") },
-                    )
+                    ) { Text("交换方向") }
                 }
+                TranslationLanguage.entries.chunked(2).forEach { languages ->
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        languages.forEach { language ->
+                            LanguageSelector(
+                                modifier = Modifier.weight(1f),
+                                selected = state.targetLanguage == language.code,
+                                title = "${TranslationLanguage.displayName(state.sourceLanguage)} → ${language.displayName}",
+                                enabled = state.phase == SessionPhase.IDLE && language.code != state.sourceLanguage,
+                                onClick = { viewModel.setLanguages(state.sourceLanguage, language.code) },
+                            )
+                        }
+                        if (languages.size == 1) Spacer(Modifier.weight(1f))
+                    }
+                }
+                Text("源语言：${TranslationLanguage.displayName(state.sourceLanguage)}。法语和越南语将在 Qwen 实时服务接入后启用真实翻译。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Text("播放位置", style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(top = 14.dp, bottom = 4.dp))
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     PlaybackRoute.entries.forEach { route ->
@@ -677,6 +684,31 @@ private fun FaceControls(
                 label = { Text("自动交替") },
             )
         }
+        Text("左侧语言", style = MaterialTheme.typography.labelLarge)
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            TranslationLanguage.entries.forEach { language ->
+                FilterChip(
+                    selected = state.leftLanguage == language.code,
+                    enabled = state.phase == FaceToFacePhase.IDLE && language.code != state.rightLanguage,
+                    onClick = { faceViewModel.setLanguages(language.code, state.rightLanguage) },
+                    label = { Text(language.displayName) },
+                )
+            }
+        }
+        Text("右侧语言", style = MaterialTheme.typography.labelLarge)
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            TranslationLanguage.entries.forEach { language ->
+                FilterChip(
+                    selected = state.rightLanguage == language.code,
+                    enabled = state.phase == FaceToFacePhase.IDLE && language.code != state.leftLanguage,
+                    onClick = { faceViewModel.setLanguages(state.leftLanguage, language.code) },
+                    label = { Text(language.displayName) },
+                )
+            }
+        }
+        if (state.leftLanguage == "fr" || state.leftLanguage == "vi" || state.rightLanguage == "fr" || state.rightLanguage == "vi") {
+            Text("法语和越南语将在 Qwen 实时服务接入后启用真实翻译。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
         FaceSessionAction(state, requestOrRun, faceViewModel)
         state.error?.let { ErrorSurface(it, Modifier.padding(top = 8.dp)) }
         Row(Modifier.fillMaxWidth().padding(vertical = 10.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -764,7 +796,8 @@ private fun FaceTalkButton(
         FaceToFaceMode.AUTO -> state.phase == FaceToFacePhase.LISTENING && side == FaceToFaceSide.RIGHT
     }
     val active = state.activeSide == side
-    val sideLabel = if (side == FaceToFaceSide.LEFT) "中文侧" else "English 侧"
+    val language = if (side == FaceToFaceSide.LEFT) state.leftLanguage else state.rightLanguage
+    val sideLabel = "${TranslationLanguage.displayName(language)}侧"
     val actionLabel = when {
         active -> "正在收音"
         state.mode == FaceToFaceMode.AUTO && side == FaceToFaceSide.LEFT -> "默认自动收音"
@@ -811,7 +844,7 @@ private fun FaceTalkButton(
                     tint = if (active) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.primary,
                 )
             }
-            Text(if (side == FaceToFaceSide.LEFT) "中文" else "English", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            Text(TranslationLanguage.displayName(language), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
             Text(actionLabel, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
         }
     }

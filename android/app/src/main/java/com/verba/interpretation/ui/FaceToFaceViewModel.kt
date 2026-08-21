@@ -37,6 +37,10 @@ class FaceToFaceViewModel(application: Application) : AndroidViewModel(applicati
         if (coordinator.setMode(mode)) publishState()
     }
 
+    fun setLanguages(leftLanguage: String, rightLanguage: String) = synchronized(actionLock) {
+        if (coordinator.setLanguages(leftLanguage, rightLanguage)) publishState()
+    }
+
     fun manualPress(side: FaceToFaceSide) = synchronized(actionLock) {
         if (coordinator.state().mode != FaceToFaceMode.MANUAL || coordinator.state().phase != FaceToFacePhase.IDLE) return
         val created = createSession(side)
@@ -99,12 +103,20 @@ class FaceToFaceViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     private fun startSocket(created: CreatedSession): Boolean {
-        val source = if (created.side == FaceToFaceSide.LEFT) "zh" else "en"
-        val target = if (created.side == FaceToFaceSide.LEFT) "en" else "zh"
+        val state = coordinator.state()
+        val source = if (created.side == FaceToFaceSide.LEFT) state.leftLanguage else state.rightLanguage
+        val target = if (created.side == FaceToFaceSide.LEFT) state.rightLanguage else state.leftLanguage
+        if (!isCurrentProviderAvailable(source, target)) {
+            fail("法语和越南语的实时服务正在接入，当前仅支持中文与 English 的真实同传。")
+            return false
+        }
         if (created.socket.start(source, target)) return true
         fail("无法创建翻译会话。")
         return false
     }
+
+    private fun isCurrentProviderAvailable(source: String, target: String): Boolean =
+        (source == "zh" && target == "en") || (source == "en" && target == "zh")
 
     private fun applyTransition(transition: FaceToFaceCoordinator.Transition<AgentSocket>) {
         if (transition.cancelTimer) {

@@ -32,6 +32,8 @@ data class FaceToFaceTurn(
 data class FaceToFaceState(
     val mode: FaceToFaceMode = FaceToFaceMode.MANUAL,
     val phase: FaceToFacePhase = FaceToFacePhase.IDLE,
+    val leftLanguage: String = "zh",
+    val rightLanguage: String = "en",
     val activeSide: FaceToFaceSide? = null,
     val captureActive: Boolean = false,
     val turns: List<FaceToFaceTurn> = emptyList(),
@@ -80,6 +82,13 @@ class FaceToFaceCoordinator<S> {
     fun setMode(mode: FaceToFaceMode): Boolean {
         if (current.phase != FaceToFacePhase.IDLE || entries.isNotEmpty()) return false
         current = current.copy(mode = mode, error = null)
+        return true
+    }
+
+    @Synchronized
+    fun setLanguages(leftLanguage: String, rightLanguage: String): Boolean {
+        if (current.phase != FaceToFacePhase.IDLE || entries.isNotEmpty() || !supportsTranslationPair(leftLanguage, rightLanguage)) return false
+        current = current.copy(leftLanguage = leftLanguage, rightLanguage = rightLanguage, error = null)
         return true
     }
 
@@ -225,8 +234,8 @@ class FaceToFaceCoordinator<S> {
 
     private fun addTurnLocked(turnId: Long, side: FaceToFaceSide, session: S) {
         check(!entries.containsKey(turnId)) { "Turn $turnId already exists." }
-        val source = if (side == FaceToFaceSide.LEFT) "zh" else "en"
-        val target = if (side == FaceToFaceSide.LEFT) "en" else "zh"
+        val source = if (side == FaceToFaceSide.LEFT) current.leftLanguage else current.rightLanguage
+        val target = if (side == FaceToFaceSide.LEFT) current.rightLanguage else current.leftLanguage
         val route = if (side == FaceToFaceSide.LEFT) PlaybackRoute.RIGHT else PlaybackRoute.LEFT
         entries[turnId] = Entry(session, route)
         current = current.copy(turns = current.turns + FaceToFaceTurn(turnId, side, source, target, route))

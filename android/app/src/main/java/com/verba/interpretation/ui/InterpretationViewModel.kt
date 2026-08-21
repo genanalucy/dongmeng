@@ -25,15 +25,24 @@ class InterpretationViewModel(application: Application) : AndroidViewModel(appli
     private val sessions = TurnSessionCoordinator<AgentSocket>()
     private var nextTurnId = 1L
 
-    fun setTarget(language: String) {
-        if (mutableState.value.phase != SessionPhase.IDLE) return
-        mutableState.update { it.copy(sourceLanguage = if (language == "en") "zh" else "en", targetLanguage = language) }
+    fun setLanguages(sourceLanguage: String, targetLanguage: String) {
+        if (mutableState.value.phase != SessionPhase.IDLE || !supportsTranslationPair(sourceLanguage, targetLanguage)) return
+        mutableState.update { it.copy(sourceLanguage = sourceLanguage, targetLanguage = targetLanguage) }
+    }
+
+    fun swapLanguages() {
+        val snapshot = mutableState.value
+        setLanguages(snapshot.targetLanguage, snapshot.sourceLanguage)
     }
 
     fun setRoute(route: PlaybackRoute) { mutableState.update { it.copy(route = route) } }
 
     fun start() {
         if (mutableState.value.phase != SessionPhase.IDLE) return
+        if (!isCurrentProviderAvailable()) {
+            mutableState.update { it.copy(error = "法语和越南语的实时服务正在接入，当前仅支持中文与 English 的真实同传。") }
+            return
+        }
         mutableState.update { it.copy(phase = SessionPhase.STARTING, turns = emptyList(), error = null) }
         if (!openTurn()) return
         startMicrophone(isResume = false)
@@ -75,6 +84,11 @@ class InterpretationViewModel(application: Application) : AndroidViewModel(appli
 
     fun microphonePermissionDenied() {
         fail("未授予麦克风权限。")
+    }
+
+    private fun isCurrentProviderAvailable(): Boolean = mutableState.value.let {
+        (it.sourceLanguage == "zh" && it.targetLanguage == "en") ||
+            (it.sourceLanguage == "en" && it.targetLanguage == "zh")
     }
 
     private fun startMicrophone(isResume: Boolean) {
