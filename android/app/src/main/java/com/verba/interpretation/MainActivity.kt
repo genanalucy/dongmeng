@@ -77,6 +77,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
@@ -483,66 +484,91 @@ private fun SoloWorkbench(modifier: Modifier, viewModel: InterpretationViewModel
 
     Column(modifier.fillMaxSize()) {
         WorkbenchHeader("实时同传", state.phase.label(), onExit)
-        Surface(
-            modifier = Modifier.fillMaxWidth(),
-            color = MaterialTheme.colorScheme.surface,
-            shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
+        Column(
+            Modifier.weight(1f).fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp),
         ) {
-            Column(Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 14.dp)) {
-                if (state.phase == SessionPhase.IDLE) {
+            if (state.phase == SessionPhase.IDLE) {
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Text("翻译语言", style = MaterialTheme.typography.labelLarge, modifier = Modifier.weight(1f))
-                    OutlinedButton(
-                        onClick = viewModel::swapLanguages,
-                        enabled = state.phase == SessionPhase.IDLE,
-                    ) { Text("交换方向") }
+                    Text("翻译语言", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                    TextButton(onClick = viewModel::swapLanguages) { Text("交换方向") }
                 }
                 TranslationLanguage.entries.chunked(2).forEach { languages ->
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Row(
+                        Modifier.fillMaxWidth().padding(top = 8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
                         languages.forEach { language ->
                             LanguageSelector(
                                 modifier = Modifier.weight(1f),
                                 selected = state.targetLanguage == language.code,
-                                title = "${TranslationLanguage.displayName(state.sourceLanguage)} → ${language.displayName}",
-                                enabled = state.phase == SessionPhase.IDLE && language.code != state.sourceLanguage,
+                                title = language.displayName,
+                                enabled = language.code != state.sourceLanguage,
                                 onClick = { viewModel.setLanguages(state.sourceLanguage, language.code) },
                             )
                         }
                         if (languages.size == 1) Spacer(Modifier.weight(1f))
                     }
                 }
-                Text("源语言：${TranslationLanguage.displayName(state.sourceLanguage)}。法语和越南语由 Qwen 实时服务处理。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(
+                    "源语言：${TranslationLanguage.displayName(state.sourceLanguage)}。法语和越南语由 Qwen 实时服务处理。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 10.dp),
+                )
+            }
+            WorkbenchSummary(
+                "${TranslationLanguage.displayName(state.sourceLanguage)} → ${TranslationLanguage.displayName(state.targetLanguage)}",
+                "双耳播放",
+                Icons.Outlined.Headphones,
+                Modifier.padding(top = if (state.phase == SessionPhase.IDLE) 18.dp else 4.dp),
+            )
+            state.error?.let { ErrorSurface(it, Modifier.padding(top = 12.dp)) }
+            TranscriptTitle("实时字幕", state.turns.size, Modifier.padding(top = 20.dp))
+            SoloTranscriptFeed(state.turns, Modifier.fillMaxWidth().weight(1f))
+        }
+        WorkbenchActionDock {
+            SoloPrimaryAction(
+                phase = state.phase,
+                startWithPermission = startWithPermission,
+                viewModel = viewModel,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            if (state.phase != SessionPhase.IDLE && state.phase != SessionPhase.STOPPING) {
+                TextButton(onClick = viewModel::finish, modifier = Modifier.align(Alignment.CenterHorizontally)) {
+                    Text("结束同传")
                 }
-                Surface(
-                    color = MaterialTheme.colorScheme.primaryContainer,
-                    shape = RoundedCornerShape(12.dp),
-                    modifier = Modifier.fillMaxWidth().padding(top = 14.dp),
-                ) {
-                    Row(Modifier.padding(horizontal = 12.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Outlined.Headphones, contentDescription = null, modifier = Modifier.size(18.dp))
-                        Spacer(Modifier.width(8.dp))
-                        Text("${TranslationLanguage.displayName(state.sourceLanguage)} → ${TranslationLanguage.displayName(state.targetLanguage)} · 双耳播放", style = MaterialTheme.typography.labelLarge)
-                    }
-                }
-                state.error?.let { ErrorSurface(it, Modifier.padding(top = 8.dp)) }
-                Row(
-                    Modifier.fillMaxWidth().padding(vertical = 10.dp),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    SoloPrimaryAction(state.phase, startWithPermission, viewModel)
-                    if (state.phase != SessionPhase.IDLE && state.phase != SessionPhase.STOPPING) {
-                        OutlinedButton(onClick = viewModel::finish) {
-                            Icon(Icons.Filled.Stop, contentDescription = null, modifier = Modifier.size(18.dp))
-                            Spacer(Modifier.width(8.dp))
-                            Text("结束")
-                        }
-                    }
-                }
-                TranscriptTitle("实时字幕", state.turns.size)
-                SoloTranscriptFeed(state.turns, Modifier.fillMaxWidth().weight(1f))
             }
         }
+    }
+}
+
+@Composable
+private fun WorkbenchSummary(title: String, detail: String, icon: ImageVector, modifier: Modifier = Modifier) {
+    Row(
+        modifier.fillMaxWidth().padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(icon, contentDescription = null, modifier = Modifier.size(18.dp), tint = MaterialTheme.colorScheme.primary)
+        Spacer(Modifier.width(9.dp))
+        Text(title, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
+        Text(" · $detail", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+@Composable
+private fun WorkbenchActionDock(content: @Composable ColumnScope.() -> Unit) {
+    Surface(
+        color = MaterialTheme.colorScheme.surface,
+        shadowElevation = 8.dp,
+        tonalElevation = 0.dp,
+        shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(
+            Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 14.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            content = content,
+        )
     }
 }
 
@@ -552,39 +578,41 @@ private fun LanguageSelector(modifier: Modifier, selected: Boolean, title: Strin
         onClick = onClick,
         enabled = enabled,
         modifier = modifier,
-        shape = RoundedCornerShape(16.dp),
+        shape = RoundedCornerShape(14.dp),
         colors = CardDefaults.cardColors(
-            containerColor = if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
-            disabledContainerColor = if (selected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
+            containerColor = if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface,
+            disabledContainerColor = if (selected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f) else MaterialTheme.colorScheme.surface.copy(alpha = 0.6f),
+        ),
+        border = androidx.compose.foundation.BorderStroke(
+            1.dp,
+            if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.35f) else MaterialTheme.colorScheme.outlineVariant,
         ),
     ) {
-        Row(Modifier.padding(horizontal = 12.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
-            Icon(Icons.Outlined.Translate, contentDescription = null, modifier = Modifier.size(20.dp))
-            Spacer(Modifier.width(8.dp))
+        Row(Modifier.padding(horizontal = 12.dp, vertical = 15.dp), verticalAlignment = Alignment.CenterVertically) {
             Text(title, style = MaterialTheme.typography.labelLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
     }
 }
 
 @Composable
-private fun SoloPrimaryAction(phase: SessionPhase, startWithPermission: () -> Unit, viewModel: InterpretationViewModel) {
+private fun SoloPrimaryAction(phase: SessionPhase, startWithPermission: () -> Unit, viewModel: InterpretationViewModel, modifier: Modifier = Modifier) {
     when (phase) {
-        SessionPhase.IDLE -> Button(onClick = startWithPermission) {
+        SessionPhase.IDLE -> Button(onClick = startWithPermission, modifier = modifier.height(52.dp)) {
             Icon(Icons.Filled.Mic, contentDescription = null, modifier = Modifier.size(18.dp))
             Spacer(Modifier.width(8.dp))
             Text("开始同传")
         }
-        SessionPhase.STARTING, SessionPhase.RUNNING -> Button(onClick = viewModel::pause) {
+        SessionPhase.STARTING, SessionPhase.RUNNING -> Button(onClick = viewModel::pause, modifier = modifier.height(52.dp)) {
             Icon(Icons.Filled.Pause, contentDescription = null, modifier = Modifier.size(18.dp))
             Spacer(Modifier.width(8.dp))
             Text("暂停")
         }
-        SessionPhase.PAUSED -> Button(onClick = viewModel::resume) {
+        SessionPhase.PAUSED -> Button(onClick = viewModel::resume, modifier = modifier.height(52.dp)) {
             Icon(Icons.Filled.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
             Spacer(Modifier.width(8.dp))
             Text("继续")
         }
-        SessionPhase.ERROR -> Button(onClick = viewModel::clearError) {
+        SessionPhase.ERROR -> Button(onClick = viewModel::clearError, modifier = modifier.height(52.dp)) {
             Icon(Icons.Filled.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
             Spacer(Modifier.width(8.dp))
             Text("重置")
@@ -634,12 +662,12 @@ private fun FaceToFaceWorkbench(
                 val landscapeWorkbench = maxWidth >= 700.dp
                 if (landscapeWorkbench) {
                     Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(18.dp)) {
-                        FaceControls(
-                            state = state,
-                            requestOrRun = requestOrRun,
-                            faceViewModel = faceViewModel,
-                            modifier = Modifier.weight(1f).fillMaxHeight(),
-                        )
+                        Column(Modifier.weight(1f).fillMaxHeight()) {
+                            FaceConfiguration(state, faceViewModel)
+                            state.error?.let { ErrorSurface(it, Modifier.padding(top = 12.dp)) }
+                            Spacer(Modifier.weight(1f))
+                            WorkbenchActionDock { FaceActionControls(state, requestOrRun, faceViewModel) }
+                        }
                         Column(Modifier.weight(1f).fillMaxHeight()) {
                             TranscriptTitle("双方字幕", state.turns.size)
                             FaceTranscriptFeed(state.turns, Modifier.fillMaxSize())
@@ -647,14 +675,11 @@ private fun FaceToFaceWorkbench(
                     }
                 } else {
                     Column(Modifier.fillMaxSize()) {
-                        FaceControls(
-                            state = state,
-                            requestOrRun = requestOrRun,
-                            faceViewModel = faceViewModel,
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                        TranscriptTitle("双方字幕", state.turns.size)
+                        FaceConfiguration(state, faceViewModel)
+                        state.error?.let { ErrorSurface(it, Modifier.padding(top = 12.dp)) }
+                        TranscriptTitle("双方字幕", state.turns.size, Modifier.padding(top = 20.dp))
                         FaceTranscriptFeed(state.turns, Modifier.fillMaxWidth().weight(1f))
+                        WorkbenchActionDock { FaceActionControls(state, requestOrRun, faceViewModel) }
                     }
                 }
             }
@@ -663,85 +688,46 @@ private fun FaceToFaceWorkbench(
 }
 
 @Composable
-private fun FaceControls(
-    state: FaceToFaceState,
-    requestOrRun: (() -> Unit) -> Unit,
-    faceViewModel: FaceToFaceViewModel,
-    modifier: Modifier,
-) {
-    Column(modifier) {
+private fun FaceConfiguration(state: FaceToFaceState, faceViewModel: FaceToFaceViewModel) {
+    Column(Modifier.fillMaxWidth()) {
         if (state.phase == FaceToFacePhase.IDLE) {
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            FilterChip(
-                selected = state.mode == FaceToFaceMode.MANUAL,
-                enabled = state.phase == FaceToFacePhase.IDLE,
-                onClick = { faceViewModel.setMode(FaceToFaceMode.MANUAL) },
-                label = { Text("按住说话") },
-            )
-            FilterChip(
-                selected = state.mode == FaceToFaceMode.AUTO,
-                enabled = state.phase == FaceToFacePhase.IDLE,
-                onClick = { faceViewModel.setMode(FaceToFaceMode.AUTO) },
-                label = { Text("自动交替") },
-            )
-        }
-        Text("左侧语言", style = MaterialTheme.typography.labelLarge)
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            TranslationLanguage.entries.forEach { language ->
-                FilterChip(
-                    selected = state.leftLanguage == language.code,
-                    enabled = state.phase == FaceToFacePhase.IDLE && language.code != state.rightLanguage,
-                    onClick = { faceViewModel.setLanguages(language.code, state.rightLanguage) },
-                    label = { Text(language.displayName) },
-                )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilterChip(selected = state.mode == FaceToFaceMode.MANUAL, onClick = { faceViewModel.setMode(FaceToFaceMode.MANUAL) }, label = { Text("按住说话") })
+                FilterChip(selected = state.mode == FaceToFaceMode.AUTO, onClick = { faceViewModel.setMode(FaceToFaceMode.AUTO) }, label = { Text("自动交替") })
             }
-        }
-        Text("右侧语言", style = MaterialTheme.typography.labelLarge)
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            TranslationLanguage.entries.forEach { language ->
-                FilterChip(
-                    selected = state.rightLanguage == language.code,
-                    enabled = state.phase == FaceToFacePhase.IDLE && language.code != state.leftLanguage,
-                    onClick = { faceViewModel.setLanguages(state.leftLanguage, language.code) },
-                    label = { Text(language.displayName) },
-                )
+            Text("选择双方语言", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 18.dp, bottom = 8.dp))
+            LanguageChipRow(TranslationLanguage.displayName(state.leftLanguage), state.leftLanguage, state.rightLanguage) { faceViewModel.setLanguages(it, state.rightLanguage) }
+            LanguageChipRow(TranslationLanguage.displayName(state.rightLanguage), state.rightLanguage, state.leftLanguage) { faceViewModel.setLanguages(state.leftLanguage, it) }
+            if (state.leftLanguage == "fr" || state.leftLanguage == "vi" || state.rightLanguage == "fr" || state.rightLanguage == "vi") {
+                Text("法语和越南语由 Qwen 实时服务处理。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 10.dp))
             }
-        }
-        if (state.leftLanguage == "fr" || state.leftLanguage == "vi" || state.rightLanguage == "fr" || state.rightLanguage == "vi") {
-            Text("法语和越南语由 Qwen 实时服务处理。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
         } else {
-            Surface(color = MaterialTheme.colorScheme.primaryContainer, shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth()) {
-                Text("${TranslationLanguage.displayName(state.leftLanguage)} ↔ ${TranslationLanguage.displayName(state.rightLanguage)} · ${if (state.mode == FaceToFaceMode.MANUAL) "按住说话" else "自动交替"}", modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp), style = MaterialTheme.typography.labelLarge)
-            }
+            WorkbenchSummary(
+                "${TranslationLanguage.displayName(state.leftLanguage)} ↔ ${TranslationLanguage.displayName(state.rightLanguage)}",
+                if (state.mode == FaceToFaceMode.MANUAL) "按住说话" else "自动交替",
+                Icons.Outlined.Language,
+            )
         }
-        FaceSessionAction(state, requestOrRun, faceViewModel)
-        state.error?.let { ErrorSurface(it, Modifier.padding(top = 8.dp)) }
-        Row(Modifier.fillMaxWidth().padding(vertical = 10.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            FaceTalkButton(
-                modifier = Modifier.weight(1f),
-                side = FaceToFaceSide.LEFT,
-                state = state,
-                onPress = { if (state.mode == FaceToFaceMode.MANUAL) requestOrRun { faceViewModel.manualPress(FaceToFaceSide.LEFT) } },
-                onRelease = { if (state.mode == FaceToFaceMode.MANUAL) faceViewModel.manualRelease() },
-            )
-            FaceTalkButton(
-                modifier = Modifier.weight(1f),
-                side = FaceToFaceSide.RIGHT,
-                state = state,
-                onPress = {
-                    when (state.mode) {
-                        FaceToFaceMode.MANUAL -> requestOrRun { faceViewModel.manualPress(FaceToFaceSide.RIGHT) }
-                        FaceToFaceMode.AUTO -> if (state.phase == FaceToFacePhase.LISTENING) faceViewModel.pressRightAuto()
-                    }
-                },
-                onRelease = {
-                    when (state.mode) {
-                        FaceToFaceMode.MANUAL -> faceViewModel.manualRelease()
-                        FaceToFaceMode.AUTO -> if (state.phase == FaceToFacePhase.LISTENING) faceViewModel.releaseRightAuto()
-                    }
-                },
-            )
+    }
+}
+
+@Composable
+private fun LanguageChipRow(selectedName: String, selectedCode: String, disabledCode: String, onSelect: (String) -> Unit) {
+    Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text(selectedName, style = MaterialTheme.typography.labelLarge, modifier = Modifier.width(54.dp))
+        TranslationLanguage.entries.forEach { language ->
+            FilterChip(selected = selectedCode == language.code, enabled = language.code != disabledCode, onClick = { onSelect(language.code) }, label = { Text(language.displayName) })
+        }
+    }
+}
+
+@Composable
+private fun FaceActionControls(state: FaceToFaceState, requestOrRun: (() -> Unit) -> Unit, faceViewModel: FaceToFaceViewModel) {
+    FaceSessionAction(state, requestOrRun, faceViewModel)
+    if (state.mode == FaceToFaceMode.MANUAL || state.phase == FaceToFacePhase.LISTENING) {
+        Row(Modifier.fillMaxWidth().padding(top = 10.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            FaceTalkButton(Modifier.weight(1f), FaceToFaceSide.LEFT, state, { if (state.mode == FaceToFaceMode.MANUAL) requestOrRun { faceViewModel.manualPress(FaceToFaceSide.LEFT) } }, { if (state.mode == FaceToFaceMode.MANUAL) faceViewModel.manualRelease() })
+            FaceTalkButton(Modifier.weight(1f), FaceToFaceSide.RIGHT, state, { when (state.mode) { FaceToFaceMode.MANUAL -> requestOrRun { faceViewModel.manualPress(FaceToFaceSide.RIGHT) }; FaceToFaceMode.AUTO -> if (state.phase == FaceToFacePhase.LISTENING) faceViewModel.pressRightAuto() } }, { when (state.mode) { FaceToFaceMode.MANUAL -> faceViewModel.manualRelease(); FaceToFaceMode.AUTO -> if (state.phase == FaceToFacePhase.LISTENING) faceViewModel.releaseRightAuto() } })
         }
     }
 }
@@ -753,28 +739,23 @@ private fun FaceSessionAction(
     faceViewModel: FaceToFaceViewModel,
 ) {
     if (state.mode == FaceToFaceMode.AUTO) {
-        Row(
-            Modifier.padding(top = 4.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
+        Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
             when (state.phase) {
-                FaceToFacePhase.IDLE -> Button(onClick = { requestOrRun(faceViewModel::startAuto) }) {
+                FaceToFacePhase.IDLE -> Button(onClick = { requestOrRun(faceViewModel::startAuto) }, modifier = Modifier.fillMaxWidth().height(52.dp)) {
                     Icon(Icons.Filled.Mic, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(8.dp))
                     Text("开始自动翻译")
                 }
-                FaceToFacePhase.LISTENING -> OutlinedButton(onClick = faceViewModel::stopAuto) {
-                    Icon(Icons.Filled.Stop, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(8.dp))
-                    Text("停止采集")
+                FaceToFacePhase.LISTENING -> {
+                    OutlinedButton(onClick = faceViewModel::stopAuto, modifier = Modifier.fillMaxWidth().height(52.dp)) {
+                        Icon(Icons.Filled.Stop, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text("停止连续翻译")
+                    }
+                    TextButton(onClick = faceViewModel::cancel) { Text("结束会话") }
                 }
-                FaceToFacePhase.ERROR -> Button(onClick = faceViewModel::clearError) { Text("重置") }
-                FaceToFacePhase.PROCESSING, FaceToFacePhase.STOPPING -> Text(
-                    "正在完成剩余字幕",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+                FaceToFacePhase.ERROR -> Button(onClick = faceViewModel::clearError, modifier = Modifier.fillMaxWidth().height(52.dp)) { Text("重置") }
+                FaceToFacePhase.PROCESSING, FaceToFacePhase.STOPPING -> Text("正在完成剩余字幕", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
     } else if (state.phase == FaceToFacePhase.ERROR) {
@@ -803,7 +784,8 @@ private fun FaceTalkButton(
     }
     val active = state.activeSide == side
     val language = if (side == FaceToFaceSide.LEFT) state.leftLanguage else state.rightLanguage
-    val sideLabel = "${TranslationLanguage.displayName(language)}侧"
+    val sideLabel = TranslationLanguage.displayName(language)
+    val identityColor = if (side == FaceToFaceSide.LEFT) MaterialTheme.colorScheme.primary else androidx.compose.ui.graphics.Color(0xFFB4765A)
     val actionLabel = when {
         active -> "正在收音"
         state.mode == FaceToFaceMode.AUTO && side == FaceToFaceSide.LEFT -> "默认自动收音"
@@ -829,10 +811,11 @@ private fun FaceTalkButton(
                     }
                 })
             },
-        shape = RoundedCornerShape(22.dp),
+        shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(
-            containerColor = if (active) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
+            containerColor = if (active) identityColor.copy(alpha = 0.16f) else MaterialTheme.colorScheme.surface,
         ),
+        border = androidx.compose.foundation.BorderStroke(1.dp, identityColor.copy(alpha = if (active) 0.55f else 0.28f)),
     ) {
         Column(
             Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 18.dp),
@@ -841,17 +824,17 @@ private fun FaceTalkButton(
         ) {
             Surface(
                 shape = CircleShape,
-                color = if (active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surface,
+                color = if (active) identityColor else identityColor.copy(alpha = 0.12f),
             ) {
                 Icon(
                     Icons.Filled.Mic,
                     contentDescription = null,
                     modifier = Modifier.padding(10.dp).size(22.dp),
-                    tint = if (active) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.primary,
+                    tint = if (active) MaterialTheme.colorScheme.onPrimary else identityColor,
                 )
             }
             Text(TranslationLanguage.displayName(language), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-            Text(actionLabel, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+            Text(actionLabel, style = MaterialTheme.typography.labelMedium, color = identityColor)
         }
     }
 }
@@ -1208,9 +1191,9 @@ private fun ErrorSurface(message: String, modifier: Modifier = Modifier) {
 }
 
 @Composable
-private fun TranscriptTitle(title: String, count: Int) {
+private fun TranscriptTitle(title: String, count: Int, modifier: Modifier = Modifier) {
     Row(
-        Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 8.dp),
+        modifier.fillMaxWidth().padding(top = 4.dp, bottom = 8.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -1234,22 +1217,26 @@ private fun FaceTranscriptFeed(turns: List<FaceToFaceTurn>, modifier: Modifier =
 @Composable
 private fun FaceSubtitleBubble(turn: FaceToFaceTurn) {
     val isRight = turn.side == FaceToFaceSide.RIGHT
+    val sourceLanguage = if (isRight) "English" else "中文"
+    val targetLanguage = if (isRight) "中文" else "English"
+    val identityColor = if (isRight) androidx.compose.ui.graphics.Color(0xFFB4765A) else MaterialTheme.colorScheme.primary
     Column(
         Modifier.fillMaxWidth().padding(vertical = 5.dp),
         horizontalAlignment = if (isRight) Alignment.End else Alignment.Start,
     ) {
         Text(
-            if (isRight) "English 侧 · English → 中文" else "中文侧 · 中文 → English",
+            "$sourceLanguage  ·  $sourceLanguage → $targetLanguage",
             style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+            color = identityColor,
+            modifier = Modifier.padding(horizontal = 2.dp, vertical = 3.dp),
         )
         Surface(
             modifier = Modifier.fillMaxWidth(0.88f).semantics {
-                contentDescription = "${if (isRight) "English 侧" else "中文侧"}字幕。原文${turn.sourceText.ifEmpty { "等待识别" }}。译文${turn.translatedText.ifEmpty { "等待翻译" }}"
+                contentDescription = "$sourceLanguage 字幕。原文${turn.sourceText.ifEmpty { "等待识别" }}。译文${turn.translatedText.ifEmpty { "等待翻译" }}"
             },
-            shape = RoundedCornerShape(18.dp),
-            color = if (isRight) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
+            shape = RoundedCornerShape(14.dp),
+            color = MaterialTheme.colorScheme.surface,
+            border = androidx.compose.foundation.BorderStroke(1.dp, identityColor.copy(alpha = 0.25f)),
         ) {
             SubtitleContent(turn.sourceText, turn.translatedText, turn.finished)
         }
@@ -1276,8 +1263,9 @@ private fun SoloTranscriptFeed(turns: List<SubtitleTurn>, modifier: Modifier = M
                     modifier = Modifier.fillMaxWidth(0.94f).semantics {
                         contentDescription = "原文${turn.sourceText.ifEmpty { "等待识别" }}。译文${turn.translatedText.ifEmpty { "等待翻译" }}"
                     },
-                    shape = RoundedCornerShape(18.dp),
-                    color = MaterialTheme.colorScheme.surfaceVariant,
+                    shape = RoundedCornerShape(14.dp),
+                    color = MaterialTheme.colorScheme.surface,
+                    border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
                 ) {
                     SubtitleContent(turn.sourceText, turn.translatedText, turn.finished)
                 }
@@ -1288,9 +1276,9 @@ private fun SoloTranscriptFeed(turns: List<SubtitleTurn>, modifier: Modifier = M
 
 @Composable
 private fun SubtitleContent(sourceText: String, translatedText: String, finished: Boolean) {
-    Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
-        Text(sourceText.ifEmpty { "正在聆听…" }, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Text(translatedText.ifEmpty { "等待翻译…" }, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
+    Column(Modifier.padding(horizontal = 16.dp, vertical = 14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(sourceText.ifEmpty { "正在聆听…" }, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(translatedText.ifEmpty { "等待翻译…" }, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Medium)
         if (finished) Text("已完成", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
     }
 }
