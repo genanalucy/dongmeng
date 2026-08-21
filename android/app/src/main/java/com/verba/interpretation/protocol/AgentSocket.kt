@@ -10,6 +10,7 @@ import okio.ByteString
 import java.util.UUID
 
 class AgentSocket(
+    private val endpointSettings: EndpointSettings,
     private val client: OkHttpClient = OkHttpClient(),
     private val onEvent: (AgentEvent) -> Unit,
     private val onTts: (ByteArray) -> Unit,
@@ -28,7 +29,7 @@ class AgentSocket(
         finishing = false
         terminalDelivered = false
         pendingAudio.clear()
-        val requestBuilder = Request.Builder().url(BuildConfig.TRANSLATION_WS_URL)
+        val requestBuilder = Request.Builder().url(endpointSettings.current().webSocketUrl)
         if (BuildConfig.TRANSLATION_ORIGIN.isNotEmpty()) requestBuilder.header("Origin", BuildConfig.TRANSLATION_ORIGIN)
         val start = StartMessage(UUID.randomUUID().toString(), sourceLanguage, targetLanguage)
         socket = client.newWebSocket(requestBuilder.build(), object : WebSocketListener() {

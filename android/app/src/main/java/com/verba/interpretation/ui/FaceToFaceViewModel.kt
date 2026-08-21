@@ -8,6 +8,7 @@ import com.verba.interpretation.audio.MicrophoneCapture
 import com.verba.interpretation.audio.TtsPlayer
 import com.verba.interpretation.protocol.AgentEvent
 import com.verba.interpretation.protocol.AgentSocket
+import com.verba.interpretation.protocol.EndpointSettings
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.Job
@@ -22,6 +23,7 @@ class FaceToFaceViewModel(application: Application) : AndroidViewModel(applicati
     private val mutableState = MutableStateFlow(coordinator.state())
     val state: StateFlow<FaceToFaceState> = mutableState.asStateFlow()
     private val microphone = MicrophoneCapture(application)
+    private val endpointSettings = EndpointSettings(application)
     private val player = TtsPlayer()
     private val playbackExecutor = Executors.newSingleThreadExecutor { task ->
         Thread(task, "verba-face-tts").apply { isDaemon = true }
@@ -97,6 +99,7 @@ class FaceToFaceViewModel(application: Application) : AndroidViewModel(applicati
     private fun createSession(side: FaceToFaceSide): CreatedSession {
         val turnId = nextTurnId++
         val socket = AgentSocket(
+            endpointSettings = endpointSettings,
             onEvent = { event -> synchronized(actionLock) { handleEvent(turnId, event) } },
             onTts = { pcm -> synchronized(actionLock) { queuePlayback(coordinator.offerTts(turnId, pcm)) } },
             onFailure = { message -> synchronized(actionLock) { handleSessionFailure(turnId, message) } },

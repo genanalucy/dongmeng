@@ -33,6 +33,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -47,10 +48,12 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -67,6 +70,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.verba.interpretation.audio.PlaybackRoute
 import com.verba.interpretation.brand.BrandConfig
 import com.verba.interpretation.brand.BrandTheme
+import com.verba.interpretation.protocol.EndpointSettings
 import com.verba.interpretation.ui.ChatFollowEvent
 import com.verba.interpretation.ui.ChatFollowPolicy
 import com.verba.interpretation.ui.ChatFollowState
@@ -79,6 +83,9 @@ import com.verba.interpretation.ui.FaceToFaceViewModel
 import com.verba.interpretation.ui.InterpretationViewModel
 import com.verba.interpretation.ui.SessionPhase
 import com.verba.interpretation.ui.SubtitleTurn
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -87,7 +94,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-private enum class Screen { HOME, SOLO, FACE }
+private enum class Screen { HOME, SOLO, FACE, PROFILE, ENDPOINT_SETTINGS }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -119,15 +126,17 @@ private fun InterpretationApp(viewModel: InterpretationViewModel = viewModel()) 
         },
     ) { padding ->
         when (screen) {
-            Screen.HOME -> Home(Modifier.padding(padding), onSolo = { screen = Screen.SOLO }, onFace = { screen = Screen.FACE })
+            Screen.HOME -> Home(Modifier.padding(padding), onSolo = { screen = Screen.SOLO }, onFace = { screen = Screen.FACE }, onProfile = { screen = Screen.PROFILE })
             Screen.SOLO -> Solo(Modifier.padding(padding), viewModel)
             Screen.FACE -> FaceToFace(Modifier.padding(padding))
+            Screen.PROFILE -> Profile(Modifier.padding(padding), onEndpointSettings = { screen = Screen.ENDPOINT_SETTINGS })
+            Screen.ENDPOINT_SETTINGS -> EndpointSettingsPage(Modifier.padding(padding))
         }
     }
 }
 
 @Composable
-private fun Home(modifier: Modifier, onSolo: () -> Unit, onFace: () -> Unit) {
+private fun Home(modifier: Modifier, onSolo: () -> Unit, onFace: () -> Unit, onProfile: () -> Unit) {
     Column(
         modifier.fillMaxSize().padding(horizontal = 20.dp, vertical = 28.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
@@ -148,11 +157,69 @@ private fun Home(modifier: Modifier, onSolo: () -> Unit, onFace: () -> Unit) {
             onClick = onFace,
         )
         Spacer(Modifier.weight(1f))
+        OutlinedButton(onClick = onProfile, modifier = Modifier.fillMaxWidth()) { Text("我的") }
         Text(
             "语音仅在翻译期间处理，离开页面会停止当前会话。",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+    }
+}
+
+@Composable
+private fun Profile(modifier: Modifier, onEndpointSettings: () -> Unit) {
+    Column(modifier.fillMaxSize().padding(horizontal = 20.dp, vertical = 28.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        Text("我的", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.SemiBold)
+        Text("管理本机 Agent 服务地址与连接测试。", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        ModeCard("测试服务地址", "配置 HTTP health 检查和 WebSocket 翻译服务地址。", "打开测试服务地址", onEndpointSettings)
+    }
+}
+
+@Composable
+private fun EndpointSettingsPage(modifier: Modifier) {
+    val context = LocalContext.current
+    val settings = remember(context) { EndpointSettings(context) }
+    var endpoints by remember { mutableStateOf(settings.current()) }
+    var httpUrl by remember(endpoints) { mutableStateOf(endpoints.httpUrl) }
+    var webSocketUrl by remember(endpoints) { mutableStateOf(endpoints.webSocketUrl) }
+    var message by remember { mutableStateOf<String?>(null) }
+    var checking by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+
+    Column(modifier.fillMaxSize().padding(horizontal = 20.dp, vertical = 20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        PageHeading("测试服务地址", "保存后新会话将使用新地址")
+        OutlinedTextField(value = httpUrl, onValueChange = { httpUrl = it }, label = { Text("HTTP 地址") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+        OutlinedTextField(value = webSocketUrl, onValueChange = { webSocketUrl = it }, label = { Text("WebSocket 地址") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+        Text("Debug 可使用 http/ws；Release 仅允许 https/wss。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(onClick = {
+                settings.save(httpUrl, webSocketUrl).onSuccess {
+                    endpoints = it
+                    message = "地址已保存。"
+                }.onFailure { message = it.message }
+            }) { Text("保存") }
+            OutlinedButton(onClick = {
+                settings.deriveWebSocketUrl(httpUrl).onSuccess { webSocketUrl = it }.onFailure { message = it.message }
+            }) { Text("推导 WS") }
+            OutlinedButton(onClick = {
+                endpoints = settings.restoreDefaults()
+                httpUrl = endpoints.httpUrl
+                webSocketUrl = endpoints.webSocketUrl
+                message = "已恢复默认地址。"
+            }) { Text("恢复默认") }
+            OutlinedButton(enabled = !checking, onClick = {
+                settings.validate(httpUrl, webSocketUrl).onSuccess { config ->
+                    checking = true
+                    message = "正在检查…"
+                    scope.launch {
+                        val result = withContext(Dispatchers.IO) { settings.checkHealth(config) }
+                        checking = false
+                        message = result.fold(onSuccess = { "Health 检查成功。" }, onFailure = { it.message })
+                    }
+                }.onFailure { message = it.message }
+            }) { Text(if (checking) "检查中" else "Health 检查") }
+        }
+        message?.let { Text(it, color = if (it.contains("成功") || it.contains("已")) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error) }
     }
 }
 

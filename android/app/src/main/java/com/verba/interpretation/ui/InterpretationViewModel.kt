@@ -9,6 +9,7 @@ import com.verba.interpretation.audio.PlaybackRoute
 import com.verba.interpretation.audio.TtsPlayer
 import com.verba.interpretation.protocol.AgentEvent
 import com.verba.interpretation.protocol.AgentSocket
+import com.verba.interpretation.protocol.EndpointSettings
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -21,6 +22,7 @@ class InterpretationViewModel(application: Application) : AndroidViewModel(appli
     private val mutableState = MutableStateFlow(InterpretationUiState())
     val state: StateFlow<InterpretationUiState> = mutableState.asStateFlow()
     private val microphone = MicrophoneCapture(application)
+    private val endpointSettings = EndpointSettings(application)
     private val player = TtsPlayer()
     private val sessions = TurnSessionCoordinator<AgentSocket>()
     private var turnJob: Job? = null
@@ -113,6 +115,7 @@ class InterpretationViewModel(application: Application) : AndroidViewModel(appli
         val turn = SubtitleTurn(nextTurnId++, snapshot.sourceLanguage, snapshot.targetLanguage)
         lateinit var socket: AgentSocket
         socket = AgentSocket(
+            endpointSettings = endpointSettings,
             onEvent = { event -> handleEvent(turn.id, event) },
             onTts = { pcm -> playQueued(sessions.offerTts(turn.id, pcm)) },
             onFailure = { message -> handleSessionFailure(turn.id, message) },

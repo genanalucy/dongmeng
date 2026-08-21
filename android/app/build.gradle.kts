@@ -16,6 +16,7 @@ android {
         versionName = "1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        buildConfigField("String", "AGENT_HTTP_URL", "\"https://api.example.com\"")
         buildConfigField("String", "TRANSLATION_WS_URL", "\"wss://api.example.com/v1/translation\"")
         buildConfigField("String", "TRANSLATION_ORIGIN", "\"\"")
     }
@@ -24,11 +25,13 @@ android {
         debug {
             applicationIdSuffix = ".debug"
             versionNameSuffix = "-debug"
+            buildConfigField("String", "AGENT_HTTP_URL", "\"http://127.0.0.1:18765\"")
             buildConfigField("String", "TRANSLATION_WS_URL", "\"ws://127.0.0.1:18765/ws/translate\"")
             buildConfigField("String", "TRANSLATION_ORIGIN", "\"http://127.0.0.1:5173\"")
         }
         release {
             isMinifyEnabled = false
+            buildConfigField("String", "AGENT_HTTP_URL", "\"https://api.example.com\"")
             buildConfigField("String", "TRANSLATION_WS_URL", "\"wss://api.example.com/v1/translation\"")
             buildConfigField("String", "TRANSLATION_ORIGIN", "\"\"")
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
