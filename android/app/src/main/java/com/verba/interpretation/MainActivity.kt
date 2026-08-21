@@ -696,8 +696,8 @@ private fun FaceConfiguration(state: FaceToFaceState, faceViewModel: FaceToFaceV
                 FilterChip(selected = state.mode == FaceToFaceMode.AUTO, onClick = { faceViewModel.setMode(FaceToFaceMode.AUTO) }, label = { Text("自动交替") })
             }
             Text("选择双方语言", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 18.dp, bottom = 8.dp))
-            LanguageChipRow(TranslationLanguage.displayName(state.leftLanguage), state.leftLanguage, state.rightLanguage) { faceViewModel.setLanguages(it, state.rightLanguage) }
-            LanguageChipRow(TranslationLanguage.displayName(state.rightLanguage), state.rightLanguage, state.leftLanguage) { faceViewModel.setLanguages(state.leftLanguage, it) }
+            LanguageChoiceBlock(TranslationLanguage.displayName(state.leftLanguage), state.leftLanguage, state.rightLanguage) { faceViewModel.setLanguages(it, state.rightLanguage) }
+            LanguageChoiceBlock(TranslationLanguage.displayName(state.rightLanguage), state.rightLanguage, state.leftLanguage) { faceViewModel.setLanguages(state.leftLanguage, it) }
             if (state.leftLanguage == "fr" || state.leftLanguage == "vi" || state.rightLanguage == "fr" || state.rightLanguage == "vi") {
                 Text("法语和越南语由 Qwen 实时服务处理。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 10.dp))
             }
@@ -712,11 +712,24 @@ private fun FaceConfiguration(state: FaceToFaceState, faceViewModel: FaceToFaceV
 }
 
 @Composable
-private fun LanguageChipRow(selectedName: String, selectedCode: String, disabledCode: String, onSelect: (String) -> Unit) {
-    Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-        Text(selectedName, style = MaterialTheme.typography.labelLarge, modifier = Modifier.width(54.dp))
-        TranslationLanguage.entries.forEach { language ->
-            FilterChip(selected = selectedCode == language.code, enabled = language.code != disabledCode, onClick = { onSelect(language.code) }, label = { Text(language.displayName) })
+private fun LanguageChoiceBlock(selectedName: String, selectedCode: String, disabledCode: String, onSelect: (String) -> Unit) {
+    Column(Modifier.fillMaxWidth().padding(top = 8.dp)) {
+        Text(selectedName, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
+        TranslationLanguage.entries.chunked(2).forEach { languages ->
+            Row(
+                Modifier.fillMaxWidth().padding(top = 6.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                languages.forEach { language ->
+                    FilterChip(
+                        selected = selectedCode == language.code,
+                        enabled = language.code != disabledCode,
+                        onClick = { onSelect(language.code) },
+                        label = { Text(language.displayName, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+            }
         }
     }
 }
