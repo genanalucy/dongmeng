@@ -10,6 +10,8 @@ import { LocalAgentTranslationClient } from '../translation/LocalAgentTranslatio
 import { DeterministicMockTranslationPort, type TranslationPort } from '../translation/TranslationPort'
 import { SoloInterpretationController } from '../solo/SoloInterpretationController'
 import { HomePage } from '../pages/HomePage'
+import { TestConnectionPage } from '../pages/TestConnectionPage'
+import { loadEndpointConfiguration, type EndpointConfiguration } from '../translation/EndpointConfiguration'
 
 type TranslationMode = 'local' | 'mock'
 
@@ -24,6 +26,7 @@ export function App(): JSX.Element {
   const [page, setPage] = useState<AppPage>('home')
   const [mode, setMode] = useState<TranslationMode>('local')
   const [health, setHealth] = useState<AgentHealthSnapshot>(initialHealth)
+  const [endpointConfiguration, setEndpointConfiguration] = useState<EndpointConfiguration>(() => loadEndpointConfiguration())
   const [packetSink] = useState(() => new MutablePcmPacketSink())
   const [microphoneService] = useState(
     () => new MicrophoneService(createBrowserMicrophoneEnvironment(), packetSink),
@@ -92,6 +95,8 @@ export function App(): JSX.Element {
         onCheckAgentHealth={() => { void healthService.check() }}
       />
     )
+  } else if (page === 'settings') {
+    pageContent = <TestConnectionPage initialConfiguration={endpointConfiguration} onSaved={setEndpointConfiguration} />
   } else {
     pageContent = (
       <FaceToFacePage

@@ -1,3 +1,5 @@
+import { agentHealthUrl } from './EndpointConfiguration'
+
 export type AgentHealthStatus = 'online' | 'offline'
 
 export interface AgentHealthSnapshot {
@@ -18,6 +20,7 @@ export interface AgentHealthServiceOptions {
   readonly now?: () => number
   readonly intervalMs?: number
   readonly healthUrl?: string
+  readonly getHealthUrl?: () => string
 }
 
 export class AgentHealthService {
@@ -25,7 +28,7 @@ export class AgentHealthService {
   private readonly fetcher: (input: string) => Promise<FetchResponsePort>
   private readonly now: () => number
   private readonly intervalMs: number
-  private readonly healthUrl: string
+  private readonly getHealthUrl: () => string
   private timer: ReturnType<typeof setInterval> | null = null
   private checking: Promise<AgentHealthStatus> | null = null
   private snapshot: AgentHealthSnapshot = {
@@ -42,7 +45,7 @@ export class AgentHealthService {
     }))
     this.now = options.now ?? (() => performance.now())
     this.intervalMs = options.intervalMs ?? 5_000
-    this.healthUrl = options.healthUrl ?? '/api/health'
+    this.getHealthUrl = options.getHealthUrl ?? (() => options.healthUrl ?? agentHealthUrl())
   }
 
   public getSnapshot(): AgentHealthSnapshot {
@@ -75,7 +78,7 @@ export class AgentHealthService {
       return this.checking
     }
     this.publish({ ...this.snapshot, checking: true, errorMessage: null })
-    const checking = this.fetcher(this.healthUrl)
+    const checking = this.fetcher(this.getHealthUrl())
       .then(async (response) => {
         if (!response.ok) {
           throw new Error(`健康检查返回 HTTP ${response.status ?? '错误'}`)

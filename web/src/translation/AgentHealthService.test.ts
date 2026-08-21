@@ -38,6 +38,15 @@ describe('AgentHealthService', () => {
     })
   })
 
+  it('reads the endpoint for each check and reports a connection failure', async () => {
+    const fetcher = vi.fn(async () => { throw new Error('connection refused') })
+    const service = new AgentHealthService({ fetcher, getHealthUrl: () => 'http://127.0.0.1:18765/api/health' })
+
+    await expect(service.check()).resolves.toBe('offline')
+    expect(fetcher).toHaveBeenCalledWith('http://127.0.0.1:18765/api/health')
+    expect(service.getSnapshot().errorMessage).toBe('connection refused')
+  })
+
   it('deduplicates concurrent checks and starts and stops one polling interval', async () => {
     vi.useFakeTimers()
     const resolvers: ((value: FetchResponsePort) => void)[] = []

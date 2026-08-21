@@ -2,7 +2,7 @@ import type { ReactNode } from 'react'
 import { brand, brandThemeStyle } from '../brand'
 import type { AgentHealthSnapshot } from '../translation/AgentHealthService'
 
-export type AppPage = 'home' | 'solo' | 'face-to-face'
+export type AppPage = 'home' | 'solo' | 'face-to-face' | 'settings'
 
 interface AppShellProps {
   readonly currentPage: AppPage
@@ -15,6 +15,7 @@ const navigationItems: readonly { readonly page: AppPage; readonly label: string
   { page: 'home', label: '首页', shortLabel: '首页' },
   { page: 'solo', label: '单人同传', shortLabel: '单人' },
   { page: 'face-to-face', label: '面对面', shortLabel: '面对面' },
+  { page: 'settings', label: '测试连接', shortLabel: '测试' },
 ]
 
 const healthLabels: Readonly<Record<AgentHealthSnapshot['status'], string>> = {

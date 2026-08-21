@@ -2,6 +2,7 @@ import {
   PRE_READY_MAX_PACKETS,
   type PcmPacket,
 } from '../audio/PcmCapturePipeline'
+import { getEndpointConfiguration } from './EndpointConfiguration'
 import type {
   TranslationPort,
   TranslationRequest,
@@ -131,21 +132,21 @@ export interface LocalAgentTranslationClientOptions {
 export class LocalAgentTranslationClient implements TranslationPort {
   private readonly createWebSocket: (url: string) => WebSocketPort
   private readonly createSessionId: () => string
-  private readonly webSocketUrl: string
+  private readonly getWebSocketUrl: () => string
   private readonly ttsSink: TtsPcmSink
   private readonly orderedPlayback: OrderedTtsPlayback
 
   public constructor(options: LocalAgentTranslationClientOptions = {}) {
     this.createWebSocket = options.createWebSocket ?? createBrowserWebSocket
     this.createSessionId = options.createSessionId ?? createSessionId
-    this.webSocketUrl = options.webSocketUrl ?? '/ws/translate'
+    this.getWebSocketUrl = () => options.webSocketUrl ?? getEndpointConfiguration().agentWsUrl
     this.ttsSink = options.ttsSink ?? discardTtsPcmSink
     this.orderedPlayback = new OrderedTtsPlayback(this.ttsSink)
   }
 
   public start(request: TranslationRequest): TranslationSession {
     return new LocalAgentTranslationSession(
-      this.createWebSocket(this.webSocketUrl),
+      this.createWebSocket(this.getWebSocketUrl()),
       this.createSessionId(),
       request,
       this.ttsSink,
