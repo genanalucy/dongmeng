@@ -501,11 +501,9 @@ export function FaceToFacePage({
   const leftSpeaking = snapshot.state === 'left_speaking'
   const rightSpeaking = snapshot.state === 'right_speaking'
   const localAgentUnavailable = translationMode === 'local' && agentHealth.status !== 'online'
-  const requiresQwenProvider = snapshot.leftLanguage === 'fr' || snapshot.leftLanguage === 'vi'
-    || snapshot.rightLanguage === 'fr' || snapshot.rightLanguage === 'vi'
-  const controlsLocked = !devicesReady || localAgentUnavailable || requiresQwenProvider
+  const controlsLocked = !devicesReady || localAgentUnavailable
     || snapshot.state !== 'ready' && !leftSpeaking && !rightSpeaking
-  const autoControlsLocked = !devicesReady || localAgentUnavailable || requiresQwenProvider
+  const autoControlsLocked = !devicesReady || localAgentUnavailable
   const modeLabel = translationMode === 'local' ? 'Local Agent 模式' : '模拟模式'
   const healthLabel = agentHealth.checking
     ? 'CHECKING'
@@ -632,7 +630,7 @@ export function FaceToFacePage({
       </section>
 
       {(snapshot.leftLanguage === 'fr' || snapshot.leftLanguage === 'vi' || snapshot.rightLanguage === 'fr' || snapshot.rightLanguage === 'vi') && (
-        <p className="language-provider-note">法语、越南语需等待 Qwen 实时服务接入后方可使用。</p>
+        <p className="language-provider-note">法语、越南语由 Qwen 实时服务处理。</p>
       )}
 
       <MicrophoneDiagnostics snapshot={microphoneSnapshot} />

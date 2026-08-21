@@ -341,8 +341,6 @@ export function SoloInterpretationPage({
 
   const isCapturing = snapshot.state === 'capturing'
   const canConfigure = snapshot.state === 'idle' || snapshot.state === 'paused'
-  const requiresQwenProvider = snapshot.sourceLanguage === 'fr' || snapshot.sourceLanguage === 'vi'
-    || snapshot.targetLanguage === 'fr' || snapshot.targetLanguage === 'vi'
   const healthLabel = agentHealth.checking ? 'CHECKING' : agentOnline ? 'ONLINE' : 'OFFLINE'
 
   return (
@@ -401,7 +399,7 @@ export function SoloInterpretationPage({
           </select>
         </label>
         {(snapshot.sourceLanguage === 'fr' || snapshot.sourceLanguage === 'vi' || snapshot.targetLanguage === 'fr' || snapshot.targetLanguage === 'vi') && (
-          <p className="language-provider-note">法语、越南语需等待 Qwen 实时服务接入后方可使用。</p>
+          <p className="language-provider-note">法语、越南语由 Qwen 实时服务处理。</p>
         )}
         <fieldset disabled={!canConfigure}>
           <legend>播放目标</legend>
@@ -418,7 +416,7 @@ export function SoloInterpretationPage({
 
       <section className="translation-mode-panel" aria-label="连续录音控制">
         {!isCapturing && snapshot.state !== 'paused' && (
-          <button type="button" className="start-auto-button" disabled={!devicesReady || !agentOnline || requiresQwenProvider || snapshot.state === 'stopping'} onClick={start}>开始同传</button>
+          <button type="button" className="start-auto-button" disabled={!devicesReady || !agentOnline || snapshot.state === 'stopping'} onClick={start}>开始同传</button>
         )}
         {isCapturing && <button type="button" className="secondary-button" onClick={pause}>暂停</button>}
         {snapshot.state === 'paused' && <button type="button" className="start-auto-button" disabled={!devicesReady || !agentOnline} onClick={resume}>恢复</button>}

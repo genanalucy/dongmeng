@@ -40,7 +40,7 @@ func main() {
 
 	httpServer := &http.Server{
 		Addr:              server.DefaultAddress,
-		Handler:           server.New(server.Options{ASTClient: ast.NewConfiguredClient(cfg), Origins: allowedOrigins(os.Getenv("TRANSLATOR_AGENT_EXTRA_ORIGINS")), Logger: logger}).Handler(),
+		Handler:           server.New(server.Options{ASTClient: ast.NewRoutingClient(ast.NewConfiguredClient(cfg), cfg), Origins: allowedOrigins(os.Getenv("TRANSLATOR_AGENT_EXTRA_ORIGINS")), Logger: logger}).Handler(),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
 		WriteTimeout:      15 * time.Second,

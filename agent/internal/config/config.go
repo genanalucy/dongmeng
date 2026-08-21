@@ -12,10 +12,12 @@ const DefaultResourceID = "volc.service_type.10053"
 // Config contains only the credential form selected for the AST client.
 // Secret Key is intentionally not supported or read.
 type Config struct {
-	APIKey      string
-	AppID       string
-	AccessToken string
-	ResourceID  string
+	APIKey          string
+	AppID           string
+	AccessToken     string
+	ResourceID      string
+	DashScopeAPIKey string
+	QwenAPIHost     string
 }
 
 // Load reads a current API key or the legacy App ID plus access-token pair.
@@ -25,10 +27,12 @@ func Load(getenv func(string) string) (Config, error) {
 	}
 
 	cfg := Config{
-		APIKey:      getenv("VOLCENGINE_API_KEY"),
-		AppID:       getenv("VOLCENGINE_APP_ID"),
-		AccessToken: getenv("VOLCENGINE_ACCESS_TOKEN"),
-		ResourceID:  getenv("VOLCENGINE_RESOURCE_ID"),
+		APIKey:          getenv("VOLCENGINE_API_KEY"),
+		AppID:           getenv("VOLCENGINE_APP_ID"),
+		AccessToken:     getenv("VOLCENGINE_ACCESS_TOKEN"),
+		ResourceID:      getenv("VOLCENGINE_RESOURCE_ID"),
+		DashScopeAPIKey: getenv("DASHSCOPE_API_KEY"),
+		QwenAPIHost:     getenv("QWEN_API_HOST"),
 	}
 	if cfg.ResourceID == "" {
 		cfg.ResourceID = DefaultResourceID
@@ -44,6 +48,8 @@ func Load(getenv func(string) string) (Config, error) {
 	case hasAPIKey:
 		return cfg, nil
 	case hasLegacyPair:
+		return cfg, nil
+	case cfg.DashScopeAPIKey != "" && cfg.QwenAPIHost != "":
 		return cfg, nil
 	case hasLegacyPart:
 		return Config{}, errors.New("invalid legacy Volcengine authentication configuration: both App ID and access token are required")
