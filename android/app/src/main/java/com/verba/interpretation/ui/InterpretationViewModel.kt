@@ -10,8 +10,6 @@ import com.verba.interpretation.audio.TtsPlayer
 import com.verba.interpretation.protocol.AgentEvent
 import com.verba.interpretation.protocol.AgentSocket
 import com.verba.interpretation.protocol.EndpointSettings
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -25,7 +23,6 @@ class InterpretationViewModel(application: Application) : AndroidViewModel(appli
     private val endpointSettings = EndpointSettings(application)
     private val player = TtsPlayer()
     private val sessions = TurnSessionCoordinator<AgentSocket>()
-    private var turnJob: Job? = null
     private var nextTurnId = 1L
 
     fun setTarget(language: String) {
@@ -44,7 +41,6 @@ class InterpretationViewModel(application: Application) : AndroidViewModel(appli
 
     fun pause() {
         if (mutableState.value.phase != SessionPhase.RUNNING && mutableState.value.phase != SessionPhase.STARTING) return
-        turnJob?.cancel()
         microphone.stop()
         sessions.pauseAndFinishSessions().forEach { it.finish() }
         mutableState.update { it.copy(phase = SessionPhase.PAUSED) }
@@ -60,7 +56,6 @@ class InterpretationViewModel(application: Application) : AndroidViewModel(appli
     fun finish() {
         val phase = mutableState.value.phase
         if (phase == SessionPhase.IDLE || phase == SessionPhase.STOPPING) return
-        turnJob?.cancel()
         microphone.stop()
         mutableState.update { it.copy(phase = SessionPhase.STOPPING) }
         sessions.stopAndFinishSessions().forEach { it.finish() }
@@ -72,7 +67,6 @@ class InterpretationViewModel(application: Application) : AndroidViewModel(appli
     }
 
     fun cancel() {
-        turnJob?.cancel()
         microphone.stop()
         cancelAllSessions()
         player.stop()
@@ -92,20 +86,10 @@ class InterpretationViewModel(application: Application) : AndroidViewModel(appli
             },
             onError = ::fail,
         )) {
-            CaptureResult.Started -> scheduleTurnRoll()
+            CaptureResult.Started -> Unit
             CaptureResult.AlreadyRunning -> fail("麦克风已在录音。")
             CaptureResult.Stopped -> fail(if (isResume) "麦克风无法恢复。" else "麦克风未启动。")
             is CaptureResult.Error -> fail(result.message)
-        }
-    }
-
-    private fun scheduleTurnRoll() {
-        turnJob?.cancel()
-        turnJob = viewModelScope.launch {
-            while (true) {
-                delay(CONTINUOUS_TURN_MILLIS)
-                openTurn()
-            }
         }
     }
 
@@ -196,7 +180,6 @@ class InterpretationViewModel(application: Application) : AndroidViewModel(appli
     }
 
     private fun fail(message: String) {
-        turnJob?.cancel()
         microphone.stop()
         cancelAllSessions()
         player.stop()
@@ -208,15 +191,12 @@ class InterpretationViewModel(application: Application) : AndroidViewModel(appli
     }
 
     override fun onCleared() {
-        turnJob?.cancel()
         microphone.stop()
         cancelAllSessions()
         player.stop()
         super.onCleared()
     }
 }
-
-private const val CONTINUOUS_TURN_MILLIS = 25_000L
 
 private fun AgentEvent.Subtitle.Kind.toSubtitleKind(): SubtitleKind = when (this) {
     AgentEvent.Subtitle.Kind.SOURCE_PARTIAL -> SubtitleKind.SOURCE_PARTIAL

@@ -117,21 +117,12 @@ class FaceToFaceCoordinator<S> {
         addTurnLocked(turnId, FaceToFaceSide.LEFT, session)
         activeTurnId = turnId
         current = current.copy(phase = FaceToFacePhase.LISTENING, activeSide = FaceToFaceSide.LEFT, captureActive = true, error = null)
-        return Transition(accepted = true, startCapture = true, timer = TimerIntent(turnId, AUTO_ROLL_MILLIS))
+        return Transition(accepted = true, startCapture = true)
     }
 
     @Synchronized
     fun switchAuto(turnId: Long, side: FaceToFaceSide, session: S): Transition<S> {
         if (current.mode != FaceToFaceMode.AUTO || current.phase != FaceToFacePhase.LISTENING || !current.captureActive || current.activeSide == side) {
-            return Transition(accepted = false, cancelSessions = listOf(session))
-        }
-        return replaceAutoTurnLocked(turnId, side, session)
-    }
-
-    @Synchronized
-    fun rollAuto(expectedTurnId: Long, turnId: Long, session: S): Transition<S> {
-        val side = current.activeSide
-        if (current.mode != FaceToFaceMode.AUTO || current.phase != FaceToFacePhase.LISTENING || !current.captureActive || activeTurnId != expectedTurnId || side == null) {
             return Transition(accepted = false, cancelSessions = listOf(session))
         }
         return replaceAutoTurnLocked(turnId, side, session)
@@ -228,7 +219,6 @@ class FaceToFaceCoordinator<S> {
         return Transition(
             accepted = true,
             finishSessions = listOfNotNull(previous),
-            timer = TimerIntent(turnId, AUTO_ROLL_MILLIS),
             cancelTimer = true,
         )
     }
@@ -268,6 +258,5 @@ class FaceToFaceCoordinator<S> {
 
     companion object {
         const val MANUAL_LIMIT_MILLIS = 25_000L
-        const val AUTO_ROLL_MILLIS = 25_000L
     }
 }

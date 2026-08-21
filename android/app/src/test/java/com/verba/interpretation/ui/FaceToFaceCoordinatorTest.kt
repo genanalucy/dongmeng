@@ -75,23 +75,15 @@ class FaceToFaceCoordinatorTest {
         assertTrue(coordinator.sendToActive { it == "left-2" })
     }
 
-    @Test fun autoRollEmitsTwentyFiveSecondIntentAndRejectsStaleTimer() {
+    @Test fun autoModeKeepsItsTurnOpenWithoutANormalDurationTimer() {
         val coordinator = FaceToFaceCoordinator<String>()
         coordinator.setMode(FaceToFaceMode.AUTO)
+
         val start = coordinator.startAuto(1, "first")
-        assertEquals(FaceToFaceCoordinator.AUTO_ROLL_MILLIS, start.timer?.delayMillis)
-        assertEquals(1L, start.timer?.turnId)
 
-        val roll = coordinator.rollAuto(1, 2, "second")
-        assertTrue(roll.accepted)
-        assertEquals(listOf("first"), roll.finishSessions)
-        assertTrue(roll.cancelTimer)
-        assertEquals(2L, roll.timer?.turnId)
-        assertEquals(FaceToFaceCoordinator.AUTO_ROLL_MILLIS, roll.timer?.delayMillis)
-
-        val stale = coordinator.rollAuto(1, 3, "stale")
-        assertFalse(stale.accepted)
-        assertEquals(listOf("stale"), stale.cancelSessions)
+        assertTrue(start.accepted)
+        assertNull(start.timer)
+        assertTrue(coordinator.isActiveTurn(1))
     }
 
     @Test fun outOfOrderFinishedAndTtsStillPlayInTurnCreationOrder() {

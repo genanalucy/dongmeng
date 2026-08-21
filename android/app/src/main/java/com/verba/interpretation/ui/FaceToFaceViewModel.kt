@@ -85,15 +85,6 @@ class FaceToFaceViewModel(application: Application) : AndroidViewModel(applicati
         applyTransition(coordinator.switchAuto(created.turnId, side, created.socket))
     }
 
-    private fun rollAuto(expectedTurnId: Long) = synchronized(actionLock) {
-        val snapshot = coordinator.state()
-        val side = snapshot.activeSide ?: return
-        if (snapshot.mode != FaceToFaceMode.AUTO || snapshot.phase != FaceToFacePhase.LISTENING || !snapshot.captureActive) return
-        val created = createSession(side)
-        if (!startSocket(created)) return
-        applyTransition(coordinator.rollAuto(expectedTurnId, created.turnId, created.socket))
-    }
-
     private data class CreatedSession(val turnId: Long, val side: FaceToFaceSide, val socket: AgentSocket)
 
     private fun createSession(side: FaceToFaceSide): CreatedSession {
@@ -146,11 +137,7 @@ class FaceToFaceViewModel(application: Application) : AndroidViewModel(applicati
         timerJob?.cancel()
         timerJob = viewModelScope.launch {
             delay(intent.delayMillis)
-            if (coordinator.state().mode == FaceToFaceMode.MANUAL) {
-                synchronized(actionLock) { applyTransition(coordinator.endManualInput(intent.turnId)) }
-            } else {
-                rollAuto(intent.turnId)
-            }
+            synchronized(actionLock) { applyTransition(coordinator.endManualInput(intent.turnId)) }
         }
     }
 
