@@ -510,7 +510,7 @@ private fun SoloWorkbench(modifier: Modifier, viewModel: InterpretationViewModel
                         if (languages.size == 1) Spacer(Modifier.weight(1f))
                     }
                 }
-                Text("源语言：${TranslationLanguage.displayName(state.sourceLanguage)}。法语和越南语将在 Qwen 实时服务接入后启用真实翻译。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("源语言：${TranslationLanguage.displayName(state.sourceLanguage)}。法语和越南语由 Qwen 实时服务处理。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Text("播放位置", style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(top = 14.dp, bottom = 4.dp))
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     PlaybackRoute.entries.forEach { route ->
@@ -707,7 +707,7 @@ private fun FaceControls(
             }
         }
         if (state.leftLanguage == "fr" || state.leftLanguage == "vi" || state.rightLanguage == "fr" || state.rightLanguage == "vi") {
-            Text("法语和越南语将在 Qwen 实时服务接入后启用真实翻译。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("法语和越南语由 Qwen 实时服务处理。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         FaceSessionAction(state, requestOrRun, faceViewModel)
         state.error?.let { ErrorSurface(it, Modifier.padding(top = 8.dp)) }

@@ -39,10 +39,6 @@ class InterpretationViewModel(application: Application) : AndroidViewModel(appli
 
     fun start() {
         if (mutableState.value.phase != SessionPhase.IDLE) return
-        if (!isCurrentProviderAvailable()) {
-            mutableState.update { it.copy(error = "法语和越南语的实时服务正在接入，当前仅支持中文与 English 的真实同传。") }
-            return
-        }
         mutableState.update { it.copy(phase = SessionPhase.STARTING, turns = emptyList(), error = null) }
         if (!openTurn()) return
         startMicrophone(isResume = false)
@@ -84,11 +80,6 @@ class InterpretationViewModel(application: Application) : AndroidViewModel(appli
 
     fun microphonePermissionDenied() {
         fail("未授予麦克风权限。")
-    }
-
-    private fun isCurrentProviderAvailable(): Boolean = mutableState.value.let {
-        (it.sourceLanguage == "zh" && it.targetLanguage == "en") ||
-            (it.sourceLanguage == "en" && it.targetLanguage == "zh")
     }
 
     private fun startMicrophone(isResume: Boolean) {
