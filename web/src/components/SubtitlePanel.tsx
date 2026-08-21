@@ -1,5 +1,6 @@
 import { useMemo } from 'react'
 import type { SubtitleTurn } from '../face/FaceToFaceController'
+import { languageLabel } from '../translation/TranslationPort'
 import { useFollowLatest } from './useFollowLatest'
 
 interface SubtitlePanelProps {
@@ -41,7 +42,7 @@ export function SubtitlePanel({ subtitles, simulated }: SubtitlePanelProps): JSX
             {subtitles.map((turn) => (
               <li key={turn.id} className={`subtitle-turn ${turn.side}`}>
                 <p className="turn-meta">
-                  {turn.side === 'left' ? 'A · 左耳' : 'B · 右耳'} · {turn.sourceLanguage} → {turn.targetLanguage}
+                  {turn.side === 'left' ? 'A · 左耳' : 'B · 右耳'} · {languageLabel[turn.sourceLanguage]} → {languageLabel[turn.targetLanguage]}
                 </p>
                 <p className="source-line">{turn.sourceText}</p>
                 <p className="translation-line">{turn.translatedText}</p>

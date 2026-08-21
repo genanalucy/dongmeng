@@ -28,6 +28,7 @@ import {
 } from '../solo/SoloInterpretationController'
 import { exportTranscriptText } from '../solo/transcriptExport'
 import type { AgentHealthSnapshot } from '../translation/AgentHealthService'
+import { languageOptions, type LanguageCode } from '../translation/TranslationPort'
 
 export interface SoloInterpretationPageProps {
   readonly controller: SoloInterpretationController
@@ -340,6 +341,8 @@ export function SoloInterpretationPage({
 
   const isCapturing = snapshot.state === 'capturing'
   const canConfigure = snapshot.state === 'idle' || snapshot.state === 'paused'
+  const requiresQwenProvider = snapshot.sourceLanguage === 'fr' || snapshot.sourceLanguage === 'vi'
+    || snapshot.targetLanguage === 'fr' || snapshot.targetLanguage === 'vi'
   const healthLabel = agentHealth.checking ? 'CHECKING' : agentOnline ? 'ONLINE' : 'OFFLINE'
 
   return (
@@ -376,9 +379,30 @@ export function SoloInterpretationPage({
       />
 
       <section className="language-panel" aria-label="同传语言与播放目标">
-        <div className="participant-card left-card"><p>源语言</p><strong>{snapshot.sourceLanguage === 'zh' ? '中文' : 'English'}</strong></div>
+        <label className="participant-card left-card">源语言
+          <select
+            aria-label="源语言"
+            disabled={!canConfigure}
+            value={snapshot.sourceLanguage}
+            onChange={(event) => controller.setLanguages(event.target.value as LanguageCode, snapshot.targetLanguage)}
+          >
+            {languageOptions.filter(({ code }) => code !== snapshot.targetLanguage).map(({ code, label }) => <option key={code} value={code}>{label}</option>)}
+          </select>
+        </label>
         <button type="button" className="swap-button" aria-label="交换源语言和目标语言" disabled={!canConfigure} onClick={() => controller.swapLanguages()}>⇄</button>
-        <div className="participant-card right-card"><p>目标语言</p><strong>{snapshot.targetLanguage === 'en' ? 'English' : '中文'}</strong></div>
+        <label className="participant-card right-card">目标语言
+          <select
+            aria-label="目标语言"
+            disabled={!canConfigure}
+            value={snapshot.targetLanguage}
+            onChange={(event) => controller.setLanguages(snapshot.sourceLanguage, event.target.value as LanguageCode)}
+          >
+            {languageOptions.filter(({ code }) => code !== snapshot.sourceLanguage).map(({ code, label }) => <option key={code} value={code}>{label}</option>)}
+          </select>
+        </label>
+        {(snapshot.sourceLanguage === 'fr' || snapshot.sourceLanguage === 'vi' || snapshot.targetLanguage === 'fr' || snapshot.targetLanguage === 'vi') && (
+          <p className="language-provider-note">法语、越南语需等待 Qwen 实时服务接入后方可使用。</p>
+        )}
         <fieldset disabled={!canConfigure}>
           <legend>播放目标</legend>
           {targetOptions.map((option) => (
@@ -394,7 +418,7 @@ export function SoloInterpretationPage({
 
       <section className="translation-mode-panel" aria-label="连续录音控制">
         {!isCapturing && snapshot.state !== 'paused' && (
-          <button type="button" className="start-auto-button" disabled={!devicesReady || !agentOnline || snapshot.state === 'stopping'} onClick={start}>开始同传</button>
+          <button type="button" className="start-auto-button" disabled={!devicesReady || !agentOnline || requiresQwenProvider || snapshot.state === 'stopping'} onClick={start}>开始同传</button>
         )}
         {isCapturing && <button type="button" className="secondary-button" onClick={pause}>暂停</button>}
         {snapshot.state === 'paused' && <button type="button" className="start-auto-button" disabled={!devicesReady || !agentOnline} onClick={resume}>恢复</button>}

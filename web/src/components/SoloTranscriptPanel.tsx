@@ -1,5 +1,6 @@
 import { useMemo } from 'react'
 import type { SoloTranscriptTurn } from '../solo/SoloInterpretationController'
+import { languageLabel } from '../translation/TranslationPort'
 import { useFollowLatest } from './useFollowLatest'
 
 interface SoloTranscriptPanelProps {
@@ -9,8 +10,6 @@ interface SoloTranscriptPanelProps {
   readonly onCopy: () => Promise<void>
   readonly onExport: () => void
 }
-
-const languageLabel = { zh: '中文', en: 'English' } as const
 
 const statusLabel: Readonly<Record<SoloTranscriptTurn['status'], string>> = {
   capturing: '实时转写中',

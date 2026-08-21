@@ -107,6 +107,16 @@ export class SoloInterpretationController {
     return true
   }
 
+  public setLanguages(sourceLanguage: LanguageCode, targetLanguage: LanguageCode): boolean {
+    if ((this.state !== 'idle' && this.state !== 'paused') || sourceLanguage === targetLanguage) {
+      return false
+    }
+    this.sourceLanguage = sourceLanguage
+    this.targetLanguage = targetLanguage
+    this.emit()
+    return true
+  }
+
   public startTurn(): number | null {
     if (this.activeTurnId !== null || (this.state !== 'idle' && this.state !== 'stopping')) {
       return null

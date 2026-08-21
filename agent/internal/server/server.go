@@ -30,6 +30,13 @@ var DefaultOrigins = map[string]struct{}{
 	"http://localhost:5173": {},
 }
 
+var supportedLanguages = map[string]struct{}{
+	"zh": {},
+	"en": {},
+	"fr": {},
+	"vi": {},
+}
+
 type Options struct {
 	ASTClient ast.Client
 	Origins   map[string]struct{}
@@ -341,12 +348,16 @@ func parseStart(payload []byte) (ast.StartRequest, error) {
 		return ast.StartRequest{}, errors.New("INVALID_START")
 	}
 	if message.Type != "start" || !validUUID(message.SessionID) || message.Mode != "s2s" ||
-		(message.SourceLanguage != "zh" && message.SourceLanguage != "en") ||
-		(message.TargetLanguage != "zh" && message.TargetLanguage != "en") ||
+		!isSupportedLanguage(message.SourceLanguage) || !isSupportedLanguage(message.TargetLanguage) ||
 		message.SourceLanguage == message.TargetLanguage || message.TargetAudioFormat != "pcm" || message.TargetAudioRate != 16000 {
 		return ast.StartRequest{}, errors.New("INVALID_START")
 	}
 	return ast.StartRequest{SessionID: message.SessionID, Mode: message.Mode, SourceLanguage: message.SourceLanguage, TargetLanguage: message.TargetLanguage, TargetAudioFormat: message.TargetAudioFormat, TargetAudioRate: message.TargetAudioRate}, nil
+}
+
+func isSupportedLanguage(language string) bool {
+	_, ok := supportedLanguages[language]
+	return ok
 }
 
 func validateFinish(payload []byte) error {

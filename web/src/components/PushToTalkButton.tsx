@@ -1,5 +1,5 @@
 import type { PointerEventHandler } from 'react'
-import type { LanguageCode, Side } from '../translation/TranslationPort'
+import { languageLabel, type LanguageCode, type Side } from '../translation/TranslationPort'
 
 interface PushToTalkButtonProps {
   readonly side: Side
@@ -14,11 +14,6 @@ interface PushToTalkButtonProps {
   readonly onLostPointerCapture?: PointerEventHandler<HTMLButtonElement>
   readonly instructionOverride?: string
   readonly detailOverride?: string
-}
-
-const languageLabel: Readonly<Record<LanguageCode, string>> = {
-  zh: '中文',
-  en: 'English',
 }
 
 export function PushToTalkButton({

@@ -1,4 +1,4 @@
-import type { LanguageCode } from '../translation/TranslationPort'
+import { languageLabel } from '../translation/TranslationPort'
 import type { SoloTranscriptTurn } from './SoloInterpretationController'
 
 export interface TranscriptExportOptions {
@@ -10,11 +10,6 @@ export type TranscriptExportTurn = Pick<
   SoloTranscriptTurn,
   'id' | 'sourceLanguage' | 'targetLanguage' | 'sourceText' | 'translatedText'
 >
-
-const languageNames: Readonly<Record<LanguageCode, string>> = {
-  zh: '中文',
-  en: 'English',
-}
 
 function normalizeText(text: string): string {
   return text.replace(/\r\n?/g, '\n').trim()
@@ -37,7 +32,7 @@ export function exportTranscriptText(
     const translatedText = indentContinuationLines(normalizeText(turn.translatedText))
     const number = includeTurnNumbers ? `第 ${index + 1} 轮 · ` : ''
     return [
-      `${number}${languageNames[turn.sourceLanguage]} → ${languageNames[turn.targetLanguage]}`,
+      `${number}${languageLabel[turn.sourceLanguage]} → ${languageLabel[turn.targetLanguage]}`,
       `原文：${sourceText}`,
       `译文：${translatedText}`,
     ].join('\n')

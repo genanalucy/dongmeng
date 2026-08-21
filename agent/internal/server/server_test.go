@@ -189,11 +189,29 @@ func TestOriginValidation(t *testing.T) {
 }
 
 func TestStartParsingAndLanguageValidation(t *testing.T) {
+	for _, language := range []string{"zh", "en", "fr", "vi"} {
+		request := map[string]any{"sourceLanguage": language, "targetLanguage": "en"}
+		if language == "en" {
+			request["targetLanguage"] = "zh"
+		}
+		payload, err := json.Marshal(map[string]any{
+			"type": "start", "sessionId": testSessionID, "mode": "s2s",
+			"sourceLanguage": request["sourceLanguage"], "targetLanguage": request["targetLanguage"],
+			"targetAudioFormat": "pcm", "targetAudioRate": 16000,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := parseStart(payload); err != nil {
+			t.Fatalf("language %q should be accepted: %v", language, err)
+		}
+	}
+
 	tests := []map[string]any{
 		{"mode": "bad"},
 		{"sessionId": "not-a-uuid"},
-		{"sourceLanguage": "fr"},
-		{"targetLanguage": "zh"},
+		{"sourceLanguage": "de"},
+		{"sourceLanguage": "zh", "targetLanguage": "zh"},
 		{"targetAudioRate": 8000},
 		{"extra": true},
 	}

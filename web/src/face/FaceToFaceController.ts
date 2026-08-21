@@ -123,6 +123,16 @@ export class FaceToFaceController {
     }
   }
 
+  public setLanguages(leftLanguage: LanguageCode, rightLanguage: LanguageCode): boolean {
+    if (this.state !== 'ready' || leftLanguage === rightLanguage) {
+      return false
+    }
+    this.leftLanguage = leftLanguage
+    this.rightLanguage = rightLanguage
+    this.emit()
+    return true
+  }
+
   public canStart(side: Side): boolean {
     return this.state === 'ready' && this.activeSide === null && side !== this.activeSide
   }

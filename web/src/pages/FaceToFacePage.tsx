@@ -25,7 +25,7 @@ import { PushToTalkButton } from '../components/PushToTalkButton'
 import { SubtitlePanel } from '../components/SubtitlePanel'
 import { FaceToFaceController, type FaceToFaceSnapshot } from '../face/FaceToFaceController'
 import type { AgentHealthSnapshot } from '../translation/AgentHealthService'
-import type { Ear, Side } from '../translation/TranslationPort'
+import { languageOptions, type Ear, type LanguageCode, type Side } from '../translation/TranslationPort'
 
 type TranslationMode = 'local' | 'mock'
 type ConversationControlMode = 'manual' | 'auto'
@@ -501,9 +501,11 @@ export function FaceToFacePage({
   const leftSpeaking = snapshot.state === 'left_speaking'
   const rightSpeaking = snapshot.state === 'right_speaking'
   const localAgentUnavailable = translationMode === 'local' && agentHealth.status !== 'online'
-  const controlsLocked = !devicesReady || localAgentUnavailable
+  const requiresQwenProvider = snapshot.leftLanguage === 'fr' || snapshot.leftLanguage === 'vi'
+    || snapshot.rightLanguage === 'fr' || snapshot.rightLanguage === 'vi'
+  const controlsLocked = !devicesReady || localAgentUnavailable || requiresQwenProvider
     || snapshot.state !== 'ready' && !leftSpeaking && !rightSpeaking
-  const autoControlsLocked = !devicesReady || localAgentUnavailable
+  const autoControlsLocked = !devicesReady || localAgentUnavailable || requiresQwenProvider
   const modeLabel = translationMode === 'local' ? 'Local Agent 模式' : '模拟模式'
   const healthLabel = agentHealth.checking
     ? 'CHECKING'
@@ -594,11 +596,18 @@ export function FaceToFacePage({
       />
 
       <section className="language-panel" aria-label="语言和耳机映射">
-        <div className="participant-card left-card">
+        <label className="participant-card left-card">
           <p>LEFT · 左耳</p>
-          <strong>{snapshot.leftLanguage === 'zh' ? '中文' : 'English'}</strong>
+          <select
+            aria-label="左侧语言"
+            disabled={snapshot.state !== 'ready'}
+            value={snapshot.leftLanguage}
+            onChange={(event) => controller.setLanguages(event.target.value as LanguageCode, snapshot.rightLanguage)}
+          >
+            {languageOptions.filter(({ code }) => code !== snapshot.rightLanguage).map(({ code, label }) => <option key={code} value={code}>{label}</option>)}
+          </select>
           <small>讲话时静音</small>
-        </div>
+        </label>
         <button
           type="button"
           className="swap-button"
@@ -608,12 +617,23 @@ export function FaceToFacePage({
         >
           ⇄
         </button>
-        <div className="participant-card right-card">
+        <label className="participant-card right-card">
           <p>RIGHT · 右耳</p>
-          <strong>{snapshot.rightLanguage === 'en' ? 'English' : '中文'}</strong>
+          <select
+            aria-label="右侧语言"
+            disabled={snapshot.state !== 'ready'}
+            value={snapshot.rightLanguage}
+            onChange={(event) => controller.setLanguages(snapshot.leftLanguage, event.target.value as LanguageCode)}
+          >
+            {languageOptions.filter(({ code }) => code !== snapshot.leftLanguage).map(({ code, label }) => <option key={code} value={code}>{label}</option>)}
+          </select>
           <small>接收对方译文</small>
-        </div>
+        </label>
       </section>
+
+      {(snapshot.leftLanguage === 'fr' || snapshot.leftLanguage === 'vi' || snapshot.rightLanguage === 'fr' || snapshot.rightLanguage === 'vi') && (
+        <p className="language-provider-note">法语、越南语需等待 Qwen 实时服务接入后方可使用。</p>
+      )}
 
       <MicrophoneDiagnostics snapshot={microphoneSnapshot} />
 

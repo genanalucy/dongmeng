@@ -1,6 +1,17 @@
 import type { PcmPacket } from '../audio/PcmCapturePipeline'
 
-export type LanguageCode = 'zh' | 'en'
+export type LanguageCode = 'zh' | 'en' | 'fr' | 'vi'
+
+export const languageOptions: readonly { readonly code: LanguageCode; readonly label: string }[] = [
+  { code: 'zh', label: '中文' },
+  { code: 'en', label: 'English' },
+  { code: 'fr', label: 'Français' },
+  { code: 'vi', label: 'Tiếng Việt' },
+]
+
+export const languageLabel: Readonly<Record<LanguageCode, string>> = Object.fromEntries(
+  languageOptions.map(({ code, label }) => [code, label]),
+) as Readonly<Record<LanguageCode, string>>
 export type Ear = 'left' | 'right'
 export type TranslationPlaybackTarget = Ear | 'both' | 'captions'
 export type Side = 'left' | 'right'
@@ -52,11 +63,15 @@ const translations: Readonly<Record<LanguageCode, Readonly<Record<string, string
     'Nice to meet you.': '很高兴认识你。',
     'My name is Jack.': '我叫杰克。',
   },
+  fr: {},
+  vi: {},
 }
 
 const fallbackTexts: Readonly<Record<LanguageCode, string>> = {
   zh: '这是模拟中文译文。',
   en: 'This is a simulated English translation.',
+  fr: 'Voici une traduction française simulée.',
+  vi: 'Đây là bản dịch tiếng Việt mô phỏng.',
 }
 
 /** Deterministic UI-only implementation; useful only when the user explicitly selects mock mode. */
