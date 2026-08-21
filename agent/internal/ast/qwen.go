@@ -3,8 +3,6 @@ package ast
 import (
 	"context"
 	"encoding/base64"
-	"errors"
-	"fmt"
 	"net/http"
 	"net/url"
 	"strings"
@@ -18,10 +16,12 @@ import (
 
 const qwenModel = "qwen3.5-livetranslate-flash-realtime"
 
-type routingClient struct {
-	volc Client
-	qwen Client
-}
+// QwenError is safe to expose as a product error code; it never retains credentials.
+type QwenError struct{ Code string }
+
+func (e QwenError) Error() string { return e.Code }
+
+type routingClient struct{ volc, qwen Client }
 
 // NewRoutingClient preserves Volcengine for Chinese-English and uses Qwen for pairs containing French or Vietnamese.
 func NewRoutingClient(volc Client, cfg config.Config) Client {
@@ -43,7 +43,7 @@ func NewQwenClient(cfg config.Config) Client {
 
 func (c qwenClient) Start(ctx context.Context, request StartRequest, sink EventSink) (Session, error) {
 	if c.apiKey == "" || c.host == "" {
-		return nil, errors.New("QWEN_CONFIGURATION_MISSING")
+		return nil, QwenError{Code: "QWEN_CONFIGURATION_MISSING"}
 	}
 	endpoint := url.URL{Scheme: "wss", Host: c.host, Path: "/api-ws/v1/realtime"}
 	query := endpoint.Query()
@@ -53,7 +53,7 @@ func (c qwenClient) Start(ctx context.Context, request StartRequest, sink EventS
 	defer cancel()
 	conn, _, err := websocket.Dial(dialCtx, endpoint.String(), &websocket.DialOptions{HTTPHeader: http.Header{"Authorization": {"Bearer " + c.apiKey}}})
 	if err != nil {
-		return nil, fmt.Errorf("qwen dial: %w", err)
+		return nil, QwenError{Code: "QWEN_CONNECT_FAILED"}
 	}
 	session := &qwenSession{conn: conn, sink: sink, done: make(chan struct{})}
 	update := map[string]any{"type": "session.update", "session": map[string]any{
@@ -63,7 +63,7 @@ func (c qwenClient) Start(ctx context.Context, request StartRequest, sink EventS
 	}}
 	if err := session.write(ctx, update); err != nil {
 		_ = conn.CloseNow()
-		return nil, err
+		return nil, QwenError{Code: "QWEN_SESSION_UPDATE_FAILED"}
 	}
 	if err := session.awaitConfigured(ctx); err != nil {
 		_ = conn.CloseNow()
@@ -113,17 +113,16 @@ func (s *qwenSession) awaitConfigured(ctx context.Context) error {
 	for {
 		var event qwenEvent
 		if err := wsjson.Read(ctx, s.conn, &event); err != nil {
-			return fmt.Errorf("qwen session setup: %w", err)
+			return QwenError{Code: "QWEN_SESSION_UPDATE_FAILED"}
 		}
 		switch event.Type {
 		case "session.updated":
 			return nil
 		case "error":
-			return errors.New(nonEmpty(event.Error.Code, "QWEN_SESSION_UPDATE_FAILED"))
+			return QwenError{Code: nonEmpty(event.Error.Code, "QWEN_SESSION_UPDATE_FAILED")}
 		}
 	}
 }
-
 func (s *qwenSession) readLoop() {
 	defer s.Close()
 	for {
@@ -141,15 +140,14 @@ func (s *qwenSession) readLoop() {
 		case "response.audio_transcript.done":
 			s.emit("translation_final", event.Transcript)
 		case "response.audio.delta":
-			pcm, err := base64.StdEncoding.DecodeString(event.Delta)
-			if err == nil && len(pcm)%2 == 0 {
+			if pcm, err := base64.StdEncoding.DecodeString(event.Delta); err == nil && len(pcm)%2 == 0 {
 				s.sink.Emit(Event{Type: "tts_audio", Binary: resample24kTo16k(pcm)})
 			}
 		case "session.finished":
 			s.sink.Emit(Event{Type: "finished"})
 			return
 		case "error":
-			s.sink.Emit(Event{Type: "error", Code: nonEmpty(event.Error.Code, "QWEN_ERROR"), Message: nonEmpty(event.Error.Message, "Qwen translation service error")})
+			s.sink.Emit(Event{Type: "error", Code: nonEmpty(event.Error.Code, "QWEN_ERROR"), Message: "Qwen translation service error"})
 			return
 		}
 	}

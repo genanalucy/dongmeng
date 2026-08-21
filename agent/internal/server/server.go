@@ -216,7 +216,10 @@ func (s *Server) runConnection(parent context.Context, conn *websocket.Conn) {
 	astSession, err := s.astClient.Start(ctx, start, sink)
 	if err != nil {
 		code := "VOLCENGINE_CONNECT_FAILED"
-		if errors.Is(err, ast.ErrCodecUnavailable) {
+		var qwenError ast.QwenError
+		if errors.As(err, &qwenError) {
+			code = qwenError.Code
+		} else if errors.Is(err, ast.ErrCodecUnavailable) {
 			code = "AST_CODEC_UNAVAILABLE"
 		}
 		logID := ast.ErrorLogID(err)
