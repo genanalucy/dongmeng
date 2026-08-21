@@ -184,14 +184,11 @@ export function SoloInterpretationPage({
   useEffect(() => {
     const lifecycleRef = playerLifecycleRef
     const generation = ++lifecycleRef.current
-    const onBlur = (): void => cancelAll()
     const onVisibilityChange = (): void => {
       if (document.visibilityState === 'hidden') cancelAll()
     }
-    window.addEventListener('blur', onBlur)
     document.addEventListener('visibilitychange', onVisibilityChange)
     return () => {
-      window.removeEventListener('blur', onBlur)
       document.removeEventListener('visibilitychange', onVisibilityChange)
       cancelAll()
       if (ownsAudioPlayer) {

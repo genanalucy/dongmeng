@@ -162,6 +162,18 @@ describe('SoloInterpretationPage', () => {
     expect(controller.getSnapshot()).toMatchObject({ state: 'capturing', activeTurnId: 2 })
   })
 
+  it('keeps continuous capture running when the browser window loses focus', () => {
+    const port = new TestPort()
+    const { microphoneService, controller } = renderPage(port)
+    fireEvent.click(screen.getByRole('button', { name: '开始同传' }))
+
+    fireEvent.blur(window)
+
+    expect(microphoneService.stop).not.toHaveBeenCalled()
+    expect(port.sessions[0].cancel).not.toHaveBeenCalled()
+    expect(controller.getSnapshot()).toMatchObject({ state: 'capturing', activeTurnId: 1 })
+  })
+
   it('finishes and stops capture on pause, then starts a fresh turn and microphone on resume', () => {
     const port = new TestPort()
     const { microphoneService, controller } = renderPage(port)
