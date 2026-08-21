@@ -78,7 +78,6 @@ const defaultAgentHealth: AgentHealthSnapshot = {
   errorMessage: null,
 }
 
-const TURN_DURATION_MS = 25_000
 const targetOptions: readonly { readonly value: SoloTarget; readonly label: string }[] = [
   { value: 'both', label: '双耳' },
   { value: 'left', label: '左耳' },
@@ -123,7 +122,6 @@ export function SoloInterpretationPage({
   const [actionMessage, setActionMessage] = useState<string | null>(null)
   const runningRef = useRef(false)
   const activeTurnIdRef = useRef<number | null>(null)
-  const turnTimerRef = useRef<number | null>(null)
   const captureGenerationRef = useRef(0)
   const deviceLifecycleRef = useRef(0)
   const microphoneLifecycleRef = useRef(0)
@@ -163,23 +161,15 @@ export function SoloInterpretationPage({
     }
   }, [microphoneService, ownsMicrophoneService])
 
-  const clearTurnTimer = useCallback((): void => {
-    if (turnTimerRef.current !== null) {
-      window.clearTimeout(turnTimerRef.current)
-      turnTimerRef.current = null
-    }
-  }, [])
-
   const cancelAll = useCallback((): void => {
     runningRef.current = false
     captureGenerationRef.current += 1
-    clearTurnTimer()
     activeTurnIdRef.current = null
     packetSink.setSink(null)
     microphoneService.stop()
     controller.cancelAll()
     audioPlayer.stop()
-  }, [audioPlayer, clearTurnTimer, controller, microphoneService, packetSink])
+  }, [audioPlayer, controller, microphoneService, packetSink])
 
   useEffect(() => {
     const lifecycleRef = playerLifecycleRef
@@ -264,18 +254,6 @@ export function SoloInterpretationPage({
     return true
   }, [controller, packetSink])
 
-  const scheduleRoll = useCallback(function roll(): void {
-    clearTurnTimer()
-    turnTimerRef.current = window.setTimeout(() => {
-      const turnId = activeTurnIdRef.current
-      if (!runningRef.current || turnId === null) return
-      packetSink.setSink(null)
-      activeTurnIdRef.current = null
-      controller.finishTurn(turnId, '')
-      if (beginTurn()) roll()
-    }, TURN_DURATION_MS)
-  }, [beginTurn, clearTurnTimer, controller, packetSink])
-
   const outputReady = snapshot.target === 'captions'
     || deviceSnapshot.selectedOutputDeviceId !== null && !deviceSnapshot.outputDisconnected
   const devicesReady = deviceSnapshot.microphonePermissionGranted
@@ -294,7 +272,6 @@ export function SoloInterpretationPage({
       runningRef.current = false
       return
     }
-    scheduleRoll()
     const generation = ++captureGenerationRef.current
     void microphoneService.start(inputDeviceId).catch((error: unknown) => {
       if (captureGenerationRef.current !== generation) return
@@ -307,7 +284,6 @@ export function SoloInterpretationPage({
     if (!runningRef.current) return
     runningRef.current = false
     captureGenerationRef.current += 1
-    clearTurnTimer()
     packetSink.setSink(null)
     const turnId = activeTurnIdRef.current
     activeTurnIdRef.current = null
@@ -325,7 +301,6 @@ export function SoloInterpretationPage({
       runningRef.current = false
       return
     }
-    scheduleRoll()
     const generation = ++captureGenerationRef.current
     void microphoneService.start(inputDeviceId).catch((error: unknown) => {
       if (captureGenerationRef.current !== generation) return
@@ -337,7 +312,6 @@ export function SoloInterpretationPage({
   const finish = (): void => {
     runningRef.current = false
     captureGenerationRef.current += 1
-    clearTurnTimer()
     packetSink.setSink(null)
     activeTurnIdRef.current = null
     microphoneService.stop()
@@ -425,7 +399,7 @@ export function SoloInterpretationPage({
         {isCapturing && <button type="button" className="secondary-button" onClick={pause}>暂停</button>}
         {snapshot.state === 'paused' && <button type="button" className="start-auto-button" disabled={!devicesReady || !agentOnline} onClick={resume}>恢复</button>}
         {(isCapturing || snapshot.state === 'paused' || snapshot.state === 'stopping') && <button type="button" className="stop-auto-button" onClick={finish}>结束</button>}
-        <span>每 25 秒自动滚动 Turn，后台翻译不会中断麦克风采集。</span>
+        <span>持续流式同传，系统按语音内容输出字幕和译音。</span>
       </section>
 
       {captureError !== null && <p role="alert" className="error-message">{captureError}</p>}

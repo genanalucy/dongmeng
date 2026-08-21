@@ -140,7 +140,7 @@ describe('FaceToFacePage', () => {
     expect(screen.getByRole('button', { name: '开始连续录音' })).toBeInTheDocument()
   })
 
-  it('rolls an automatic left recording into a new turn after 8 seconds without restarting the microphone', () => {
+  it('keeps an automatic recording turn open until the speaker side changes or recording stops', () => {
     vi.useFakeTimers()
     const microphoneService = {
       ...createMicrophoneService(),
@@ -160,7 +160,7 @@ describe('FaceToFacePage', () => {
     fireEvent.click(screen.getByRole('button', { name: '自动交替' }))
     fireEvent.click(screen.getByRole('button', { name: '开始连续录音' }))
 
-    vi.advanceTimersByTime(25_000)
+    vi.advanceTimersByTime(60_000)
 
     expect(microphoneService.start).toHaveBeenCalledTimes(1)
     expect(controller.getSnapshot()).toMatchObject({ state: 'left_speaking', activeSide: 'left' })

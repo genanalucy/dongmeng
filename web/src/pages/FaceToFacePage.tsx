@@ -74,7 +74,6 @@ const initialMicrophoneSnapshot: MicrophoneSnapshot = {
 }
 
 const MAX_PTT_DURATION_MS = 25_000
-const AUTO_TURN_DURATION_MS = 25_000
 
 const demoPhrases: Readonly<Record<Side, string>> = {
   left: '你好，我叫李明。',
@@ -439,13 +438,6 @@ export function FaceToFacePage({
     activeCaptureSide.current = side
     packetSink.setSink({ push: (packet) => controller.pushAudioForTurn(turnId, packet) })
     clearPlaybackTimer()
-    playbackTimer.current = window.setTimeout(() => {
-      if (!autoRunningRef.current || captureGeneration.current !== generation) {
-        return
-      }
-      finishAutoCapture(side, true)
-      startAutoCapture(side, true)
-    }, AUTO_TURN_DURATION_MS)
     if (reuseMicrophone) {
       return
     }

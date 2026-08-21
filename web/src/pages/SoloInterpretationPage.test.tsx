@@ -147,19 +147,19 @@ describe('SoloInterpretationPage', () => {
     expect(controller.getSnapshot()).toMatchObject({ state: 'capturing', activeTurnId: 1 })
   })
 
-  it('rolls to a new turn after 25 seconds without restarting the microphone', () => {
+  it('keeps one turn open during continuous capture until the user pauses or ends', () => {
     vi.useFakeTimers()
     const port = new TestPort()
     const { microphoneService, controller } = renderPage(port)
     fireEvent.click(screen.getByRole('button', { name: '开始同传' }))
 
-    vi.advanceTimersByTime(25_000)
+    vi.advanceTimersByTime(60_000)
 
-    expect(port.sessions[0].finish).toHaveBeenCalledOnce()
-    expect(port.requests).toHaveLength(2)
+    expect(port.sessions[0].finish).not.toHaveBeenCalled()
+    expect(port.requests).toHaveLength(1)
     expect(microphoneService.start).toHaveBeenCalledOnce()
     expect(microphoneService.stop).not.toHaveBeenCalled()
-    expect(controller.getSnapshot()).toMatchObject({ state: 'capturing', activeTurnId: 2 })
+    expect(controller.getSnapshot()).toMatchObject({ state: 'capturing', activeTurnId: 1 })
   })
 
   it('keeps continuous capture running when the browser window loses focus', () => {
