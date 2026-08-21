@@ -489,6 +489,7 @@ private fun SoloWorkbench(modifier: Modifier, viewModel: InterpretationViewModel
             shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
         ) {
             Column(Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 14.dp)) {
+                if (state.phase == SessionPhase.IDLE) {
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Text("翻译语言", style = MaterialTheme.typography.labelLarge, modifier = Modifier.weight(1f))
                     OutlinedButton(
@@ -511,17 +512,16 @@ private fun SoloWorkbench(modifier: Modifier, viewModel: InterpretationViewModel
                     }
                 }
                 Text("源语言：${TranslationLanguage.displayName(state.sourceLanguage)}。法语和越南语由 Qwen 实时服务处理。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Text("播放位置", style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(top = 14.dp, bottom = 4.dp))
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    PlaybackRoute.entries.forEach { route ->
-                        FilterChip(
-                            selected = state.route == route,
-                            onClick = { viewModel.setRoute(route) },
-                            label = { Text(route.label()) },
-                            leadingIcon = if (state.route == route) {
-                                { Icon(Icons.Outlined.Headphones, contentDescription = null, modifier = Modifier.size(18.dp)) }
-                            } else null,
-                        )
+                }
+                Surface(
+                    color = MaterialTheme.colorScheme.primaryContainer,
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth().padding(top = 14.dp),
+                ) {
+                    Row(Modifier.padding(horizontal = 12.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Outlined.Headphones, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text("${TranslationLanguage.displayName(state.sourceLanguage)} → ${TranslationLanguage.displayName(state.targetLanguage)} · 双耳播放", style = MaterialTheme.typography.labelLarge)
                     }
                 }
                 state.error?.let { ErrorSurface(it, Modifier.padding(top = 8.dp)) }
@@ -670,6 +670,7 @@ private fun FaceControls(
     modifier: Modifier,
 ) {
     Column(modifier) {
+        if (state.phase == FaceToFacePhase.IDLE) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             FilterChip(
                 selected = state.mode == FaceToFaceMode.MANUAL,
@@ -708,6 +709,11 @@ private fun FaceControls(
         }
         if (state.leftLanguage == "fr" || state.leftLanguage == "vi" || state.rightLanguage == "fr" || state.rightLanguage == "vi") {
             Text("法语和越南语由 Qwen 实时服务处理。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        } else {
+            Surface(color = MaterialTheme.colorScheme.primaryContainer, shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth()) {
+                Text("${TranslationLanguage.displayName(state.leftLanguage)} ↔ ${TranslationLanguage.displayName(state.rightLanguage)} · ${if (state.mode == FaceToFaceMode.MANUAL) "按住说话" else "自动交替"}", modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp), style = MaterialTheme.typography.labelLarge)
+            }
         }
         FaceSessionAction(state, requestOrRun, faceViewModel)
         state.error?.let { ErrorSurface(it, Modifier.padding(top = 8.dp)) }

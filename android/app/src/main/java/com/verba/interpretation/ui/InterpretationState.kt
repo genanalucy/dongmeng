@@ -36,7 +36,7 @@ data class InterpretationUiState(
     val phase: SessionPhase = SessionPhase.IDLE,
     val sourceLanguage: String = "zh",
     val targetLanguage: String = "en",
-    val route: PlaybackRoute = PlaybackRoute.RIGHT,
+    val route: PlaybackRoute = PlaybackRoute.BOTH,
     val turns: List<SubtitleTurn> = emptyList(),
     val error: String? = null,
 )
