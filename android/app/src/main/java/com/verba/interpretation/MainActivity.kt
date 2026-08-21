@@ -111,6 +111,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.verba.interpretation.audio.PlaybackRoute
 import com.verba.interpretation.brand.BrandConfig
+import com.verba.interpretation.brand.BrandSlogans
 import com.verba.interpretation.brand.BrandTheme
 import com.verba.interpretation.protocol.EndpointSettings
 import com.verba.interpretation.ui.ChatFollowEvent
@@ -146,6 +147,8 @@ class MainActivity : ComponentActivity() {
 private fun InterpretationApp(viewModel: InterpretationViewModel = viewModel()) {
     var screen by remember { mutableStateOf(ProductScreen.TRANSLATE) }
     val interpretationState by viewModel.state.collectAsStateWithLifecycle()
+    val context = LocalContext.current
+    val homeSlogan = remember { BrandSlogans.pick(context) }
     val showBottomBar = ProductNavigationPolicy.showsBottomBar(screen)
     BackHandler(enabled = screen != ProductScreen.TRANSLATE) {
         screen = ProductNavigationPolicy.exitTarget(screen)
@@ -171,6 +174,7 @@ private fun InterpretationApp(viewModel: InterpretationViewModel = viewModel()) 
             ProductScreen.TRANSLATE -> TranslationHome(
                 modifier = Modifier.padding(padding),
                 interpretationPhase = interpretationState.phase,
+                slogan = homeSlogan,
                 onLanguagePair = { target ->
                     viewModel.setTarget(target)
                     screen = ProductScreen.INTERPRETATION_WORKBENCH
@@ -259,6 +263,7 @@ private fun ProductDestination.icon(): ImageVector = when (this) {
 private fun TranslationHome(
     modifier: Modifier,
     interpretationPhase: SessionPhase,
+    slogan: String,
     onLanguagePair: (String) -> Unit,
     onInterpretation: () -> Unit,
     onFaceToFace: () -> Unit,
@@ -277,7 +282,7 @@ private fun TranslationHome(
                     modifier = Modifier.semantics { heading() },
                 )
                 Text(
-                    "选择语言与场景，开始真实的语音翻译。",
+                    slogan,
                     style = MaterialTheme.typography.bodyLarge,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

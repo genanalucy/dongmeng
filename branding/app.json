@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "name": "言枢智能",
+  "shortName": "言枢",
+  "tagline": "实时同传，智联世界",
+  "primaryColor": "#176B68",
+  "secondaryColor": "#4E635F",
+  "logo": {
+    "source": "logo/商标（非ico）.jpg",
+    "vector": "logo/app-logo.svg"
+  }
+}

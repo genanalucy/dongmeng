@@ -1,4 +1,3 @@
 <resources>
-    <!-- Android 系统启动器标签占位；应用内品牌名称由 BrandConfig 集中提供。 -->
-    <string name="app_name">同传</string>
+    <string name="app_name">言枢智能</string>
 </resources>
