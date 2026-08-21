@@ -1,4 +1,3 @@
-import { brand } from '../brand'
 import type { AgentHealthSnapshot } from '../translation/AgentHealthService'
 
 interface HomePageProps {
@@ -16,22 +15,6 @@ export function HomePage({ onOpenSolo, onOpenFaceToFace, agentHealth }: HomePage
 
   return (
     <main className="home-page">
-      <section className="hero" aria-labelledby="home-title">
-        <div className="hero-copy">
-          <p className="eyebrow">{brand.shortName}</p>
-          <h1 id="home-title">实时翻译</h1>
-          <p className="hero-description">{brand.tagline}。选择单人同传聆听会议，或使用面对面模式进行双向交流。</p>
-          <div className="hero-actions">
-            <button className="primary-action" type="button" onClick={onOpenSolo}>开始单人同传</button>
-            <button className="text-action" type="button" onClick={onOpenFaceToFace}>打开面对面翻译 <span aria-hidden="true">→</span></button>
-          </div>
-        </div>
-        <aside className={`home-agent-note home-agent-${agentHealth.status}`} aria-label="服务可用性">
-          <span className="home-agent-indicator" aria-hidden="true" />
-          <div><strong>服务状态</strong><p>{agentMessage}</p></div>
-        </aside>
-      </section>
-
       <section className="mode-section" aria-labelledby="mode-heading">
         <div className="section-intro">
           <div>
@@ -40,6 +23,10 @@ export function HomePage({ onOpenSolo, onOpenFaceToFace, agentHealth }: HomePage
           </div>
           <p>根据当下场景快速开始，语言和音频设备可在模式内调整。</p>
         </div>
+        <aside className={`home-agent-note home-agent-${agentHealth.status}`} aria-label="服务可用性">
+          <span className="home-agent-indicator" aria-hidden="true" />
+          <div><strong>服务状态</strong><p>{agentMessage}</p></div>
+        </aside>
         <div className="mode-grid" aria-label="翻译模式">
           <article className="mode-card solo-mode">
             <div className="mode-card-icon solo-card-icon" aria-hidden="true"><span /></div>
