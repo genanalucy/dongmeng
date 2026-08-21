@@ -147,13 +147,13 @@ describe('SoloInterpretationPage', () => {
     expect(controller.getSnapshot()).toMatchObject({ state: 'capturing', activeTurnId: 1 })
   })
 
-  it('rolls to a new turn after 8 seconds without restarting the microphone', () => {
+  it('rolls to a new turn after 25 seconds without restarting the microphone', () => {
     vi.useFakeTimers()
     const port = new TestPort()
     const { microphoneService, controller } = renderPage(port)
     fireEvent.click(screen.getByRole('button', { name: '开始同传' }))
 
-    vi.advanceTimersByTime(8_000)
+    vi.advanceTimersByTime(25_000)
 
     expect(port.sessions[0].finish).toHaveBeenCalledOnce()
     expect(port.requests).toHaveLength(2)

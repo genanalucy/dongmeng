@@ -78,7 +78,7 @@ const defaultAgentHealth: AgentHealthSnapshot = {
   errorMessage: null,
 }
 
-const TURN_DURATION_MS = 8_000
+const TURN_DURATION_MS = 25_000
 const targetOptions: readonly { readonly value: SoloTarget; readonly label: string }[] = [
   { value: 'both', label: '双耳' },
   { value: 'left', label: '左耳' },
@@ -425,7 +425,7 @@ export function SoloInterpretationPage({
         {isCapturing && <button type="button" className="secondary-button" onClick={pause}>暂停</button>}
         {snapshot.state === 'paused' && <button type="button" className="start-auto-button" disabled={!devicesReady || !agentOnline} onClick={resume}>恢复</button>}
         {(isCapturing || snapshot.state === 'paused' || snapshot.state === 'stopping') && <button type="button" className="stop-auto-button" onClick={finish}>结束</button>}
-        <span>每 8 秒自动滚动 Turn，后台翻译不会中断麦克风采集。</span>
+        <span>每 25 秒自动滚动 Turn，后台翻译不会中断麦克风采集。</span>
       </section>
 
       {captureError !== null && <p role="alert" className="error-message">{captureError}</p>}

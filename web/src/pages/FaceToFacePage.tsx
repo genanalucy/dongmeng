@@ -74,7 +74,7 @@ const initialMicrophoneSnapshot: MicrophoneSnapshot = {
 }
 
 const MAX_PTT_DURATION_MS = 25_000
-const AUTO_TURN_DURATION_MS = 8_000
+const AUTO_TURN_DURATION_MS = 25_000
 
 const demoPhrases: Readonly<Record<Side, string>> = {
   left: '你好，我叫李明。',

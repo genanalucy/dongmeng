@@ -160,7 +160,7 @@ describe('FaceToFacePage', () => {
     fireEvent.click(screen.getByRole('button', { name: '自动交替' }))
     fireEvent.click(screen.getByRole('button', { name: '开始连续录音' }))
 
-    vi.advanceTimersByTime(8_000)
+    vi.advanceTimersByTime(25_000)
 
     expect(microphoneService.start).toHaveBeenCalledTimes(1)
     expect(controller.getSnapshot()).toMatchObject({ state: 'left_speaking', activeSide: 'left' })
