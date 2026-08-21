@@ -14,3 +14,6 @@ dist/
 .env
 .env.*
 !.env.example
+
+# Local provider credentials; never commit API-key exports.
+api/*.csv
