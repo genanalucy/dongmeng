@@ -137,6 +137,7 @@ describe('FaceToFacePage', () => {
 
     fireEvent.click(screen.getByRole('button', { name: '停止连续录音' }))
     expect(controller.getSnapshot().state).toBe('ready')
+    fireEvent.click(screen.getByRole('button', { name: '修改设置' }))
     expect(screen.getByRole('button', { name: '开始连续录音' })).toBeInTheDocument()
   })
 
@@ -361,18 +362,16 @@ describe('FaceToFacePage', () => {
     expect(screen.getByRole('button', { name: /左耳.*按住说话 中文/i })).toBeEnabled()
   })
 
-  it('disables language swapping while speaking or translating', async () => {
+  it('collapses language settings while speaking or translating', async () => {
     renderPage()
     const leftButton = screen.getByRole('button', { name: /左耳.*按住说话 中文/i })
-    const swapButton = screen.getByRole('button', { name: '交换左右语言' })
 
     fireEvent.pointerDown(leftButton)
-    expect(swapButton).toBeDisabled()
+    expect(screen.queryByRole('button', { name: '交换左右语言' })).not.toBeInTheDocument()
 
     fireEvent.pointerUp(leftButton)
-    expect(swapButton).toBeDisabled()
-    expect(screen.getByText('LEFT · 左耳').parentElement).toHaveTextContent('中文')
-    expect(screen.getByText('RIGHT · 右耳').parentElement).toHaveTextContent('English')
+    expect(screen.queryByRole('button', { name: '交换左右语言' })).not.toBeInTheDocument()
+    expect(screen.getByRole('region', { name: '面对面翻译设置' })).toHaveTextContent('中文 ↔ English')
 
     await screen.findByText(/Hello, my name is Li Ming\./)
   })

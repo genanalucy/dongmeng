@@ -190,14 +190,14 @@ describe('SoloInterpretationPage', () => {
     expect(controller.getSnapshot()).toMatchObject({ state: 'capturing', activeTurnId: 2 })
   })
 
-  it('sends captions as the target request', () => {
+  it('always sends solo interpretation to both ears', () => {
     const port = new TestPort()
     renderPage(port)
 
-    fireEvent.click(screen.getByRole('radio', { name: '仅字幕' }))
     fireEvent.click(screen.getByRole('button', { name: '开始同传' }))
 
-    expect(port.requests[0]).toMatchObject({ targetEar: 'captions' })
+    expect(port.requests[0]).toMatchObject({ targetEar: 'both' })
+    expect(screen.queryByRole('radio', { name: '仅字幕' })).not.toBeInTheDocument()
   })
 
   it('cancels capture when the selected input microphone disappears', async () => {

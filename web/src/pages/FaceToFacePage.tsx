@@ -143,6 +143,7 @@ export function FaceToFacePage({
   const [earTestError, setEarTestError] = useState<string | null>(null)
   const [conversationControlMode, setConversationControlMode] = useState<ConversationControlMode>('manual')
   const [autoRunning, setAutoRunning] = useState(false)
+  const [configurationOpen, setConfigurationOpen] = useState(true)
   const playbackTimer = useRef<number | null>(null)
   const playbackGeneration = useRef(0)
   const captureGeneration = useRef(0)
@@ -393,6 +394,7 @@ export function FaceToFacePage({
     if (!controller.startSpeaking(side)) {
       return
     }
+    setConfigurationOpen(false)
     const generation = ++captureGeneration.current
     activeCaptureSide.current = side
     packetSink.setSink({ push: (packet) => controller.pushAudio(packet) })
@@ -457,6 +459,7 @@ export function FaceToFacePage({
       return
     }
     controller.cancelAllTurns()
+    setConfigurationOpen(false)
     autoRunningRef.current = true
     setAutoRunning(true)
     startAutoCapture('left')
@@ -529,9 +532,19 @@ export function FaceToFacePage({
         <span>·</span>
         <span>{stateLabel[snapshot.state]}</span>
         <span>·</span>
-        <span>固定语言：中文 ↔ English</span>
+        <span>{languageOptions.find(({ code }) => code === snapshot.leftLanguage)?.label} ↔ {languageOptions.find(({ code }) => code === snapshot.rightLanguage)?.label}</span>
       </section>
 
+      <section className={`workbench-configuration ${configurationOpen ? 'is-open' : 'is-collapsed'}`} aria-label="面对面翻译设置">
+        <div className="workbench-summary">
+          <span>{languageOptions.find(({ code }) => code === snapshot.leftLanguage)?.label} ↔ {languageOptions.find(({ code }) => code === snapshot.rightLanguage)?.label}</span>
+          <span>{conversationControlMode === 'manual' ? '按住说话' : '自动交替'}</span>
+          {autoRunning && <button type="button" className="stop-auto-button" onClick={() => stopAutoRun(false)}>停止连续录音</button>}
+          <button type="button" className="settings-toggle" onClick={() => setConfigurationOpen((value) => !value)}>
+            {configurationOpen ? '收起设置' : '修改设置'}
+          </button>
+        </div>
+        {configurationOpen && <div className="workbench-configuration-content">
       <section className="translation-mode-panel" aria-label="翻译模式选择">
         <strong>翻译模式</strong>
         <button
@@ -634,6 +647,9 @@ export function FaceToFacePage({
       )}
 
       <MicrophoneDiagnostics snapshot={microphoneSnapshot} />
+
+        </div>}
+      </section>
 
       <section className="ptt-grid" aria-label="按住说话控制">
         <PushToTalkButton

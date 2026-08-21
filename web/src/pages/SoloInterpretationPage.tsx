@@ -24,7 +24,6 @@ import { SoloTranscriptPanel } from '../components/SoloTranscriptPanel'
 import {
   type SoloInterpretationSnapshot,
   SoloInterpretationController,
-  type SoloTarget,
 } from '../solo/SoloInterpretationController'
 import { exportTranscriptText } from '../solo/transcriptExport'
 import type { AgentHealthSnapshot } from '../translation/AgentHealthService'
@@ -79,13 +78,6 @@ const defaultAgentHealth: AgentHealthSnapshot = {
   errorMessage: null,
 }
 
-const targetOptions: readonly { readonly value: SoloTarget; readonly label: string }[] = [
-  { value: 'both', label: '双耳' },
-  { value: 'left', label: '左耳' },
-  { value: 'right', label: '右耳' },
-  { value: 'captions', label: '仅字幕' },
-]
-
 function createDefaultDeviceService(): AudioDeviceServicePort {
   return new AudioDeviceService(createBrowserMediaDevicesPort())
 }
@@ -121,6 +113,7 @@ export function SoloInterpretationPage({
   const [deviceActionError, setDeviceActionError] = useState<string | null>(null)
   const [captureError, setCaptureError] = useState<string | null>(null)
   const [actionMessage, setActionMessage] = useState<string | null>(null)
+  const [configurationOpen, setConfigurationOpen] = useState(true)
   const runningRef = useRef(false)
   const activeTurnIdRef = useRef<number | null>(null)
   const captureGenerationRef = useRef(0)
@@ -255,8 +248,7 @@ export function SoloInterpretationPage({
     return true
   }, [controller, packetSink])
 
-  const outputReady = snapshot.target === 'captions'
-    || deviceSnapshot.selectedOutputDeviceId !== null && !deviceSnapshot.outputDisconnected
+  const outputReady = deviceSnapshot.selectedOutputDeviceId !== null && !deviceSnapshot.outputDisconnected
   const devicesReady = deviceSnapshot.microphonePermissionGranted
     && deviceSnapshot.selectedInputDeviceId !== null
     && outputReady
@@ -268,6 +260,7 @@ export function SoloInterpretationPage({
     setCaptureError(null)
     setActionMessage(null)
     controller.cancelAll()
+    setConfigurationOpen(false)
     runningRef.current = true
     if (!beginTurn()) {
       runningRef.current = false
@@ -291,6 +284,7 @@ export function SoloInterpretationPage({
     if (turnId !== null) controller.finishTurn(turnId, '')
     controller.pause()
     microphoneService.stop()
+    setConfigurationOpen(true)
   }
 
   const resume = (): void => {
@@ -360,23 +354,29 @@ export function SoloInterpretationPage({
         <p role="alert" className="error-message">Local Agent 离线，无法开始同传。请启动 Agent 后手动检测。</p>
       )}
 
-      <AudioDevicePanel
-        snapshot={deviceSnapshot}
-        outputSelectionSupported={audioPlayer.supportsOutputSelection}
-        busy={deviceBusy}
-        actionError={deviceActionError}
-        onRequestPermission={requestPermission}
-        onRefresh={refreshDevices}
-        onSelectInput={selectInput}
-        onSelectOutput={selectOutput}
-        title="单人同传准备"
-        description={snapshot.target === 'captions'
-          ? '授权并选择输入麦克风即可开始；仅字幕模式不要求输出设备。'
-          : '授权麦克风，并选择输入设备与同传语音输出设备。'}
-        requireOutput={snapshot.target !== 'captions'}
-      />
-
-      <section className="language-panel" aria-label="同传语言与播放目标">
+      <section className={`workbench-configuration ${configurationOpen ? 'is-open' : 'is-collapsed'}`} aria-label="单人同传设置">
+        <div className="workbench-summary">
+          <span>{languageOptions.find(({ code }) => code === snapshot.sourceLanguage)?.label} → {languageOptions.find(({ code }) => code === snapshot.targetLanguage)?.label}</span>
+          <span>双耳播放</span>
+          <button type="button" className="settings-toggle" onClick={() => setConfigurationOpen((value) => !value)}>
+            {configurationOpen ? '收起设置' : '修改设置'}
+          </button>
+        </div>
+        {configurationOpen && <div className="workbench-configuration-content">
+          <AudioDevicePanel
+            snapshot={deviceSnapshot}
+            outputSelectionSupported={audioPlayer.supportsOutputSelection}
+            busy={deviceBusy}
+            actionError={deviceActionError}
+            onRequestPermission={requestPermission}
+            onRefresh={refreshDevices}
+            onSelectInput={selectInput}
+            onSelectOutput={selectOutput}
+            title="音频设备"
+            description="授权麦克风，并选择输入设备与双耳同传语音输出设备。"
+            requireOutput
+          />
+          <section className="language-panel language-panel-compact" aria-label="同传语言">
         <label className="participant-card left-card">源语言
           <select
             aria-label="源语言"
@@ -401,18 +401,11 @@ export function SoloInterpretationPage({
         {(snapshot.sourceLanguage === 'fr' || snapshot.sourceLanguage === 'vi' || snapshot.targetLanguage === 'fr' || snapshot.targetLanguage === 'vi') && (
           <p className="language-provider-note">法语、越南语由 Qwen 实时服务处理。</p>
         )}
-        <fieldset disabled={!canConfigure}>
-          <legend>播放目标</legend>
-          {targetOptions.map((option) => (
-            <label key={option.value}>
-              <input type="radio" name="solo-target" value={option.value} checked={snapshot.target === option.value} onChange={() => controller.setTarget(option.value)} />
-              {option.label}
-            </label>
-          ))}
-        </fieldset>
+          </section>
+        </div>}
       </section>
 
-      <MicrophoneDiagnostics snapshot={microphoneSnapshot} />
+      {configurationOpen && <MicrophoneDiagnostics snapshot={microphoneSnapshot} />}
 
       <section className="translation-mode-panel" aria-label="连续录音控制">
         {!isCapturing && snapshot.state !== 'paused' && (
