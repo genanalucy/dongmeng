@@ -1,0 +1,2 @@
+# Vendored third-party skill scripts are preserved byte-for-byte from upstream.
+.pi/skills/ui-ux-pro-max/scripts/design_system.py whitespace=-trailing-space
