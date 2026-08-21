@@ -17,3 +17,7 @@ dist/
 
 # Local provider credentials; never commit API-key exports.
 api/*.csv
+
+# Python bytecode caches
+__pycache__/
+*.py[cod]
