@@ -103,7 +103,7 @@ class InterpretationViewModel(application: Application) : AndroidViewModel(appli
         turnJob?.cancel()
         turnJob = viewModelScope.launch {
             while (true) {
-                delay(8_000)
+                delay(CONTINUOUS_TURN_MILLIS)
                 openTurn()
             }
         }
@@ -215,6 +215,8 @@ class InterpretationViewModel(application: Application) : AndroidViewModel(appli
         super.onCleared()
     }
 }
+
+private const val CONTINUOUS_TURN_MILLIS = 25_000L
 
 private fun AgentEvent.Subtitle.Kind.toSubtitleKind(): SubtitleKind = when (this) {
     AgentEvent.Subtitle.Kind.SOURCE_PARTIAL -> SubtitleKind.SOURCE_PARTIAL

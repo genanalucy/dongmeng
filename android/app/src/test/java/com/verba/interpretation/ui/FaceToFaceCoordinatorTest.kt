@@ -75,7 +75,7 @@ class FaceToFaceCoordinatorTest {
         assertTrue(coordinator.sendToActive { it == "left-2" })
     }
 
-    @Test fun autoRollEmitsEightSecondIntentAndRejectsStaleTimer() {
+    @Test fun autoRollEmitsTwentyFiveSecondIntentAndRejectsStaleTimer() {
         val coordinator = FaceToFaceCoordinator<String>()
         coordinator.setMode(FaceToFaceMode.AUTO)
         val start = coordinator.startAuto(1, "first")

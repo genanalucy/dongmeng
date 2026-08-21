@@ -268,6 +268,6 @@ class FaceToFaceCoordinator<S> {
 
     companion object {
         const val MANUAL_LIMIT_MILLIS = 25_000L
-        const val AUTO_ROLL_MILLIS = 8_000L
+        const val AUTO_ROLL_MILLIS = 25_000L
     }
 }
