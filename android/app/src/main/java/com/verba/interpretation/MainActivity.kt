@@ -8,8 +8,13 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -98,6 +103,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
@@ -1330,11 +1338,9 @@ private fun FaceSubtitleBubble(turn: FaceToFaceTurn, isActive: Boolean = false, 
     val isRight = turn.side == FaceToFaceSide.RIGHT
     val sourceLanguage = if (isRight) "English" else "中文"
     val targetLanguage = if (isRight) "中文" else "English"
-    val identityColor = if (isRight) androidx.compose.ui.graphics.Color(0xFFB4765A) else MaterialTheme.colorScheme.primary
-    val targetScale = if (isActive) 1f + captureLevel.coerceIn(0f, 1f) * 0.14f else 1f
-    val scale by animateFloatAsState(targetScale, animationSpec = tween(durationMillis = if (targetScale > 1f) 65 else 180), label = "activeSubtitleScale")
+    val identityColor = if (isRight) Color(0xFFB4765A) else MaterialTheme.colorScheme.primary
     Column(
-        Modifier.fillMaxWidth().padding(vertical = 5.dp).graphicsLayer { scaleX = scale; scaleY = scale },
+        Modifier.fillMaxWidth().padding(vertical = 5.dp),
 
         horizontalAlignment = if (isRight) Alignment.End else Alignment.Start,
     ) {
@@ -1344,15 +1350,76 @@ private fun FaceSubtitleBubble(turn: FaceToFaceTurn, isActive: Boolean = false, 
             color = identityColor,
             modifier = Modifier.padding(horizontal = 2.dp, vertical = 3.dp),
         )
-        Surface(
+        LiveTranslationBubble(
+            active = isActive,
+            audioLevel = captureLevel,
+            borderColor = identityColor,
             modifier = Modifier.fillMaxWidth(0.88f).semantics {
                 contentDescription = "$sourceLanguage 字幕。原文${turn.sourceText.ifEmpty { "等待识别" }}。译文${turn.translatedText.ifEmpty { "等待翻译" }}"
             },
-            shape = RoundedCornerShape(14.dp),
-            color = MaterialTheme.colorScheme.surface,
-            border = androidx.compose.foundation.BorderStroke(1.dp, identityColor.copy(alpha = 0.25f)),
         ) {
             SubtitleContent(turn.sourceText, turn.translatedText, turn.finished)
+        }
+    }
+}
+
+@Composable
+private fun LiveTranslationBubble(
+    active: Boolean,
+    audioLevel: Float,
+    borderColor: Color,
+    modifier: Modifier = Modifier,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    val transition = rememberInfiniteTransition(label = "liveBubbleBorder")
+    val phase by transition.animateFloat(
+        initialValue = 0f,
+        targetValue = (2f * Math.PI).toFloat(),
+        animationSpec = infiniteRepeatable(tween(durationMillis = 900, easing = LinearEasing)),
+        label = "liveBubblePhase",
+    )
+    Box(modifier) {
+        Surface(
+            shape = RoundedCornerShape(14.dp),
+            color = MaterialTheme.colorScheme.surface,
+            border = if (active) null else androidx.compose.foundation.BorderStroke(1.dp, borderColor.copy(alpha = 0.25f)),
+            modifier = Modifier.fillMaxSize(),
+        ) { Column(content = content) }
+        if (active) {
+            Canvas(Modifier.matchParentSize()) {
+                val strokeWidth = 1.6.dp.toPx()
+                val inset = strokeWidth / 2f + 2.dp.toPx()
+                val width = size.width - inset * 2f
+                val height = size.height - inset * 2f
+                val corner = 14.dp.toPx()
+                val amplitude = 1.2.dp.toPx() + audioLevel.coerceIn(0f, 1f) * 6.8.dp.toPx()
+                val path = Path()
+                val segments = 18
+                fun waveX(x: Float, baseY: Float, direction: Float): Float =
+                    baseY + kotlin.math.sin((x / width) * segments * Math.PI + phase) .toFloat() * amplitude * direction
+                fun waveY(y: Float, baseX: Float, direction: Float): Float =
+                    baseX + kotlin.math.sin((y / height) * segments * Math.PI + phase + 1.2f).toFloat() * amplitude * direction
+
+                path.moveTo(inset + corner, waveX(corner, inset, -1f))
+                for (step in 1..segments) {
+                    val x = inset + corner + (width - corner * 2f) * step / segments
+                    path.lineTo(x, waveX(x - inset, inset, -1f))
+                }
+                for (step in 1..segments) {
+                    val y = inset + corner + (height - corner * 2f) * step / segments
+                    path.lineTo(waveY(y - inset, inset + width, 1f), y)
+                }
+                for (step in segments downTo 0) {
+                    val x = inset + corner + (width - corner * 2f) * step / segments
+                    path.lineTo(x, waveX(x - inset, inset + height, 1f))
+                }
+                for (step in segments downTo 0) {
+                    val y = inset + corner + (height - corner * 2f) * step / segments
+                    path.lineTo(waveY(y - inset, inset, -1f), y)
+                }
+                path.close()
+                drawPath(path, color = borderColor.copy(alpha = 0.78f), style = Stroke(width = strokeWidth))
+            }
         }
     }
 }
