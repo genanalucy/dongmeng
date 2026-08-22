@@ -67,6 +67,7 @@ import androidx.compose.material.icons.outlined.Shield
 import androidx.compose.material.icons.outlined.SwapHoriz
 import androidx.compose.material.icons.outlined.Translate
 import androidx.compose.material.icons.outlined.WorkspacePremium
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -672,6 +673,8 @@ private fun FaceToFaceWorkbench(
     }
 
     var menuOpen by remember { mutableStateOf(false) }
+    var wavePanelOpen by remember { mutableStateOf(false) }
+    var waveTuning by remember { mutableStateOf(WaveTuning()) }
     Column(modifier.fillMaxSize()) {
         Box {
             WorkbenchHeader("面对面翻译", state.statusLabel(), onExit, onMore = { menuOpen = true })
@@ -682,6 +685,7 @@ private fun FaceToFaceWorkbench(
                     onClick = { faceViewModel.setMode(FaceToFaceMode.MANUAL); menuOpen = false },
                     enabled = state.phase == FaceToFacePhase.IDLE,
                 )
+                if (com.verba.interpretation.BuildConfig.DEBUG) DropdownMenuItem(text = { Text("波浪调试") }, onClick = { wavePanelOpen = true; menuOpen = false })
                 DropdownMenuItem(
                     text = { Text("连续翻译") },
                     leadingIcon = { if (state.mode == FaceToFaceMode.AUTO) Icon(Icons.Outlined.GraphicEq, null) },
@@ -690,6 +694,7 @@ private fun FaceToFaceWorkbench(
                 )
             }
         }
+        if (wavePanelOpen && com.verba.interpretation.BuildConfig.DEBUG) WaveTuningDialog(waveTuning, onChange = { waveTuning = it }, onDismiss = { wavePanelOpen = false })
         Surface(
             modifier = Modifier.fillMaxSize(),
             color = MaterialTheme.colorScheme.surface,
@@ -707,7 +712,7 @@ private fun FaceToFaceWorkbench(
                         }
                         Column(Modifier.weight(1f).fillMaxHeight()) {
                             TranscriptTitle("双方字幕", state.turns.size)
-                            FaceTranscriptFeed(turns = state.turns, activeSide = state.activeSide, captureLevel = state.captureLevel, modifier = Modifier.fillMaxSize())
+                            FaceTranscriptFeed(turns = state.turns, activeSide = state.activeSide, captureLevel = state.captureLevel, waveTuning = waveTuning, modifier = Modifier.fillMaxSize())
                         }
                     }
                 } else {
@@ -718,6 +723,7 @@ private fun FaceToFaceWorkbench(
                             turns = state.turns,
                             activeSide = state.activeSide,
                             captureLevel = state.captureLevel,
+                            waveTuning = waveTuning,
                             modifier = Modifier.fillMaxWidth().weight(1f).padding(top = 12.dp),
                         )
                         WorkbenchActionDock { FaceActionControls(state, requestOrRun, faceViewModel) }
@@ -1321,6 +1327,7 @@ private fun FaceTranscriptFeed(
     turns: List<FaceToFaceTurn>,
     activeSide: FaceToFaceSide? = null,
     captureLevel: Float = 0f,
+    waveTuning: WaveTuning = WaveTuning(),
     modifier: Modifier = Modifier,
 ) {
     TranscriptFeed(
@@ -1329,12 +1336,12 @@ private fun FaceTranscriptFeed(
         modifier = modifier,
         emptyLabel = "对话字幕会按双方方向显示在这里",
     ) {
-        items(turns, key = { it.id }) { turn -> FaceSubtitleBubble(turn, isActive = !turn.finished && turn.side == activeSide, captureLevel = captureLevel) }
+        items(turns, key = { it.id }) { turn -> FaceSubtitleBubble(turn, isActive = !turn.finished && turn.side == activeSide, captureLevel = captureLevel, waveTuning = waveTuning) }
     }
 }
 
 @Composable
-private fun FaceSubtitleBubble(turn: FaceToFaceTurn, isActive: Boolean = false, captureLevel: Float = 0f) {
+private fun FaceSubtitleBubble(turn: FaceToFaceTurn, isActive: Boolean = false, captureLevel: Float = 0f, waveTuning: WaveTuning = WaveTuning()) {
     val isRight = turn.side == FaceToFaceSide.RIGHT
     val sourceLanguage = if (isRight) "English" else "中文"
     val targetLanguage = if (isRight) "中文" else "English"
@@ -1354,6 +1361,7 @@ private fun FaceSubtitleBubble(turn: FaceToFaceTurn, isActive: Boolean = false, 
             active = isActive,
             audioLevel = captureLevel,
             borderColor = identityColor,
+            waveTuning = waveTuning,
             modifier = Modifier.fillMaxWidth(0.88f).semantics {
                 contentDescription = "$sourceLanguage 字幕。原文${turn.sourceText.ifEmpty { "等待识别" }}。译文${turn.translatedText.ifEmpty { "等待翻译" }}"
             },
@@ -1363,11 +1371,42 @@ private fun FaceSubtitleBubble(turn: FaceToFaceTurn, isActive: Boolean = false, 
     }
 }
 
+private data class WaveTuning(
+    val minAmplitudeDp: Float = 1.2f,
+    val maxAmplitudeDp: Float = 8.0f,
+    val sensitivity: Float = 3500f,
+    val periodMs: Float = 900f,
+)
+
+@Composable
+private fun WaveTuningDialog(value: WaveTuning, onChange: (WaveTuning) -> Unit, onDismiss: () -> Unit) {
+    var minimum by remember(value) { mutableStateOf(value.minAmplitudeDp.toString()) }
+    var maximum by remember(value) { mutableStateOf(value.maxAmplitudeDp.toString()) }
+    var sensitivity by remember(value) { mutableStateOf(value.sensitivity.toString()) }
+    var period by remember(value) { mutableStateOf(value.periodMs.toString()) }
+    fun number(text: String, fallback: Float): Float = text.toFloatOrNull()?.takeIf { it > 0f } ?: fallback
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("波浪调试") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text("仅 Debug APK 可见；输入数值后立即应用。", style = MaterialTheme.typography.bodySmall)
+                OutlinedTextField(minimum, { minimum = it; onChange(value.copy(minAmplitudeDp = number(it, value.minAmplitudeDp))) }, label = { Text("最小波幅 dp") }, singleLine = true)
+                OutlinedTextField(maximum, { maximum = it; onChange(value.copy(maxAmplitudeDp = number(it, value.maxAmplitudeDp))) }, label = { Text("最大波幅 dp") }, singleLine = true)
+                OutlinedTextField(sensitivity, { sensitivity = it; onChange(value.copy(sensitivity = number(it, value.sensitivity))) }, label = { Text("音量灵敏度（越小越灵敏）") }, singleLine = true)
+                OutlinedTextField(period, { period = it; onChange(value.copy(periodMs = number(it, value.periodMs).coerceIn(200f, 3000f))) }, label = { Text("波浪周期 ms") }, singleLine = true)
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("完成") } },
+    )
+}
+
 @Composable
 private fun LiveTranslationBubble(
     active: Boolean,
     audioLevel: Float,
     borderColor: Color,
+    waveTuning: WaveTuning = WaveTuning(),
     modifier: Modifier = Modifier,
     content: @Composable ColumnScope.() -> Unit,
 ) {
@@ -1375,7 +1414,7 @@ private fun LiveTranslationBubble(
     val phase by transition.animateFloat(
         initialValue = 0f,
         targetValue = (2f * Math.PI).toFloat(),
-        animationSpec = infiniteRepeatable(tween(durationMillis = 900, easing = LinearEasing)),
+        animationSpec = infiniteRepeatable(tween(durationMillis = waveTuning.periodMs.toInt(), easing = LinearEasing)),
         label = "liveBubblePhase",
     )
     Box(modifier) {
@@ -1392,7 +1431,8 @@ private fun LiveTranslationBubble(
                 val width = size.width - inset * 2f
                 val height = size.height - inset * 2f
                 val corner = 14.dp.toPx()
-                val amplitude = 1.2.dp.toPx() + audioLevel.coerceIn(0f, 1f) * 6.8.dp.toPx()
+                val tunedLevel = (audioLevel * (3500f / waveTuning.sensitivity)).coerceIn(0f, 1f)
+                val amplitude = waveTuning.minAmplitudeDp.dp.toPx() + tunedLevel * (waveTuning.maxAmplitudeDp - waveTuning.minAmplitudeDp).coerceAtLeast(0f).dp.toPx()
                 val path = Path()
                 val segments = 18
                 fun waveX(x: Float, baseY: Float, direction: Float): Float =

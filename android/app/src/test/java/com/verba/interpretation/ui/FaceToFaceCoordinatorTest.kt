@@ -15,6 +15,7 @@ class FaceToFaceCoordinatorTest {
         assertTrue(press.accepted)
         assertTrue(press.startCapture)
         assertEquals(25_000L, press.timer?.delayMillis)
+        coordinator.updateSubtitle(1, SubtitleKind.SOURCE_PARTIAL, "你好")
 
         val blocked = coordinator.manualPress(2, FaceToFaceSide.RIGHT, "right")
         assertFalse(blocked.accepted)
@@ -37,6 +38,7 @@ class FaceToFaceCoordinatorTest {
     @Test fun sidesUseExpectedLanguagesAndOppositeEars() {
         val coordinator = FaceToFaceCoordinator<String>()
         coordinator.manualPress(1, FaceToFaceSide.LEFT, "left")
+        coordinator.updateSubtitle(1, SubtitleKind.SOURCE_PARTIAL, "你好")
         val left = coordinator.state().turns.single()
         assertEquals("zh", left.sourceLanguage)
         assertEquals("en", left.targetLanguage)
@@ -56,11 +58,13 @@ class FaceToFaceCoordinatorTest {
         val coordinator = FaceToFaceCoordinator<String>()
         assertTrue(coordinator.setMode(FaceToFaceMode.AUTO))
         val start = coordinator.startAuto(1, "left-1")
+        coordinator.updateSubtitle(1, SubtitleKind.SOURCE_PARTIAL, "左侧")
         assertTrue(start.startCapture)
         assertEquals(FaceToFaceSide.LEFT, coordinator.state().activeSide)
 
         val right = coordinator.switchAuto(2, FaceToFaceSide.RIGHT, "right-1")
         assertEquals(listOf("left-1"), right.finishSessions)
+        coordinator.updateSubtitle(2, SubtitleKind.SOURCE_PARTIAL, "right")
         assertFalse(right.startCapture)
         assertFalse(right.stopCapture)
         assertEquals(FaceToFaceSide.RIGHT, coordinator.state().activeSide)
@@ -79,6 +83,7 @@ class FaceToFaceCoordinatorTest {
         val coordinator = FaceToFaceCoordinator<String>()
         coordinator.setMode(FaceToFaceMode.AUTO)
         coordinator.startAuto(1, "left-1")
+        coordinator.updateSubtitle(1, SubtitleKind.SOURCE_PARTIAL, "你好")
 
         val pause = coordinator.pauseAuto()
         assertTrue(pause.accepted)
@@ -109,7 +114,9 @@ class FaceToFaceCoordinatorTest {
         val coordinator = FaceToFaceCoordinator<String>()
         coordinator.setMode(FaceToFaceMode.AUTO)
         coordinator.startAuto(1, "left")
+        coordinator.updateSubtitle(1, SubtitleKind.SOURCE_PARTIAL, "左侧")
         coordinator.switchAuto(2, FaceToFaceSide.RIGHT, "right")
+        coordinator.updateSubtitle(2, SubtitleKind.SOURCE_PARTIAL, "right")
 
         assertNull(coordinator.offerTts(2, byteArrayOf(2)))
         assertNull(coordinator.sessionFinished(2))
@@ -133,7 +140,9 @@ class FaceToFaceCoordinatorTest {
         val coordinator = FaceToFaceCoordinator<String>()
         coordinator.setMode(FaceToFaceMode.AUTO)
         coordinator.startAuto(1, "left")
+        coordinator.updateSubtitle(1, SubtitleKind.SOURCE_PARTIAL, "左侧")
         coordinator.switchAuto(2, FaceToFaceSide.RIGHT, "right")
+        coordinator.updateSubtitle(2, SubtitleKind.SOURCE_PARTIAL, "right")
 
         val stop = coordinator.stopAuto()
         assertTrue(stop.stopCapture)
@@ -145,6 +154,19 @@ class FaceToFaceCoordinatorTest {
         assertTrue(cancel.stopCapture)
         assertTrue(cancel.finishSessions.isEmpty())
         assertEquals(listOf("left", "right"), cancel.cancelSessions)
+        assertEquals(FaceToFacePhase.IDLE, coordinator.state().phase)
+    }
+
+    @Test fun emptyManualInputIsDiscardedWithoutLeavingATranscript() {
+        val coordinator = FaceToFaceCoordinator<String>()
+        coordinator.manualPress(1, FaceToFaceSide.LEFT, "left")
+
+        val release = coordinator.endManualInput()
+
+        assertTrue(release.accepted)
+        assertEquals(listOf("left"), release.cancelSessions)
+        assertTrue(release.finishSessions.isEmpty())
+        assertTrue(coordinator.state().turns.isEmpty())
         assertEquals(FaceToFacePhase.IDLE, coordinator.state().phase)
     }
 

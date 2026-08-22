@@ -20,6 +20,7 @@ data class FaceToFaceTurn(
 ) {
     val sourceText: String get() = aggregateSubtitle(sourceFinals, sourcePartial)
     val translatedText: String get() = aggregateSubtitle(translationFinals, translationPartial)
+    val hasSourceText: Boolean get() = sourceText.isNotBlank()
 
     fun withSubtitle(kind: SubtitleKind, text: String): FaceToFaceTurn = when (kind) {
         SubtitleKind.SOURCE_PARTIAL -> copy(sourcePartial = text)
@@ -113,10 +114,25 @@ class FaceToFaceCoordinator<S> {
         if (current.mode != FaceToFaceMode.MANUAL || current.phase != FaceToFacePhase.LISTENING || activeTurnId != turnId) {
             return Transition(accepted = false)
         }
-        val session = entries[turnId]?.session ?: return Transition(accepted = false)
+        val activeId = turnId ?: return Transition(accepted = false)
+        val session = entries[activeId]?.session ?: return Transition(accepted = false)
+        val discard = shouldDiscardTurnLocked(activeId)
+        if (discard) entries.remove(activeId)
         activeTurnId = null
-        current = current.copy(phase = FaceToFacePhase.PROCESSING, activeSide = null, captureActive = false)
-        return Transition(accepted = true, finishSessions = listOf(session), stopCapture = true, cancelTimer = true)
+        current = current.copy(
+            phase = if (discard) FaceToFacePhase.IDLE else FaceToFacePhase.PROCESSING,
+            activeSide = null,
+            captureActive = false,
+            captureLevel = 0f,
+            turns = if (discard) current.turns.filterNot { it.id == activeId } else current.turns,
+        )
+        return Transition(
+            accepted = true,
+            finishSessions = if (discard) emptyList() else listOf(session),
+            cancelSessions = if (discard) listOf(session) else emptyList(),
+            stopCapture = true,
+            cancelTimer = true,
+        )
     }
 
     @Synchronized
@@ -141,10 +157,19 @@ class FaceToFaceCoordinator<S> {
     @Synchronized
     fun pauseAuto(): Transition<S> {
         if (current.mode != FaceToFaceMode.AUTO || current.phase != FaceToFacePhase.LISTENING) return Transition(accepted = false)
-        val session = activeTurnId?.let { entries[it]?.session }
+        val turnId = activeTurnId
+        val session = turnId?.let { entries[it]?.session }
+        val discard = turnId != null && shouldDiscardTurnLocked(turnId)
+        if (discard && turnId != null) entries.remove(turnId)
         activeTurnId = null
-        current = current.copy(phase = FaceToFacePhase.PAUSED, activeSide = null, captureActive = false, captureLevel = 0f)
-        return Transition(accepted = true, finishSessions = listOfNotNull(session), stopCapture = true)
+        current = current.copy(
+            phase = FaceToFacePhase.PAUSED,
+            activeSide = null,
+            captureActive = false,
+            captureLevel = 0f,
+            turns = if (discard) current.turns.filterNot { it.id == turnId } else current.turns,
+        )
+        return Transition(accepted = true, finishSessions = if (discard) emptyList() else listOfNotNull(session), cancelSessions = if (discard) listOfNotNull(session) else emptyList(), stopCapture = true)
     }
 
     @Synchronized
@@ -161,12 +186,22 @@ class FaceToFaceCoordinator<S> {
     @Synchronized
     fun stopAuto(): Transition<S> {
         if (current.mode != FaceToFaceMode.AUTO || (current.phase != FaceToFacePhase.LISTENING && current.phase != FaceToFacePhase.PAUSED)) return Transition(accepted = false)
-        val session = activeTurnId?.let { entries[it]?.session }
+        val turnId = activeTurnId
+        val session = turnId?.let { entries[it]?.session }
+        val discard = turnId != null && shouldDiscardTurnLocked(turnId)
+        if (discard && turnId != null) entries.remove(turnId)
         activeTurnId = null
-        current = current.copy(phase = FaceToFacePhase.STOPPING, activeSide = null, captureActive = false)
+        current = current.copy(
+            phase = FaceToFacePhase.STOPPING,
+            activeSide = null,
+            captureActive = false,
+            captureLevel = 0f,
+            turns = if (discard) current.turns.filterNot { it.id == turnId } else current.turns,
+        )
         return Transition(
             accepted = true,
-            finishSessions = listOfNotNull(session),
+            finishSessions = if (discard) emptyList() else listOfNotNull(session),
+            cancelSessions = if (discard) listOfNotNull(session) else emptyList(),
             stopCapture = true,
             cancelTimer = true,
         )
@@ -251,16 +286,26 @@ class FaceToFaceCoordinator<S> {
     }
 
     private fun replaceAutoTurnLocked(turnId: Long, side: FaceToFaceSide, session: S): Transition<S> {
-        val previous = activeTurnId?.let { entries[it]?.session }
+        val previousId = activeTurnId
+        val previous = previousId?.let { entries[it]?.session }
+        val discard = previousId != null && shouldDiscardTurnLocked(previousId)
+        if (discard && previousId != null) entries.remove(previousId)
         addTurnLocked(turnId, side, session)
         activeTurnId = turnId
-        current = current.copy(activeSide = side)
+        current = current.copy(
+            activeSide = side,
+            captureLevel = 0f,
+            turns = if (discard) current.turns.filterNot { it.id == previousId } else current.turns,
+        )
         return Transition(
             accepted = true,
-            finishSessions = listOfNotNull(previous),
+            finishSessions = if (discard) emptyList() else listOfNotNull(previous),
+            cancelSessions = if (discard) listOfNotNull(previous) else emptyList(),
             cancelTimer = true,
         )
     }
+
+    private fun shouldDiscardTurnLocked(turnId: Long): Boolean = current.turns.firstOrNull { it.id == turnId }?.hasSourceText == false
 
     private fun addTurnLocked(turnId: Long, side: FaceToFaceSide, session: S) {
         check(!entries.containsKey(turnId)) { "Turn $turnId already exists." }
