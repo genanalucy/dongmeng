@@ -692,21 +692,26 @@ private fun FaceToFaceWorkbench(
                 if (landscapeWorkbench) {
                     Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(18.dp)) {
                         Column(Modifier.weight(1f).fillMaxHeight()) {
-                            FaceLanguageBubbles(state, faceViewModel)
+                            if (state.phase == FaceToFacePhase.IDLE) FaceLanguageBubbles(state, faceViewModel)
                             state.error?.let { ErrorSurface(it, Modifier.padding(top = 12.dp)) }
                             Spacer(Modifier.weight(1f))
                             WorkbenchActionDock { FaceActionControls(state, requestOrRun, faceViewModel) }
                         }
                         Column(Modifier.weight(1f).fillMaxHeight()) {
                             TranscriptTitle("双方字幕", state.turns.size)
-                            FaceTranscriptFeed(state.turns, Modifier.fillMaxSize())
+                            FaceTranscriptFeed(turns = state.turns, activeSide = state.activeSide, captureLevel = state.captureLevel, modifier = Modifier.fillMaxSize())
                         }
                     }
                 } else {
                     Column(Modifier.fillMaxSize()) {
-                        FaceLanguageBubbles(state, faceViewModel)
+                        if (state.phase == FaceToFacePhase.IDLE) FaceLanguageBubbles(state, faceViewModel)
                         state.error?.let { ErrorSurface(it, Modifier.padding(top = 12.dp)) }
-                        FaceTranscriptFeed(state.turns, Modifier.fillMaxWidth().weight(1f).padding(top = 12.dp))
+                        FaceTranscriptFeed(
+                            turns = state.turns,
+                            activeSide = state.activeSide,
+                            captureLevel = state.captureLevel,
+                            modifier = Modifier.fillMaxWidth().weight(1f).padding(top = 12.dp),
+                        )
                         WorkbenchActionDock { FaceActionControls(state, requestOrRun, faceViewModel) }
                     }
                 }
@@ -1304,25 +1309,33 @@ private fun TranscriptTitle(title: String, count: Int, modifier: Modifier = Modi
 }
 
 @Composable
-private fun FaceTranscriptFeed(turns: List<FaceToFaceTurn>, modifier: Modifier = Modifier) {
+private fun FaceTranscriptFeed(
+    turns: List<FaceToFaceTurn>,
+    activeSide: FaceToFaceSide? = null,
+    captureLevel: Float = 0f,
+    modifier: Modifier = Modifier,
+) {
     TranscriptFeed(
         itemCount = turns.size,
         updateToken = turns.transcriptToken { it.id to listOf(it.sourceText, it.translatedText, it.finished).hashCode() },
         modifier = modifier,
         emptyLabel = "对话字幕会按双方方向显示在这里",
     ) {
-        items(turns, key = { it.id }) { turn -> FaceSubtitleBubble(turn) }
+        items(turns, key = { it.id }) { turn -> FaceSubtitleBubble(turn, isActive = !turn.finished && turn.side == activeSide, captureLevel = captureLevel) }
     }
 }
 
 @Composable
-private fun FaceSubtitleBubble(turn: FaceToFaceTurn) {
+private fun FaceSubtitleBubble(turn: FaceToFaceTurn, isActive: Boolean = false, captureLevel: Float = 0f) {
     val isRight = turn.side == FaceToFaceSide.RIGHT
     val sourceLanguage = if (isRight) "English" else "中文"
     val targetLanguage = if (isRight) "中文" else "English"
     val identityColor = if (isRight) androidx.compose.ui.graphics.Color(0xFFB4765A) else MaterialTheme.colorScheme.primary
+    val targetScale = if (isActive) 1f + captureLevel.coerceIn(0f, 1f) * 0.14f else 1f
+    val scale by animateFloatAsState(targetScale, animationSpec = tween(durationMillis = if (targetScale > 1f) 65 else 180), label = "activeSubtitleScale")
     Column(
-        Modifier.fillMaxWidth().padding(vertical = 5.dp),
+        Modifier.fillMaxWidth().padding(vertical = 5.dp).graphicsLayer { scaleX = scale; scaleY = scale },
+
         horizontalAlignment = if (isRight) Alignment.End else Alignment.Start,
     ) {
         Text(

@@ -103,7 +103,7 @@ class MicrophoneCapture(private val context: Context) {
             index += 2
         }
         if (samples == 0) return 0f
-        return (kotlin.math.sqrt(sum / samples) / 8_000.0).toFloat().coerceIn(0f, 1f)
+        return (kotlin.math.sqrt(sum / samples) / 3_500.0).toFloat().coerceIn(0f, 1f)
     }
 
     fun stop(): CaptureResult {
