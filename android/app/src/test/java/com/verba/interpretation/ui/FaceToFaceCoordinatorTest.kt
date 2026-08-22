@@ -75,6 +75,25 @@ class FaceToFaceCoordinatorTest {
         assertTrue(coordinator.sendToActive { it == "left-2" })
     }
 
+    @Test fun pauseThenResumeAutoStopsCaptureAndRestartsDefaultLanguage() {
+        val coordinator = FaceToFaceCoordinator<String>()
+        coordinator.setMode(FaceToFaceMode.AUTO)
+        coordinator.startAuto(1, "left-1")
+
+        val pause = coordinator.pauseAuto()
+        assertTrue(pause.accepted)
+        assertTrue(pause.stopCapture)
+        assertEquals(listOf("left-1"), pause.finishSessions)
+        assertEquals(FaceToFacePhase.PAUSED, coordinator.state().phase)
+        assertFalse(coordinator.state().captureActive)
+
+        val resume = coordinator.resumeAuto(2, "left-2")
+        assertTrue(resume.accepted)
+        assertTrue(resume.startCapture)
+        assertEquals(FaceToFacePhase.LISTENING, coordinator.state().phase)
+        assertEquals(FaceToFaceSide.LEFT, coordinator.state().activeSide)
+    }
+
     @Test fun autoModeKeepsItsTurnOpenWithoutANormalDurationTimer() {
         val coordinator = FaceToFaceCoordinator<String>()
         coordinator.setMode(FaceToFaceMode.AUTO)

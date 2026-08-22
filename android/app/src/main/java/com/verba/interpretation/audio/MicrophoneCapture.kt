@@ -22,7 +22,7 @@ class MicrophoneCapture(private val context: Context) {
     private var recorder: AudioRecord? = null
     private var captureThread: Thread? = null
 
-    fun start(onPacket: (ByteArray) -> Unit, onError: (String) -> Unit): CaptureResult = synchronized(lock) {
+    fun start(onPacket: (ByteArray) -> Unit, onError: (String) -> Unit, onLevel: (Float) -> Unit = {}): CaptureResult = synchronized(lock) {
         if (active?.get() == true) return CaptureResult.AlreadyRunning
         if (context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             return CaptureResult.Error("未授予麦克风权限。")
@@ -69,7 +69,10 @@ class MicrophoneCapture(private val context: Context) {
                 while (sessionActive.get()) {
                     val read = audioRecord.read(buffer, 0, buffer.size, AudioRecord.READ_BLOCKING)
                     when {
-                        read > 0 -> packetizer.offer(buffer, read)
+                        read > 0 -> {
+                            onLevel(rmsLevel(buffer, read))
+                            packetizer.offer(buffer, read)
+                        }
                         read == AudioRecord.ERROR_DEAD_OBJECT -> throw IllegalStateException("录音设备已断开。")
                         read < 0 -> throw IllegalStateException("录音读取失败：$read")
                     }
@@ -87,6 +90,20 @@ class MicrophoneCapture(private val context: Context) {
             }
         }
         CaptureResult.Started
+    }
+
+    private fun rmsLevel(buffer: ByteArray, length: Int): Float {
+        var sum = 0.0
+        var samples = 0
+        var index = 0
+        while (index + 1 < length) {
+            val sample = ((buffer[index + 1].toInt() shl 8) or (buffer[index].toInt() and 0xFF)).toShort().toInt()
+            sum += sample.toDouble() * sample
+            samples++
+            index += 2
+        }
+        if (samples == 0) return 0f
+        return (kotlin.math.sqrt(sum / samples) / 8_000.0).toFloat().coerceIn(0f, 1f)
     }
 
     fun stop(): CaptureResult {

@@ -4,7 +4,7 @@ import com.verba.interpretation.audio.PlaybackRoute
 
 enum class FaceToFaceMode { MANUAL, AUTO }
 enum class FaceToFaceSide { LEFT, RIGHT }
-enum class FaceToFacePhase { IDLE, LISTENING, PROCESSING, STOPPING, ERROR }
+enum class FaceToFacePhase { IDLE, LISTENING, PAUSED, PROCESSING, STOPPING, ERROR }
 
 data class FaceToFaceTurn(
     val id: Long,
@@ -36,6 +36,7 @@ data class FaceToFaceState(
     val rightLanguage: String = "en",
     val activeSide: FaceToFaceSide? = null,
     val captureActive: Boolean = false,
+    val captureLevel: Float = 0f,
     val turns: List<FaceToFaceTurn> = emptyList(),
     val error: String? = null,
 ) {
@@ -138,8 +139,28 @@ class FaceToFaceCoordinator<S> {
     }
 
     @Synchronized
-    fun stopAuto(): Transition<S> {
+    fun pauseAuto(): Transition<S> {
         if (current.mode != FaceToFaceMode.AUTO || current.phase != FaceToFacePhase.LISTENING) return Transition(accepted = false)
+        val session = activeTurnId?.let { entries[it]?.session }
+        activeTurnId = null
+        current = current.copy(phase = FaceToFacePhase.PAUSED, activeSide = null, captureActive = false, captureLevel = 0f)
+        return Transition(accepted = true, finishSessions = listOfNotNull(session), stopCapture = true)
+    }
+
+    @Synchronized
+    fun resumeAuto(turnId: Long, session: S): Transition<S> {
+        if (current.mode != FaceToFaceMode.AUTO || current.phase != FaceToFacePhase.PAUSED) {
+            return Transition(accepted = false, cancelSessions = listOf(session))
+        }
+        addTurnLocked(turnId, FaceToFaceSide.LEFT, session)
+        activeTurnId = turnId
+        current = current.copy(phase = FaceToFacePhase.LISTENING, activeSide = FaceToFaceSide.LEFT, captureActive = true, captureLevel = 0f)
+        return Transition(accepted = true, startCapture = true)
+    }
+
+    @Synchronized
+    fun stopAuto(): Transition<S> {
+        if (current.mode != FaceToFaceMode.AUTO || (current.phase != FaceToFacePhase.LISTENING && current.phase != FaceToFacePhase.PAUSED)) return Transition(accepted = false)
         val session = activeTurnId?.let { entries[it]?.session }
         activeTurnId = null
         current = current.copy(phase = FaceToFacePhase.STOPPING, activeSide = null, captureActive = false)
@@ -162,6 +183,14 @@ class FaceToFaceCoordinator<S> {
 
     @Synchronized
     fun isActiveTurn(turnId: Long): Boolean = activeTurnId == turnId
+
+    @Synchronized
+    fun updateCaptureLevel(level: Float): Boolean {
+        if (!current.captureActive) return false
+        val smoothed = (current.captureLevel * 0.72f + level * 0.28f).coerceIn(0f, 1f)
+        current = current.copy(captureLevel = smoothed)
+        return true
+    }
 
     @Synchronized
     fun updateSubtitle(turnId: Long, kind: SubtitleKind, text: String): Boolean {
@@ -210,6 +239,7 @@ class FaceToFaceCoordinator<S> {
             phase = if (error == null) FaceToFacePhase.IDLE else FaceToFacePhase.ERROR,
             activeSide = null,
             captureActive = false,
+            captureLevel = 0f,
             error = error,
         )
         return Transition(accepted = true, cancelSessions = sessions, stopCapture = true, cancelTimer = true)
@@ -261,7 +291,7 @@ class FaceToFaceCoordinator<S> {
     private fun settleIfDrainedLocked() {
         if (entries.isNotEmpty() || playbackInProgress) return
         if (current.phase == FaceToFacePhase.PROCESSING || current.phase == FaceToFacePhase.STOPPING) {
-            current = current.copy(phase = FaceToFacePhase.IDLE, activeSide = null, captureActive = false)
+            current = current.copy(phase = FaceToFacePhase.IDLE, activeSide = null, captureActive = false, captureLevel = 0f)
         }
     }
 

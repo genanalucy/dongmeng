@@ -63,6 +63,17 @@ class FaceToFaceViewModel(application: Application) : AndroidViewModel(applicati
 
     fun releaseRightAuto() = switchAuto(FaceToFaceSide.LEFT)
 
+    fun pauseAuto() = synchronized(actionLock) {
+        applyTransition(coordinator.pauseAuto())
+    }
+
+    fun resumeAuto() = synchronized(actionLock) {
+        if (coordinator.state().mode != FaceToFaceMode.AUTO || coordinator.state().phase != FaceToFacePhase.PAUSED) return
+        val created = createSession(FaceToFaceSide.LEFT)
+        if (!startSocket(created)) return
+        applyTransition(coordinator.resumeAuto(created.turnId, created.socket))
+    }
+
     fun stopAuto() = synchronized(actionLock) {
         applyTransition(coordinator.stopAuto())
     }
@@ -130,6 +141,11 @@ class FaceToFaceViewModel(application: Application) : AndroidViewModel(applicati
                 if (!coordinator.sendToActive { it.sendAudio(packet) }) fail("音频包无法发送，连接尚未就绪或已断开。")
             },
             onError = ::fail,
+            onLevel = { level ->
+                synchronized(actionLock) {
+                    if (coordinator.updateCaptureLevel(level)) publishState()
+                }
+            },
         )) {
             CaptureResult.Started -> Unit
             CaptureResult.AlreadyRunning -> fail("麦克风已在录音。")
