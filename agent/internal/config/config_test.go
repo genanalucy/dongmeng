@@ -44,6 +44,40 @@ func TestLoadSessionAuthDefaultsToDisabledWithoutReadingTrustInputs(t *testing.T
 	}
 }
 
+func TestLoadSessionAuthExplicitFalseDoesNotReadTrustInputs(t *testing.T) {
+	var requested []string
+	cfg, err := LoadSessionAuth(func(name string) string {
+		requested = append(requested, name)
+		if name == "TRANSLATION_SESSION_AUTH_ENABLED" {
+			return "  false  "
+		}
+		t.Fatal("disabled session auth read trust input " + name)
+		return ""
+	})
+	if err != nil || cfg.Enabled || len(cfg.HMACKey) != 0 || cfg.Issuer != "" || cfg.Audience != "" || cfg.ClockSkew != 0 || cfg.MaxLifetime != 0 {
+		t.Fatalf("LoadSessionAuth() = %#v, %v", cfg, err)
+	}
+	if len(requested) != 1 || requested[0] != "TRANSLATION_SESSION_AUTH_ENABLED" {
+		t.Fatalf("disabled config requested unexpected inputs: %v", requested)
+	}
+}
+
+func TestLoadSessionAuthEnabledUsesDocumentedDefaults(t *testing.T) {
+	values := map[string]string{
+		"TRANSLATION_SESSION_AUTH_ENABLED": "  true  ",
+		"TRANSLATION_SESSION_HS256_KEY":    "0123456789abcdef0123456789abcdef",
+		"TRANSLATION_SESSION_ISSUER":       "cloud-api",
+		"TRANSLATION_SESSION_AUDIENCE":     "translator-agent",
+	}
+	cfg, err := LoadSessionAuth(func(name string) string { return values[name] })
+	if err != nil {
+		t.Fatalf("LoadSessionAuth() error = %v", err)
+	}
+	if !cfg.Enabled || cfg.ClockSkew != 30*time.Second || cfg.MaxLifetime != 5*time.Minute {
+		t.Fatalf("LoadSessionAuth() defaults = %#v", cfg)
+	}
+}
+
 func TestLoadSessionAuthEnabled(t *testing.T) {
 	values := map[string]string{
 		"TRANSLATION_SESSION_AUTH_ENABLED":         "true",
@@ -60,6 +94,23 @@ func TestLoadSessionAuthEnabled(t *testing.T) {
 	if !cfg.Enabled || cfg.Issuer != "cloud-api" || cfg.Audience != "translator-agent" ||
 		cfg.ClockSkew != 15*time.Second || cfg.MaxLifetime != 2*time.Minute || len(cfg.HMACKey) != 32 {
 		t.Fatalf("LoadSessionAuth() = %#v", cfg)
+	}
+}
+
+func TestLoadSessionAuthAllowsZeroClockSkew(t *testing.T) {
+	values := map[string]string{
+		"TRANSLATION_SESSION_AUTH_ENABLED":       "true",
+		"TRANSLATION_SESSION_HS256_KEY":          "0123456789abcdef0123456789abcdef",
+		"TRANSLATION_SESSION_ISSUER":             "cloud-api",
+		"TRANSLATION_SESSION_AUDIENCE":           "translator-agent",
+		"TRANSLATION_SESSION_CLOCK_SKEW_SECONDS": "0",
+	}
+	cfg, err := LoadSessionAuth(func(name string) string { return values[name] })
+	if err != nil {
+		t.Fatalf("LoadSessionAuth() error = %v", err)
+	}
+	if cfg.ClockSkew != 0 {
+		t.Fatalf("ClockSkew = %s, want 0", cfg.ClockSkew)
 	}
 }
 

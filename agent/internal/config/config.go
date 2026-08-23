@@ -24,8 +24,10 @@ type Config struct {
 	QwenAPIHost     string
 }
 
-// SessionAuth contains optional translation-session JWT verification inputs.
-// Disabled is the default to preserve the loopback development workflow.
+// SessionAuth contains the caller-supplied trust contract for translation-session
+// JWTs. Disabled is the loopback development default; production deployments
+// must enable it explicitly. HMACKey is signing trust material supplied by the
+// deployment secret mechanism, not a Provider API key or a client-side value.
 type SessionAuth struct {
 	Enabled     bool
 	HMACKey     []byte
@@ -74,7 +76,10 @@ func Load(getenv func(string) string) (Config, error) {
 }
 
 // LoadSessionAuth reads session authorization through the supplied lookup only.
-// When disabled, it does not request any JWT key or trust configuration.
+// Missing, empty, or trimmed "false" leaves authorization disabled and does not
+// request key, issuer, audience, or duration inputs. Trimmed "true" requires the
+// complete HS256 trust contract; every other non-empty value is rejected. Errors
+// describe only the invalid field class and never include signing key material.
 func LoadSessionAuth(getenv func(string) string) (SessionAuth, error) {
 	if getenv == nil {
 		getenv = os.Getenv
