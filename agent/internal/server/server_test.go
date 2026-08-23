@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -164,6 +165,13 @@ func startAuthorized(t *testing.T, conn *websocket.Conn, updates map[string]any)
 	start(t, conn, authUpdates)
 }
 
+func responseStatus(response *http.Response) int {
+	if response == nil {
+		return 0
+	}
+	return response.StatusCode
+}
+
 func readEvent(t *testing.T, conn *websocket.Conn) browserEvent {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
@@ -239,6 +247,62 @@ func TestOriginValidation(t *testing.T) {
 	}
 }
 
+func TestSessionAuthorizationDisabledKeepsLegacyClientCompatible(t *testing.T) {
+	fake := &fakeClient{}
+	ts := testHTTPServer(fake)
+	defer ts.Close()
+
+	conn := dial(t, ts.URL, "http://localhost:5173")
+	defer conn.CloseNow()
+	if got := conn.Subprotocol(); got != "" {
+		t.Fatalf("legacy connection negotiated unexpected subprotocol %q", got)
+	}
+	start(t, conn, nil)
+	if event := readEvent(t, conn); event.Type != "ready" {
+		t.Fatalf("legacy client event = %#v, want ready", event)
+	}
+	if fake.starts() != 1 {
+		t.Fatalf("provider started %d times, want 1", fake.starts())
+	}
+}
+
+func TestOriginIsRejectedBeforeSessionTokenValidation(t *testing.T) {
+	fake := &fakeClient{}
+	ts := testAuthorizedHTTPServer(t, fake, nil)
+	defer ts.Close()
+	token := signSessionToken(t, testSessionKey, testUserID, testSessionID, testInstallID)
+
+	tests := []struct {
+		name      string
+		protocols []string
+	}{
+		{name: "missing token"},
+		{name: "malformed token", protocols: []string{SessionSubprotocol, SessionTokenProtocolPrefix + "malformed"}},
+		{name: "valid token", protocols: []string{SessionSubprotocol, SessionTokenProtocolPrefix + token}},
+	}
+	for _, tt := range tests {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		_, response, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(ts.URL, "http")+"/ws/translate", &websocket.DialOptions{
+			HTTPHeader: http.Header{"Origin": {"http://evil.example"}}, Subprotocols: tt.protocols,
+		})
+		cancel()
+		if err == nil || response == nil || response.StatusCode != http.StatusForbidden {
+			t.Fatalf("%s: status = %v, err missing = %v; want 403 with dial error", tt.name, responseStatus(response), err == nil)
+		}
+		body, readErr := io.ReadAll(response.Body)
+		response.Body.Close()
+		if readErr != nil {
+			t.Fatalf("read rejection: %v", readErr)
+		}
+		if strings.Contains(string(body), token) || response.Header.Get("Sec-WebSocket-Protocol") != "" {
+			t.Fatal("origin rejection leaked token or negotiated a protocol")
+		}
+	}
+	if fake.starts() != 0 {
+		t.Fatalf("provider started %d times", fake.starts())
+	}
+}
+
 func TestSessionAuthorizationRejectsMissingTokenBeforeUpgrade(t *testing.T) {
 	fake := &fakeClient{}
 	ts := testAuthorizedHTTPServer(t, fake, nil)
@@ -251,6 +315,69 @@ func TestSessionAuthorizationRejectsMissingTokenBeforeUpgrade(t *testing.T) {
 	})
 	if err == nil || response == nil || response.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("missing token response = (%v, %#v), want 401", err, response)
+	}
+	body, readErr := io.ReadAll(response.Body)
+	response.Body.Close()
+	if readErr != nil {
+		t.Fatalf("read rejection: %v", readErr)
+	}
+	if strings.Contains(string(body), SessionTokenProtocolPrefix) || response.Header.Get("Sec-WebSocket-Protocol") != "" {
+		t.Fatal("missing-token rejection exposed protocol credential details")
+	}
+	if fake.starts() != 0 {
+		t.Fatalf("provider started %d times", fake.starts())
+	}
+}
+
+func TestSessionAuthorizationRejectsMalformedProtocolTokenWithoutLeakingIt(t *testing.T) {
+	fake := &fakeClient{}
+	ts := testAuthorizedHTTPServer(t, fake, nil)
+	defer ts.Close()
+	malformed := "not-a-jwt"
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	_, response, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(ts.URL, "http")+"/ws/translate", &websocket.DialOptions{
+		HTTPHeader:   http.Header{"Origin": {"http://localhost:5173"}},
+		Subprotocols: []string{SessionSubprotocol, SessionTokenProtocolPrefix + malformed},
+	})
+	if err == nil || response == nil || response.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("malformed token status = %d, err missing = %v; want 401 with dial error", responseStatus(response), err == nil)
+	}
+	body, readErr := io.ReadAll(response.Body)
+	response.Body.Close()
+	if readErr != nil {
+		t.Fatalf("read rejection: %v", readErr)
+	}
+	if strings.Contains(string(body), malformed) || response.Header.Get("Sec-WebSocket-Protocol") != "" {
+		t.Fatal("malformed-token rejection leaked token or negotiated a protocol")
+	}
+	if fake.starts() != 0 {
+		t.Fatalf("provider started %d times", fake.starts())
+	}
+}
+
+func TestSessionAuthorizationRejectsAuthorizationHeaderWithoutSubprotocol(t *testing.T) {
+	fake := &fakeClient{}
+	ts := testAuthorizedHTTPServer(t, fake, nil)
+	defer ts.Close()
+	token := signSessionToken(t, testSessionKey, testUserID, testSessionID, testInstallID)
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	_, response, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(ts.URL, "http")+"/ws/translate", &websocket.DialOptions{
+		HTTPHeader: http.Header{"Origin": {"http://localhost:5173"}, "Authorization": {"Bearer " + token}},
+	})
+	if err == nil || response == nil || response.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("Authorization-only response = (%v, %#v), want 401", err, response)
+	}
+	body, readErr := io.ReadAll(response.Body)
+	response.Body.Close()
+	if readErr != nil {
+		t.Fatalf("read rejection: %v", readErr)
+	}
+	if strings.Contains(string(body), token) {
+		t.Fatal("Authorization-only rejection leaked token")
 	}
 	if fake.starts() != 0 {
 		t.Fatalf("provider started %d times", fake.starts())

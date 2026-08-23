@@ -234,17 +234,34 @@ func TestVerifyHonorsClockSkewBoundary(t *testing.T) {
 
 func TestVerifyErrorsNeverContainToken(t *testing.T) {
 	verifier := newTestVerifier(t)
-	token := signTokenWithKey(t, validClaims(), jwt.SigningMethodHS256, map[string]any{"typ": TokenType}, []byte("abcdef0123456789abcdef0123456789"))
+	wrongSignature := signTokenWithKey(t, validClaims(), jwt.SigningMethodHS256, map[string]any{"typ": TokenType}, []byte("abcdef0123456789abcdef0123456789"))
+	tests := []struct {
+		name     string
+		verifier *Verifier
+		token    string
+		expected Expected
+	}{
+		{name: "wrong signature", verifier: verifier, token: wrongSignature, expected: validExpected()},
+		{name: "malformed", verifier: verifier, token: "header.payload.signature", expected: validExpected()},
+		{name: "empty", verifier: verifier, token: "", expected: validExpected()},
+		{name: "padded", verifier: verifier, token: " " + wrongSignature + " ", expected: validExpected()},
+		{name: "invalid expected context", verifier: verifier, token: wrongSignature, expected: Expected{}},
+		{name: "nil verifier", verifier: nil, token: wrongSignature, expected: validExpected()},
+	}
 
-	_, err := verifier.Verify(token, validExpected())
-	if !errors.Is(err, ErrInvalidToken) {
-		t.Fatalf("Verify() error = %v, want ErrInvalidToken", err)
-	}
-	if strings.Contains(err.Error(), token) {
-		t.Fatalf("Verify() error leaked token: %v", err)
-	}
-	if err.Error() != ErrInvalidToken.Error() {
-		t.Fatalf("Verify() error = %q, want stable public error", err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := tt.verifier.Verify(tt.token, tt.expected)
+			if !errors.Is(err, ErrInvalidToken) {
+				t.Fatalf("Verify() error = %v, want ErrInvalidToken", err)
+			}
+			if tt.token != "" && strings.Contains(err.Error(), tt.token) {
+				t.Fatalf("Verify() error leaked token: %v", err)
+			}
+			if err.Error() != ErrInvalidToken.Error() {
+				t.Fatalf("Verify() error = %q, want stable public error", err)
+			}
+		})
 	}
 }
 
