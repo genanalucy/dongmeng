@@ -4,7 +4,11 @@ package config
 import (
 	"errors"
 	"fmt"
+	"math"
 	"os"
+	"strconv"
+	"strings"
+	"time"
 )
 
 const DefaultResourceID = "volc.service_type.10053"
@@ -18,6 +22,17 @@ type Config struct {
 	ResourceID      string
 	DashScopeAPIKey string
 	QwenAPIHost     string
+}
+
+// SessionAuth contains optional translation-session JWT verification inputs.
+// Disabled is the default to preserve the loopback development workflow.
+type SessionAuth struct {
+	Enabled     bool
+	HMACKey     []byte
+	Issuer      string
+	Audience    string
+	ClockSkew   time.Duration
+	MaxLifetime time.Duration
 }
 
 // Load reads a current API key or the legacy App ID plus access-token pair.
@@ -56,4 +71,54 @@ func Load(getenv func(string) string) (Config, error) {
 	default:
 		return Config{}, fmt.Errorf("missing Volcengine authentication configuration")
 	}
+}
+
+// LoadSessionAuth reads session authorization through the supplied lookup only.
+// When disabled, it does not request any JWT key or trust configuration.
+func LoadSessionAuth(getenv func(string) string) (SessionAuth, error) {
+	if getenv == nil {
+		getenv = os.Getenv
+	}
+
+	rawEnabled := strings.TrimSpace(getenv("TRANSLATION_SESSION_AUTH_ENABLED"))
+	if rawEnabled == "" || rawEnabled == "false" {
+		return SessionAuth{}, nil
+	}
+	if rawEnabled != "true" {
+		return SessionAuth{}, errors.New("invalid translation session authorization enabled flag")
+	}
+
+	clockSkew, err := positiveSeconds(getenv("TRANSLATION_SESSION_CLOCK_SKEW_SECONDS"), 30, true)
+	if err != nil {
+		return SessionAuth{}, errors.New("invalid translation session clock skew")
+	}
+	maxLifetime, err := positiveSeconds(getenv("TRANSLATION_SESSION_MAX_LIFETIME_SECONDS"), 300, false)
+	if err != nil {
+		return SessionAuth{}, errors.New("invalid translation session maximum lifetime")
+	}
+
+	cfg := SessionAuth{
+		Enabled:     true,
+		HMACKey:     []byte(getenv("TRANSLATION_SESSION_HS256_KEY")),
+		Issuer:      getenv("TRANSLATION_SESSION_ISSUER"),
+		Audience:    getenv("TRANSLATION_SESSION_AUDIENCE"),
+		ClockSkew:   clockSkew,
+		MaxLifetime: maxLifetime,
+	}
+	if len(cfg.HMACKey) < 32 || strings.TrimSpace(cfg.Issuer) != cfg.Issuer || cfg.Issuer == "" ||
+		strings.TrimSpace(cfg.Audience) != cfg.Audience || cfg.Audience == "" {
+		return SessionAuth{}, errors.New("incomplete translation session authorization configuration")
+	}
+	return cfg, nil
+}
+
+func positiveSeconds(raw string, fallback int64, allowZero bool) (time.Duration, error) {
+	if strings.TrimSpace(raw) == "" {
+		return time.Duration(fallback) * time.Second, nil
+	}
+	seconds, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || seconds < 0 || (!allowZero && seconds == 0) || seconds > math.MaxInt64/int64(time.Second) {
+		return 0, errors.New("invalid duration")
+	}
+	return time.Duration(seconds) * time.Second, nil
 }

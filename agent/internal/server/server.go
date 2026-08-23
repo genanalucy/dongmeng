@@ -17,12 +17,19 @@ import (
 	"github.com/coder/websocket/wsjson"
 
 	"translator-agent/internal/ast"
+	"translator-agent/internal/sessionauth"
 )
 
 const (
 	DefaultAddress = "127.0.0.1:18765"
 	PCMFrameBytes  = 2560
 	QueueCapacity  = 50
+
+	// SessionSubprotocol is the only protocol negotiated when session
+	// authorization is enabled. The credential protocol is never echoed.
+	SessionSubprotocol         = "translation.v1"
+	SessionTokenProtocolPrefix = "translation.jwt."
+	maxSessionTokenBytes       = 4096
 )
 
 var DefaultOrigins = map[string]struct{}{
@@ -38,15 +45,17 @@ var supportedLanguages = map[string]struct{}{
 }
 
 type Options struct {
-	ASTClient ast.Client
-	Origins   map[string]struct{}
-	Logger    *slog.Logger
+	ASTClient       ast.Client
+	Origins         map[string]struct{}
+	Logger          *slog.Logger
+	SessionVerifier *sessionauth.Verifier
 }
 
 type Server struct {
-	astClient ast.Client
-	origins   map[string]struct{}
-	logger    *slog.Logger
+	astClient       ast.Client
+	origins         map[string]struct{}
+	logger          *slog.Logger
+	sessionVerifier *sessionauth.Verifier
 }
 
 func New(opts Options) *Server {
@@ -62,7 +71,7 @@ func New(opts Options) *Server {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Server{astClient: client, origins: origins, logger: logger}
+	return &Server{astClient: client, origins: origins, logger: logger, sessionVerifier: opts.SessionVerifier}
 }
 
 func (s *Server) Handler() http.Handler {
@@ -92,18 +101,38 @@ func (s *Server) translate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
+	var sessionToken string
+	acceptOptions := &websocket.AcceptOptions{InsecureSkipVerify: true}
+	if s.sessionVerifier != nil {
+		var ok bool
+		sessionToken, ok = sessionTokenFromRequest(r)
+		if !ok {
+			http.Error(w, "translation session authorization required", http.StatusUnauthorized)
+			return
+		}
+		// Remove the credential-bearing protocol before the handshake so it
+		// cannot be selected or retained by downstream request processing.
+		r.Header.Set("Sec-WebSocket-Protocol", SessionSubprotocol)
+		acceptOptions.Subprotocols = []string{SessionSubprotocol}
+	}
+
+	conn, err := websocket.Accept(w, r, acceptOptions)
 	if err != nil {
 		return
 	}
 	defer func() { _ = conn.CloseNow() }()
+	if s.sessionVerifier != nil && conn.Subprotocol() != SessionSubprotocol {
+		return
+	}
 
-	s.runConnection(context.Background(), conn)
+	s.runConnection(context.Background(), conn, sessionToken)
 }
 
 type startMessage struct {
 	Type              string `json:"type"`
 	SessionID         string `json:"sessionId"`
+	UserID            string `json:"userId"`
+	InstallID         string `json:"installId"`
 	Mode              string `json:"mode"`
 	SourceLanguage    string `json:"sourceLanguage"`
 	TargetLanguage    string `json:"targetLanguage"`
@@ -127,7 +156,13 @@ type outgoingMessage struct {
 	binary []byte
 }
 
-func (s *Server) runConnection(parent context.Context, conn *websocket.Conn) {
+type connectionStart struct {
+	ast.StartRequest
+	UserID    string
+	InstallID string
+}
+
+func (s *Server) runConnection(parent context.Context, conn *websocket.Conn, sessionToken string) {
 	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
 
@@ -167,13 +202,23 @@ func (s *Server) runConnection(parent context.Context, conn *websocket.Conn) {
 		return emitMessage(outgoingMessage{event: &event})
 	}
 
-	start, err := readStart(ctx, conn)
+	start, err := readStart(ctx, conn, s.sessionVerifier != nil)
 	if err != nil {
 		s.logError("", "", "start_rejected", errorCode(err), "")
 		emit(browserEvent{Type: "error", Code: errorCode(err), Message: "invalid start request"})
 		return
 	}
 	direction := start.SourceLanguage + "→" + start.TargetLanguage
+	if s.sessionVerifier != nil {
+		_, err = s.sessionVerifier.Verify(sessionToken, sessionauth.Expected{
+			Subject: start.UserID, UserID: start.UserID, SessionID: start.SessionID, InstallID: start.InstallID,
+		})
+		if err != nil {
+			s.logError(start.SessionID, direction, "session_auth_rejected", "TRANSLATION_AUTH_INVALID", "")
+			emit(browserEvent{Type: "error", Code: "TRANSLATION_AUTH_INVALID", Message: "translation session authorization failed"})
+			return
+		}
+	}
 	s.logError(start.SessionID, direction, "start_received", "", "")
 
 	var upstreamMu sync.Mutex
@@ -213,7 +258,7 @@ func (s *Server) runConnection(parent context.Context, conn *websocket.Conn) {
 			emit(browserEvent{Type: "error", Code: "TRANSLATION_PROTOCOL_ERROR", Message: "translation service returned an unsupported event"})
 		}
 	}}
-	astSession, err := s.astClient.Start(ctx, start, sink)
+	astSession, err := s.astClient.Start(ctx, start.StartRequest, sink)
 	if err != nil {
 		code := "VOLCENGINE_CONNECT_FAILED"
 		var qwenError ast.QwenError
@@ -330,32 +375,65 @@ func (s *eventSink) activate() {
 	s.pending = nil
 }
 
-func readStart(ctx context.Context, conn *websocket.Conn) (ast.StartRequest, error) {
+func readStart(ctx context.Context, conn *websocket.Conn, authRequired bool) (connectionStart, error) {
 	readCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	messageType, payload, err := conn.Read(readCtx)
 	if err != nil {
-		return ast.StartRequest{}, fmt.Errorf("invalid start: %w", err)
+		return connectionStart{}, fmt.Errorf("invalid start: %w", err)
 	}
 	if messageType != websocket.MessageText {
-		return ast.StartRequest{}, errors.New("INVALID_START")
+		return connectionStart{}, errors.New("INVALID_START")
 	}
-	return parseStart(payload)
+	return parseStart(payload, authRequired)
 }
 
-func parseStart(payload []byte) (ast.StartRequest, error) {
+func parseStart(payload []byte, authRequired bool) (connectionStart, error) {
 	var message startMessage
 	decoder := json.NewDecoder(strings.NewReader(string(payload)))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&message); err != nil || decoder.Decode(&struct{}{}) != io.EOF {
-		return ast.StartRequest{}, errors.New("INVALID_START")
+		return connectionStart{}, errors.New("INVALID_START")
 	}
 	if message.Type != "start" || !validUUID(message.SessionID) || message.Mode != "s2s" ||
 		!isSupportedLanguage(message.SourceLanguage) || !isSupportedLanguage(message.TargetLanguage) ||
-		message.SourceLanguage == message.TargetLanguage || message.TargetAudioFormat != "pcm" || message.TargetAudioRate != 16000 {
-		return ast.StartRequest{}, errors.New("INVALID_START")
+		message.SourceLanguage == message.TargetLanguage || message.TargetAudioFormat != "pcm" || message.TargetAudioRate != 16000 ||
+		(authRequired && (strings.TrimSpace(message.UserID) == "" || strings.TrimSpace(message.InstallID) == "")) ||
+		(!authRequired && (message.UserID != "" || message.InstallID != "")) {
+		return connectionStart{}, errors.New("INVALID_START")
 	}
-	return ast.StartRequest{SessionID: message.SessionID, Mode: message.Mode, SourceLanguage: message.SourceLanguage, TargetLanguage: message.TargetLanguage, TargetAudioFormat: message.TargetAudioFormat, TargetAudioRate: message.TargetAudioRate}, nil
+	return connectionStart{
+		StartRequest: ast.StartRequest{SessionID: message.SessionID, Mode: message.Mode, SourceLanguage: message.SourceLanguage, TargetLanguage: message.TargetLanguage, TargetAudioFormat: message.TargetAudioFormat, TargetAudioRate: message.TargetAudioRate},
+		UserID:       message.UserID, InstallID: message.InstallID,
+	}, nil
+}
+
+func sessionTokenFromRequest(r *http.Request) (string, bool) {
+	var token string
+	hasApplicationProtocol := false
+	for _, header := range r.Header.Values("Sec-WebSocket-Protocol") {
+		for _, raw := range strings.Split(header, ",") {
+			protocol := strings.TrimSpace(raw)
+			switch {
+			case protocol == SessionSubprotocol:
+				if hasApplicationProtocol {
+					return "", false
+				}
+				hasApplicationProtocol = true
+			case strings.HasPrefix(protocol, SessionTokenProtocolPrefix):
+				if token != "" {
+					return "", false
+				}
+				token = strings.TrimPrefix(protocol, SessionTokenProtocolPrefix)
+				if token == "" || len(token) > maxSessionTokenBytes || strings.Count(token, ".") != 2 {
+					return "", false
+				}
+			default:
+				return "", false
+			}
+		}
+	}
+	return token, hasApplicationProtocol && token != ""
 }
 
 func isSupportedLanguage(language string) bool {

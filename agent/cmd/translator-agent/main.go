@@ -15,6 +15,7 @@ import (
 	"translator-agent/internal/ast"
 	"translator-agent/internal/config"
 	"translator-agent/internal/server"
+	"translator-agent/internal/sessionauth"
 )
 
 func allowedOrigins(extra string) map[string]struct{} {
@@ -37,10 +38,29 @@ func main() {
 		logger.Error("agent configuration invalid", "error_code", "INVALID_CONFIGURATION")
 		os.Exit(1)
 	}
+	sessionAuthConfig, err := config.LoadSessionAuth(os.Getenv)
+	if err != nil {
+		logger.Error("session authorization configuration invalid", "error_code", "INVALID_SESSION_AUTH_CONFIGURATION")
+		os.Exit(1)
+	}
+	var sessionVerifier *sessionauth.Verifier
+	if sessionAuthConfig.Enabled {
+		sessionVerifier, err = sessionauth.NewVerifier(sessionauth.Config{
+			HMACKey: sessionAuthConfig.HMACKey, Issuer: sessionAuthConfig.Issuer, Audience: sessionAuthConfig.Audience,
+			ClockSkew: sessionAuthConfig.ClockSkew, MaxLifetime: sessionAuthConfig.MaxLifetime,
+		})
+		if err != nil {
+			logger.Error("session authorization configuration invalid", "error_code", "INVALID_SESSION_AUTH_CONFIGURATION")
+			os.Exit(1)
+		}
+	}
 
 	httpServer := &http.Server{
-		Addr:              server.DefaultAddress,
-		Handler:           server.New(server.Options{ASTClient: ast.NewRoutingClient(ast.NewConfiguredClient(cfg), cfg), Origins: allowedOrigins(os.Getenv("TRANSLATOR_AGENT_EXTRA_ORIGINS")), Logger: logger}).Handler(),
+		Addr: server.DefaultAddress,
+		Handler: server.New(server.Options{
+			ASTClient: ast.NewRoutingClient(ast.NewConfiguredClient(cfg), cfg), Origins: allowedOrigins(os.Getenv("TRANSLATOR_AGENT_EXTRA_ORIGINS")),
+			Logger: logger, SessionVerifier: sessionVerifier,
+		}).Handler(),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
 		WriteTimeout:      15 * time.Second,
