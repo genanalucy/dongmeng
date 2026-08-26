@@ -236,6 +236,7 @@ class InterpretationViewModel(application: Application) : AndroidViewModel(appli
     override fun onCleared() {
         microphone.stop()
         cancelAllSessions()
+        endCloudSession()
         player.stop()
         super.onCleared()
     }

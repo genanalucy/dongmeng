@@ -22,6 +22,7 @@ class CloudApiException(message: String, val statusCode: Int? = null) : IOExcept
 /** Synchronous transport; invoke from Dispatchers.IO. Token values are deliberately never logged. */
 interface CloudTranslationSessionService {
     fun createTranslationSession(): TranslationSessionGrant
+    fun createUsageRecord(payload: UsageRecordPayload)
     fun endTranslationSession(sessionId: String)
 }
 
@@ -93,6 +94,18 @@ class CloudApi(
         }
     }
 
+    /** The server contract accepts only session_id, audio_seconds and characters. */
+    override fun createUsageRecord(payload: UsageRecordPayload) {
+        authorizedPostNoContent(
+            "usage-records",
+            JSONObject()
+                .put("session_id", payload.sessionId)
+                .put("audio_seconds", payload.audioSeconds)
+                .put("characters", payload.characters),
+            expected = 201,
+        )
+    }
+
     override fun endTranslationSession(sessionId: String) {
         authorizedPost("translation-sessions/$sessionId/end", JSONObject())
     }
@@ -105,6 +118,10 @@ class CloudApi(
 
     private fun authorizedPost(path: String, body: JSONObject, expected: Int = 200): JSONObject = authorizedRequest(path, body, "POST", expected)
 
+    private fun authorizedPostNoContent(path: String, body: JSONObject, expected: Int) {
+        authorizedRequestNoContent(path, body, expected)
+    }
+
     private fun authorizedRequest(path: String, body: JSONObject?, method: String, expected: Int): JSONObject {
         val tokens = tokenStore.read() ?: throw CloudApiException("请先登录账户。", 401)
         try {
@@ -115,6 +132,19 @@ class CloudApi(
         val refreshed = refresh(tokens.refreshToken)
         tokenStore.write(refreshed)
         return execute(path, body, refreshed.accessToken, expected, method)
+    }
+
+    private fun authorizedRequestNoContent(path: String, body: JSONObject, expected: Int) {
+        val tokens = tokenStore.read() ?: throw CloudApiException("请先登录账户。", 401)
+        try {
+            executeNoContent(path, body, tokens.accessToken, expected)
+            return
+        } catch (error: CloudApiException) {
+            if (error.statusCode != 401) throw error
+        }
+        val refreshed = refresh(tokens.refreshToken)
+        tokenStore.write(refreshed)
+        executeNoContent(path, body, refreshed.accessToken, expected)
     }
 
     private fun refresh(refreshToken: String): AuthTokens = parseTokens(
@@ -134,6 +164,18 @@ class CloudApi(
             val payload = response.body?.string().orEmpty()
             if (response.code != expected) throw CloudApiException(errorMessage(payload, response.code), response.code)
             return try { JSONObject(payload) } catch (_: Exception) { throw CloudApiException("服务返回了无效响应。", response.code) }
+        }
+    }
+
+    private fun executeNoContent(path: String, body: JSONObject, accessToken: String, expected: Int) {
+        val url = endpointSettings.current().toHttpUrl().newBuilder().addPathSegments("api/v1/$path").build()
+        val request = Request.Builder().url(url)
+            .header("Authorization", "Bearer $accessToken")
+            .post(body.toString().toRequestBody(JSON))
+            .build()
+        client.newCall(request).execute().use { response ->
+            val payload = response.body?.string().orEmpty()
+            if (response.code != expected) throw CloudApiException(errorMessage(payload, response.code), response.code)
         }
     }
 
