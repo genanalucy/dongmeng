@@ -128,7 +128,9 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.verba.interpretation.audio.PlaybackRoute
 import com.verba.interpretation.brand.BrandConfig
 import com.verba.interpretation.brand.BrandTheme
+import com.verba.interpretation.cloud.CloudEndpointSettings
 import com.verba.interpretation.protocol.EndpointSettings
+import com.verba.interpretation.ui.AccountViewModel
 import com.verba.interpretation.ui.ChatFollowEvent
 import com.verba.interpretation.ui.ChatFollowPolicy
 import com.verba.interpretation.ui.ChatFollowState
@@ -207,7 +209,12 @@ private fun InterpretationApp(viewModel: InterpretationViewModel = viewModel()) 
             ProductScreen.HISTORY -> HistoryPage(Modifier.padding(padding))
             ProductScreen.PROFILE -> ProfilePage(
                 modifier = Modifier.padding(padding),
+                onAccount = { screen = ProductScreen.ACCOUNT },
                 onEndpointSettings = { screen = ProductScreen.ENDPOINT_SETTINGS },
+            )
+            ProductScreen.ACCOUNT -> AccountPage(
+                modifier = Modifier.padding(padding),
+                onBack = { screen = ProductNavigationPolicy.exitTarget(screen) },
             )
             ProductScreen.ENDPOINT_SETTINGS -> EndpointSettingsPage(
                 modifier = Modifier.padding(padding),
@@ -1041,8 +1048,90 @@ private fun HistoryEmptyState(query: String, filter: HistoryFilter) {
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun ProfilePage(modifier: Modifier, onEndpointSettings: () -> Unit) {
+private fun AccountPage(
+    modifier: Modifier,
+    onBack: () -> Unit,
+    accountViewModel: AccountViewModel = viewModel(),
+) {
+    val state by accountViewModel.state.collectAsStateWithLifecycle()
+    var email by remember { mutableStateOf("") }
+    var password by remember { mutableStateOf("") }
+    var redemptionCode by remember { mutableStateOf("") }
+    val entitlement = state.entitlement
+    val entitlementText = when {
+        entitlement == null -> "暂无可用权益。注册后可获得 3 天试用，也可兑换权益码。"
+        entitlement.kind == "trial" -> "试用中，至 ${entitlement.expiresAt}"
+        else -> "权益有效，至 ${entitlement.expiresAt}"
+    }
+    Column(modifier.fillMaxSize()) {
+        TopAppBar(
+            title = { Text("账户与权益", fontWeight = FontWeight.SemiBold) },
+            navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回我的") } },
+            colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background),
+        )
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(horizontal = 20.dp, vertical = 14.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            item {
+                Surface(shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.primaryContainer, modifier = Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(18.dp)) {
+                        Text(state.user?.email ?: "未登录", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+                        Text(entitlementText, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onPrimaryContainer, modifier = Modifier.padding(top = 4.dp))
+                    }
+                }
+            }
+            if (!state.signedIn) {
+                item {
+                    Text("使用邮箱登录", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                    OutlinedTextField(email, { email = it.trim() }, label = { Text("邮箱") }, singleLine = true, modifier = Modifier.fillMaxWidth().padding(top = 10.dp))
+                    OutlinedTextField(password, { password = it }, label = { Text("密码") }, singleLine = true, modifier = Modifier.fillMaxWidth().padding(top = 10.dp))
+                    Row(Modifier.fillMaxWidth().padding(top = 10.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Button(
+                            onClick = { accountViewModel.login(email, password) },
+                            enabled = !state.loading && email.isNotBlank() && password.isNotBlank(),
+                            modifier = Modifier.weight(1f),
+                        ) { Text(if (state.loading) "处理中…" else "登录") }
+                        OutlinedButton(
+                            onClick = { accountViewModel.register(email, password) },
+                            enabled = !state.loading && email.isNotBlank() && password.isNotBlank(),
+                            modifier = Modifier.weight(1f),
+                        ) { Text("注册") }
+                    }
+                }
+            } else {
+                item {
+                    Text("兑换权益码", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                    OutlinedTextField(redemptionCode, { redemptionCode = it }, label = { Text("兑换码") }, singleLine = true, modifier = Modifier.fillMaxWidth().padding(top = 10.dp))
+                    Row(Modifier.fillMaxWidth().padding(top = 10.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Button(
+                            onClick = { accountViewModel.redeem(redemptionCode) },
+                            enabled = !state.loading && redemptionCode.isNotBlank(),
+                            modifier = Modifier.weight(1f),
+                        ) { Text(if (state.loading) "处理中…" else "兑换") }
+                        OutlinedButton(onClick = accountViewModel::logout, enabled = !state.loading, modifier = Modifier.weight(1f)) { Text("退出登录") }
+                    }
+                }
+            }
+            state.message?.let { message ->
+                item {
+                    Surface(shape = RoundedCornerShape(14.dp), color = MaterialTheme.colorScheme.errorContainer) {
+                        Text(message, color = MaterialTheme.colorScheme.onErrorContainer, modifier = Modifier.fillMaxWidth().padding(14.dp))
+                    }
+                }
+            }
+            item {
+                Text("网络不可用、登录过期或权益失效时，无法开始新的云端翻译会话。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+    }
+}
+
+@Composable
+private fun ProfilePage(modifier: Modifier, onAccount: () -> Unit, onEndpointSettings: () -> Unit) {
     var notice by remember { mutableStateOf<String?>(null) }
     LazyColumn(
         modifier = modifier.fillMaxSize(),
@@ -1064,8 +1153,8 @@ private fun ProfilePage(modifier: Modifier, onEndpointSettings: () -> Unit) {
                         Icon(Icons.Outlined.PersonOutline, contentDescription = null, modifier = Modifier.padding(15.dp).size(30.dp), tint = MaterialTheme.colorScheme.onPrimary)
                     }
                     Column(Modifier.weight(1f)) {
-                        Text("Guest", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-                        Text("访客模式 · 未登录", color = MaterialTheme.colorScheme.onPrimaryContainer)
+                        Text("Cloud 账户", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                        Text("登录后查看试用与权益", color = MaterialTheme.colorScheme.onPrimaryContainer)
                     }
                     Text("本机", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
                 }
@@ -1083,9 +1172,9 @@ private fun ProfilePage(modifier: Modifier, onEndpointSettings: () -> Unit) {
             ProfileEntryGroup {
                 ProfileEntry(
                     icon = Icons.Outlined.WorkspacePremium,
-                    title = "套餐",
-                    supporting = "未登录，暂无套餐信息",
-                    onClick = { notice = "登录功能尚未接入，当前保持 Guest 模式。" },
+                    title = "账户与权益",
+                    supporting = "注册、登录、试用状态与兑换码",
+                    onClick = onAccount,
                 )
                 HorizontalDivider(Modifier.padding(start = 60.dp), color = MaterialTheme.colorScheme.outlineVariant)
                 ProfileEntry(
@@ -1137,7 +1226,7 @@ private fun ProfilePage(modifier: Modifier, onEndpointSettings: () -> Unit) {
         }
         item {
             Text(
-                "Verba 阶段一 · 不包含账户认证与云端用量",
+                "账户令牌仅以 Android Keystore 加密后保存在本机。",
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
@@ -1181,6 +1270,8 @@ private fun EndpointSettingsPage(modifier: Modifier, onBack: () -> Unit) {
     var endpoints by remember { mutableStateOf(settings.current()) }
     var httpUrl by remember(endpoints) { mutableStateOf(endpoints.httpUrl) }
     var webSocketUrl by remember(endpoints) { mutableStateOf(endpoints.webSocketUrl) }
+    val cloudSettings = remember(context) { CloudEndpointSettings(context) }
+    var cloudUrl by remember { mutableStateOf(cloudSettings.current()) }
     var message by remember { mutableStateOf<String?>(null) }
     var checking by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
@@ -1230,6 +1321,16 @@ private fun EndpointSettingsPage(modifier: Modifier, onBack: () -> Unit) {
                 )
             }
             item {
+                OutlinedTextField(
+                    value = cloudUrl,
+                    onValueChange = { cloudUrl = it },
+                    label = { Text("Cloud API 地址") },
+                    supportingText = { Text("账户、权益与翻译会话服务") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+            item {
                 Text(
                     "Debug 可使用 http/ws；Release 仅允许 https/wss。",
                     style = MaterialTheme.typography.bodySmall,
@@ -1240,9 +1341,11 @@ private fun EndpointSettingsPage(modifier: Modifier, onBack: () -> Unit) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     Button(
                         onClick = {
-                            settings.save(httpUrl, webSocketUrl).onSuccess {
-                                endpoints = it
-                                message = "地址已保存。"
+                            settings.save(httpUrl, webSocketUrl).onSuccess { validatedEndpoints ->
+                                cloudSettings.save(cloudUrl).onSuccess {
+                                    endpoints = validatedEndpoints
+                                    message = "地址已保存。"
+                                }.onFailure { message = it.message }
                             }.onFailure { message = it.message }
                         },
                         modifier = Modifier.weight(1f),
@@ -1262,6 +1365,7 @@ private fun EndpointSettingsPage(modifier: Modifier, onBack: () -> Unit) {
                             endpoints = settings.restoreDefaults()
                             httpUrl = endpoints.httpUrl
                             webSocketUrl = endpoints.webSocketUrl
+                            cloudUrl = cloudSettings.restoreDefaults()
                             message = "已恢复默认地址。"
                         },
                         modifier = Modifier.weight(1f),

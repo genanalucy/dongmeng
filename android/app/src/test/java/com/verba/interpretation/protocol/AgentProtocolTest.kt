@@ -15,6 +15,13 @@ class AgentProtocolTest {
         assertEquals(7, json.length())
     }
 
+    @Test fun cloudStartBindsGrantIdentityFields() {
+        val json = JSONObject(StartMessage("session-1", "zh", "en", "user-1", "install-1").toJson())
+        assertEquals("session-1", json.getString("sessionId"))
+        assertEquals("user-1", json.getString("userId"))
+        assertEquals("install-1", json.getString("installId"))
+    }
+
     @Test fun parsesAllTextEventKinds() {
         assertTrue(AgentProtocol.parse("{\"type\":\"ready\"}") is AgentEvent.Ready)
         assertEquals("hello", (AgentProtocol.parse("{\"type\":\"translation_final\",\"message\":\"hello\"}") as AgentEvent.Subtitle).text)

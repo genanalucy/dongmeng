@@ -17,6 +17,7 @@ android {
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         buildConfigField("String", "AGENT_HTTP_URL", "\"https://api.example.com\"")
+        buildConfigField("String", "CLOUD_API_URL", "\"https://cloud-api.example.com\"")
         buildConfigField("String", "TRANSLATION_WS_URL", "\"wss://api.example.com/v1/translation\"")
         buildConfigField("String", "TRANSLATION_ORIGIN", "\"\"")
     }
@@ -26,12 +27,14 @@ android {
             applicationIdSuffix = ".debug"
             versionNameSuffix = "-debug"
             buildConfigField("String", "AGENT_HTTP_URL", "\"http://114.132.83.144:18765\"")
+            buildConfigField("String", "CLOUD_API_URL", "\"http://127.0.0.1:8080\"")
             buildConfigField("String", "TRANSLATION_WS_URL", "\"ws://114.132.83.144:18765/ws/translate\"")
             buildConfigField("String", "TRANSLATION_ORIGIN", "\"http://114.132.83.144:15173\"")
         }
         release {
             isMinifyEnabled = false
             buildConfigField("String", "AGENT_HTTP_URL", "\"https://api.example.com\"")
+            buildConfigField("String", "CLOUD_API_URL", "\"https://cloud-api.example.com\"")
             buildConfigField("String", "TRANSLATION_WS_URL", "\"wss://api.example.com/v1/translation\"")
             buildConfigField("String", "TRANSLATION_ORIGIN", "\"\"")
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")

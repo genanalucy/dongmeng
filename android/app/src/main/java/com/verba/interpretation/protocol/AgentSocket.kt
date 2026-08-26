@@ -1,6 +1,7 @@
 package com.verba.interpretation.protocol
 
 import com.verba.interpretation.BuildConfig
+import com.verba.interpretation.cloud.TranslationSessionGrant
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
@@ -15,6 +16,7 @@ class AgentSocket(
     private val onEvent: (AgentEvent) -> Unit,
     private val onTts: (ByteArray) -> Unit,
     private val onFailure: (String) -> Unit,
+    private val onClosed: () -> Unit = {},
 ) {
     private val lock = Any()
     private var socket: WebSocket? = null
@@ -23,7 +25,7 @@ class AgentSocket(
     private var terminalDelivered = false
     private val pendingAudio = ArrayDeque<ByteArray>()
 
-    fun start(sourceLanguage: String, targetLanguage: String): Boolean = synchronized(lock) {
+    fun start(sourceLanguage: String, targetLanguage: String, grant: TranslationSessionGrant? = null): Boolean = synchronized(lock) {
         if (socket != null) return false
         ready = false
         finishing = false
@@ -31,7 +33,9 @@ class AgentSocket(
         pendingAudio.clear()
         val requestBuilder = Request.Builder().url(endpointSettings.current().webSocketUrl)
         if (BuildConfig.TRANSLATION_ORIGIN.isNotEmpty()) requestBuilder.header("Origin", BuildConfig.TRANSLATION_ORIGIN)
-        val start = StartMessage(UUID.randomUUID().toString(), sourceLanguage, targetLanguage)
+        if (grant != null) requestBuilder.header("Sec-WebSocket-Protocol", CloudAgentHandshake.subprotocols(grant))
+        val start = grant?.let { CloudAgentHandshake.startMessage(it, sourceLanguage, targetLanguage) }
+            ?: StartMessage(UUID.randomUUID().toString(), sourceLanguage, targetLanguage)
         socket = client.newWebSocket(requestBuilder.build(), object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
                 if (!webSocket.send(start.toJson())) fail("无法发送 start 消息。")
@@ -61,7 +65,10 @@ class AgentSocket(
                         is AgentEvent.Subtitle -> !terminalDelivered
                     }
                 }
-                if (deliver) onEvent(event)
+                if (deliver) {
+                    if (event is AgentEvent.Finished || event is AgentEvent.Error) onClosed()
+                    onEvent(event)
+                }
             }
 
             override fun onMessage(webSocket: WebSocket, bytes: ByteString) {
@@ -77,7 +84,10 @@ class AgentSocket(
                     closeLocked(webSocket)
                     true
                 }
-                if (deliver) onFailure(t.message ?: "WebSocket 连接失败。")
+                if (deliver) {
+                    onClosed()
+                    onFailure(t.message ?: "WebSocket 连接失败。")
+                }
             }
         })
         true
@@ -101,10 +111,15 @@ class AgentSocket(
         if (ready) current.send(AgentProtocol.FINISH) else true
     }
 
-    fun cancel() = synchronized(lock) {
-        terminalDelivered = true
-        socket?.close(1000, "cancelled")
-        clearLocked()
+    fun cancel() {
+        val notify = synchronized(lock) {
+            if (terminalDelivered) return@synchronized false
+            terminalDelivered = true
+            socket?.close(1000, "cancelled")
+            clearLocked()
+            true
+        }
+        if (notify) onClosed()
     }
 
     private fun fail(message: String) {
@@ -115,7 +130,10 @@ class AgentSocket(
             clearLocked()
             true
         }
-        if (deliver) onFailure(message)
+        if (deliver) {
+            onClosed()
+            onFailure(message)
+        }
     }
 
     private fun closeLocked(webSocket: WebSocket) {

@@ -17,6 +17,7 @@ enum class ProductScreen {
     HISTORY,
     PROFILE,
     ENDPOINT_SETTINGS,
+    ACCOUNT,
 }
 
 object ProductNavigationPolicy {
@@ -35,6 +36,7 @@ object ProductNavigationPolicy {
         ProductScreen.HISTORY -> ProductDestination.HISTORY
         ProductScreen.PROFILE,
         ProductScreen.ENDPOINT_SETTINGS,
+        ProductScreen.ACCOUNT,
         -> ProductDestination.PROFILE
     }
 
@@ -46,11 +48,14 @@ object ProductNavigationPolicy {
         ProductScreen.INTERPRETATION_WORKBENCH,
         ProductScreen.FACE_TO_FACE_WORKBENCH,
         ProductScreen.ENDPOINT_SETTINGS,
+        ProductScreen.ACCOUNT,
         -> false
     }
 
     fun exitTarget(screen: ProductScreen): ProductScreen = when (screen) {
-        ProductScreen.ENDPOINT_SETTINGS -> ProductScreen.PROFILE
+        ProductScreen.ENDPOINT_SETTINGS,
+        ProductScreen.ACCOUNT,
+        -> ProductScreen.PROFILE
         ProductScreen.INTERPRETATION_WORKBENCH,
         ProductScreen.FACE_TO_FACE_WORKBENCH,
         -> ProductScreen.TRANSLATE

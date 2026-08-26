@@ -4,6 +4,12 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.verba.interpretation.audio.CaptureResult
+import com.verba.interpretation.cloud.CloudApi
+import com.verba.interpretation.cloud.CloudEndpointSettings
+import com.verba.interpretation.cloud.KeystoreTokenStore
+import com.verba.interpretation.cloud.SharedPreferencesInstallationIdStore
+import com.verba.interpretation.cloud.TranslationSessionCoordinator
+import com.verba.interpretation.cloud.TranslationSessionGrant
 import com.verba.interpretation.audio.MicrophoneCapture
 import com.verba.interpretation.audio.PlaybackRoute
 import com.verba.interpretation.audio.TtsPlayer
@@ -22,7 +28,12 @@ class InterpretationViewModel(application: Application) : AndroidViewModel(appli
     private val microphone = MicrophoneCapture(application)
     private val endpointSettings = EndpointSettings(application)
     private val player = TtsPlayer()
+    private val cloudSessions = TranslationSessionCoordinator(
+        CloudApi(CloudEndpointSettings(application), KeystoreTokenStore(application), SharedPreferencesInstallationIdStore(application)),
+        viewModelScope,
+    )
     private val sessions = TurnSessionCoordinator<AgentSocket>()
+    private var cloudGrant: TranslationSessionGrant? = null
     private var nextTurnId = 1L
 
     fun setLanguages(sourceLanguage: String, targetLanguage: String) {
@@ -40,8 +51,7 @@ class InterpretationViewModel(application: Application) : AndroidViewModel(appli
     fun start() {
         if (mutableState.value.phase != SessionPhase.IDLE) return
         mutableState.update { it.copy(phase = SessionPhase.STARTING, turns = emptyList(), error = null) }
-        if (!openTurn()) return
-        startMicrophone(isResume = false)
+        openTurn(isResume = false)
     }
 
     fun pause() {
@@ -54,8 +64,11 @@ class InterpretationViewModel(application: Application) : AndroidViewModel(appli
     fun resume() {
         if (mutableState.value.phase != SessionPhase.PAUSED) return
         mutableState.update { it.copy(phase = SessionPhase.STARTING, error = null) }
-        if (!openTurn()) return
-        startMicrophone(isResume = true)
+        val grant = cloudGrant ?: run {
+            fail("云端翻译会话已失效，请重新开始。")
+            return
+        }
+        openTurn(isResume = true, grant = grant)
     }
 
     fun finish() {
@@ -74,6 +87,7 @@ class InterpretationViewModel(application: Application) : AndroidViewModel(appli
     fun cancel() {
         microphone.stop()
         cancelAllSessions()
+        endCloudSession()
         player.stop()
         mutableState.update { it.copy(phase = SessionPhase.IDLE, error = null) }
     }
@@ -99,7 +113,22 @@ class InterpretationViewModel(application: Application) : AndroidViewModel(appli
     }
 
     /** Creates and starts the replacement before atomically routing input to it and finishing the old Turn. */
-    private fun openTurn(): Boolean {
+    private fun openTurn(isResume: Boolean, grant: TranslationSessionGrant? = null) {
+        val existing = grant ?: cloudGrant
+        if (existing != null) {
+            startTurn(isResume, existing)
+            return
+        }
+        cloudSessions.open(
+            onGranted = { created ->
+                cloudGrant = created
+                startTurn(isResume, created)
+            },
+            onFailure = ::fail,
+        )
+    }
+
+    private fun startTurn(isResume: Boolean, grant: TranslationSessionGrant) {
         val snapshot = mutableState.value
         val turn = SubtitleTurn(nextTurnId++, snapshot.sourceLanguage, snapshot.targetLanguage)
         lateinit var socket: AgentSocket
@@ -111,17 +140,18 @@ class InterpretationViewModel(application: Application) : AndroidViewModel(appli
         )
         sessions.add(turn.id, socket)
         mutableState.update { it.copy(turns = it.turns + turn) }
-        if (!socket.start(snapshot.sourceLanguage, snapshot.targetLanguage)) {
+        if (!socket.start(snapshot.sourceLanguage, snapshot.targetLanguage, grant)) {
+            socket.cancel()
             fail("无法创建翻译会话。")
-            return false
+            return
         }
         val activation = sessions.activate(turn.id) ?: run {
             socket.cancel()
-            return false
+            return
         }
         activation.previous?.finish()
         if (activation.ready) markRunningIfStarting()
-        return true
+        startMicrophone(isResume)
     }
 
     private fun handleEvent(turnId: Long, event: AgentEvent) {
@@ -182,17 +212,25 @@ class InterpretationViewModel(application: Application) : AndroidViewModel(appli
         mutableState.update { current ->
             if (current.phase == SessionPhase.STOPPING) current.copy(phase = SessionPhase.IDLE) else current
         }
+        endCloudSession()
     }
 
     private fun fail(message: String) {
         microphone.stop()
         cancelAllSessions()
+        endCloudSession()
         player.stop()
         mutableState.update { it.copy(phase = SessionPhase.ERROR, error = message) }
     }
 
     private fun cancelAllSessions() {
         sessions.cancelAll().forEach { it.cancel() }
+    }
+
+    private fun endCloudSession() {
+        val sessionId = cloudGrant?.sessionId
+        cloudGrant = null
+        cloudSessions.end(sessionId)
     }
 
     override fun onCleared() {

@@ -2,11 +2,21 @@ package com.verba.interpretation.protocol
 
 import org.json.JSONObject
 
-data class StartMessage(val sessionId: String, val sourceLanguage: String, val targetLanguage: String) {
+data class StartMessage(
+    val sessionId: String,
+    val sourceLanguage: String,
+    val targetLanguage: String,
+    val userId: String? = null,
+    val installId: String? = null,
+) {
     fun toJson(): String = JSONObject()
         .put("type", "start").put("sessionId", sessionId).put("mode", "s2s")
         .put("sourceLanguage", sourceLanguage).put("targetLanguage", targetLanguage)
-        .put("targetAudioFormat", "pcm").put("targetAudioRate", 16_000).toString()
+        .put("targetAudioFormat", "pcm").put("targetAudioRate", 16_000)
+        .apply {
+            userId?.let { put("userId", it) }
+            installId?.let { put("installId", it) }
+        }.toString()
 }
 
 sealed interface AgentEvent {
