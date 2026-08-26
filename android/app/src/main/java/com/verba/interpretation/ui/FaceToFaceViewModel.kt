@@ -205,6 +205,7 @@ class FaceToFaceViewModel(application: Application) : AndroidViewModel(applicati
             AgentEvent.Ready -> Unit
             AgentEvent.Finished -> {
                 queuePlayback(coordinator.sessionFinished(turnId))
+                if (coordinator.state().mode == FaceToFaceMode.MANUAL) endCloudSession()
                 publishState()
             }
             is AgentEvent.Subtitle -> {
