@@ -27,7 +27,8 @@ android {
             applicationIdSuffix = ".debug"
             versionNameSuffix = "-debug"
             buildConfigField("String", "AGENT_HTTP_URL", "\"http://114.132.83.144:18765\"")
-            buildConfigField("String", "CLOUD_API_URL", "\"http://127.0.0.1:8080\"")
+            // Temporary development endpoint. Release uses the HTTPS-only production placeholder below.
+            buildConfigField("String", "CLOUD_API_URL", "\"http://114.132.83.144:8080\"")
             buildConfigField("String", "TRANSLATION_WS_URL", "\"ws://114.132.83.144:18765/ws/translate\"")
             buildConfigField("String", "TRANSLATION_ORIGIN", "\"http://114.132.83.144:15173\"")
         }
