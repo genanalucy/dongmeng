@@ -10,7 +10,9 @@ import java.io.IOException
 
 private val JSON = "application/json; charset=utf-8".toMediaType()
 
-data class CloudUser(val id: String, val email: String)
+enum class CloudRole { USER, ADMIN }
+
+data class CloudUser(val id: String, val email: String, val role: CloudRole)
 data class CloudEntitlement(val kind: String, val expiresAt: String)
 data class TranslationSessionGrant(val sessionId: String, val userId: String, val installId: String, val token: String)
 data class TranslationSession(val sessionId: String, val installId: String, val expiresAt: String)
@@ -49,7 +51,12 @@ class CloudApi(
 
     fun currentUser(): CloudUser {
         val json = authorized("users/me")
-        return CloudUser(id = json.requiredString("id"), email = json.requiredString("email"))
+        return CloudUser(
+            id = json.requiredString("id"),
+            email = json.requiredString("email"),
+            role = CloudRole.entries.firstOrNull { it.name.equals(json.requiredString("role"), ignoreCase = true) }
+                ?: throw CloudApiException("服务返回了不支持的账户角色。"),
+        )
     }
 
     fun currentEntitlement(): CloudEntitlement? = try {

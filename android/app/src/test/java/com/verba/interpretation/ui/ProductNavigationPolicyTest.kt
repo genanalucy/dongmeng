@@ -7,6 +7,18 @@ import org.junit.Test
 
 class ProductNavigationPolicyTest {
     @Test
+    fun roleDrivenNavigationSelectsAuthenticationUserAndAdminExperiences() {
+        assertEquals(ProductScreen.ACCOUNT, ProductNavigationPolicy.initialScreen(ProductNavigationMode.AUTHENTICATION))
+        assertEquals(ProductScreen.TRANSLATE, ProductNavigationPolicy.initialScreen(ProductNavigationMode.USER))
+        assertEquals(ProductScreen.ADMIN_TEST, ProductNavigationPolicy.initialScreen(ProductNavigationMode.ADMIN_TEST))
+        assertTrue(ProductNavigationPolicy.destinationsFor(ProductNavigationMode.AUTHENTICATION).isEmpty())
+        assertEquals(
+            listOf(ProductDestination.ADMIN_TEST, ProductDestination.PROFILE),
+            ProductNavigationPolicy.destinationsFor(ProductNavigationMode.ADMIN_TEST),
+        )
+    }
+
+    @Test
     fun everyPrimaryDestinationMapsToItsExpectedScreen() {
         val expected = mapOf(
             ProductDestination.TRANSLATE to ProductScreen.TRANSLATE,
@@ -14,6 +26,7 @@ class ProductNavigationPolicyTest {
             ProductDestination.FACE_TO_FACE to ProductScreen.FACE_TO_FACE_WORKBENCH,
             ProductDestination.HISTORY to ProductScreen.HISTORY,
             ProductDestination.PROFILE to ProductScreen.PROFILE,
+            ProductDestination.ADMIN_TEST to ProductScreen.ADMIN_TEST,
         )
 
         assertEquals(expected, ProductDestination.entries.associateWith(ProductNavigationPolicy::screenFor))
@@ -47,5 +60,6 @@ class ProductNavigationPolicyTest {
     @Test
     fun endpointSettingsKeepsProfileAsSelectedPrimaryDestination() {
         assertEquals(ProductDestination.PROFILE, ProductNavigationPolicy.selectedDestination(ProductScreen.ENDPOINT_SETTINGS))
+        assertEquals(ProductDestination.ADMIN_TEST, ProductNavigationPolicy.selectedDestination(ProductScreen.ADMIN_TEST))
     }
 }

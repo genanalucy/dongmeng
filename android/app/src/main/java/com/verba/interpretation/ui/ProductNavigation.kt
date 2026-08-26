@@ -1,5 +1,7 @@
 package com.verba.interpretation.ui
 
+enum class ProductNavigationMode { AUTHENTICATION, USER, ADMIN_TEST }
+
 /** Primary product destinations shown in the bottom navigation. */
 enum class ProductDestination(val label: String) {
     TRANSLATE("翻译"),
@@ -7,6 +9,7 @@ enum class ProductDestination(val label: String) {
     FACE_TO_FACE("面对面"),
     HISTORY("历史"),
     PROFILE("我的"),
+    ADMIN_TEST("测试"),
 }
 
 /** Screens are intentionally local; workbenches and settings are not fake back-stack destinations. */
@@ -18,15 +21,35 @@ enum class ProductScreen {
     PROFILE,
     ENDPOINT_SETTINGS,
     ACCOUNT,
+    ADMIN_TEST,
 }
 
 object ProductNavigationPolicy {
+    fun initialScreen(mode: ProductNavigationMode): ProductScreen = when (mode) {
+        ProductNavigationMode.AUTHENTICATION -> ProductScreen.ACCOUNT
+        ProductNavigationMode.USER -> ProductScreen.TRANSLATE
+        ProductNavigationMode.ADMIN_TEST -> ProductScreen.ADMIN_TEST
+    }
+
+    fun destinationsFor(mode: ProductNavigationMode): List<ProductDestination> = when (mode) {
+        ProductNavigationMode.AUTHENTICATION -> emptyList()
+        ProductNavigationMode.USER -> listOf(
+            ProductDestination.TRANSLATE,
+            ProductDestination.INTERPRETATION,
+            ProductDestination.FACE_TO_FACE,
+            ProductDestination.HISTORY,
+            ProductDestination.PROFILE,
+        )
+        ProductNavigationMode.ADMIN_TEST -> listOf(ProductDestination.ADMIN_TEST, ProductDestination.PROFILE)
+    }
+
     fun screenFor(destination: ProductDestination): ProductScreen = when (destination) {
         ProductDestination.TRANSLATE -> ProductScreen.TRANSLATE
         ProductDestination.INTERPRETATION -> ProductScreen.INTERPRETATION_WORKBENCH
         ProductDestination.FACE_TO_FACE -> ProductScreen.FACE_TO_FACE_WORKBENCH
         ProductDestination.HISTORY -> ProductScreen.HISTORY
         ProductDestination.PROFILE -> ProductScreen.PROFILE
+        ProductDestination.ADMIN_TEST -> ProductScreen.ADMIN_TEST
     }
 
     fun selectedDestination(screen: ProductScreen): ProductDestination = when (screen) {
@@ -38,12 +61,14 @@ object ProductNavigationPolicy {
         ProductScreen.ENDPOINT_SETTINGS,
         ProductScreen.ACCOUNT,
         -> ProductDestination.PROFILE
+        ProductScreen.ADMIN_TEST -> ProductDestination.ADMIN_TEST
     }
 
     fun showsBottomBar(screen: ProductScreen): Boolean = when (screen) {
         ProductScreen.TRANSLATE,
         ProductScreen.HISTORY,
         ProductScreen.PROFILE,
+        ProductScreen.ADMIN_TEST,
         -> true
         ProductScreen.INTERPRETATION_WORKBENCH,
         ProductScreen.FACE_TO_FACE_WORKBENCH,
@@ -54,8 +79,8 @@ object ProductNavigationPolicy {
 
     fun exitTarget(screen: ProductScreen): ProductScreen = when (screen) {
         ProductScreen.ENDPOINT_SETTINGS,
-        ProductScreen.ACCOUNT,
-        -> ProductScreen.PROFILE
+        ProductScreen.ACCOUNT -> ProductScreen.PROFILE
+        ProductScreen.ADMIN_TEST -> ProductScreen.ADMIN_TEST
         ProductScreen.INTERPRETATION_WORKBENCH,
         ProductScreen.FACE_TO_FACE_WORKBENCH,
         -> ProductScreen.TRANSLATE

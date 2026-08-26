@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import com.verba.interpretation.cloud.CloudApi
 import com.verba.interpretation.cloud.CloudEndpointSettings
 import com.verba.interpretation.cloud.CloudEntitlement
+import com.verba.interpretation.cloud.CloudRole
 import com.verba.interpretation.cloud.CloudUser
 import com.verba.interpretation.cloud.KeystoreTokenStore
 import com.verba.interpretation.cloud.SharedPreferencesInstallationIdStore
@@ -21,8 +22,16 @@ data class AccountUiState(
     val user: CloudUser? = null,
     val entitlement: CloudEntitlement? = null,
     val message: String? = null,
+    val previewingUserExperience: Boolean = false,
 ) {
     val signedIn: Boolean get() = user != null
+    val isAdmin: Boolean get() = user?.role == CloudRole.ADMIN
+    val navigationMode: ProductNavigationMode
+        get() = when {
+            !signedIn -> ProductNavigationMode.AUTHENTICATION
+            isAdmin && !previewingUserExperience -> ProductNavigationMode.ADMIN_TEST
+            else -> ProductNavigationMode.USER
+        }
 }
 
 class AccountViewModel(application: Application) : AndroidViewModel(application) {
@@ -48,6 +57,11 @@ class AccountViewModel(application: Application) : AndroidViewModel(application)
         api.currentUser() to api.currentEntitlement()
     }
 
+    fun setPreviewingUserExperience(enabled: Boolean) {
+        if (!mutableState.value.isAdmin) return
+        mutableState.value = mutableState.value.copy(previewingUserExperience = enabled)
+    }
+
     fun logout() {
         viewModelScope.launch {
             mutableState.value = mutableState.value.copy(loading = true, message = null)
@@ -70,7 +84,11 @@ class AccountViewModel(application: Application) : AndroidViewModel(application)
             mutableState.value = mutableState.value.copy(loading = true, message = null)
             try {
                 val (user, entitlement) = withContext(Dispatchers.IO) { block() }
-                mutableState.value = AccountUiState(user = user, entitlement = entitlement)
+                mutableState.value = AccountUiState(
+                    user = user,
+                    entitlement = entitlement,
+                    previewingUserExperience = mutableState.value.previewingUserExperience && user.role == CloudRole.ADMIN,
+                )
             } catch (error: Exception) {
                 mutableState.value = mutableState.value.copy(loading = false, message = error.message ?: "网络连接失败，请稍后重试。")
             }

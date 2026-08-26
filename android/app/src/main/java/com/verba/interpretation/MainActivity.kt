@@ -130,6 +130,7 @@ import com.verba.interpretation.brand.BrandConfig
 import com.verba.interpretation.brand.BrandTheme
 import com.verba.interpretation.cloud.CloudEndpointSettings
 import com.verba.interpretation.protocol.EndpointSettings
+import com.verba.interpretation.ui.AccountUiState
 import com.verba.interpretation.ui.AccountViewModel
 import com.verba.interpretation.ui.ChatFollowEvent
 import com.verba.interpretation.ui.ChatFollowPolicy
@@ -144,6 +145,7 @@ import com.verba.interpretation.ui.HistoryEmptyStatePolicy
 import com.verba.interpretation.ui.HistoryFilter
 import com.verba.interpretation.ui.InterpretationViewModel
 import com.verba.interpretation.ui.ProductDestination
+import com.verba.interpretation.ui.ProductNavigationMode
 import com.verba.interpretation.ui.ProductNavigationPolicy
 import com.verba.interpretation.ui.ProductScreen
 import com.verba.interpretation.ui.SessionPhase
@@ -162,11 +164,19 @@ class MainActivity : ComponentActivity() {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun InterpretationApp(viewModel: InterpretationViewModel = viewModel()) {
-    var screen by remember { mutableStateOf(ProductScreen.TRANSLATE) }
+private fun InterpretationApp(
+    viewModel: InterpretationViewModel = viewModel(),
+    accountViewModel: AccountViewModel = viewModel(),
+) {
+    var screen by remember { mutableStateOf(ProductScreen.ACCOUNT) }
     val interpretationState by viewModel.state.collectAsStateWithLifecycle()
-    val showBottomBar = ProductNavigationPolicy.showsBottomBar(screen)
-    BackHandler(enabled = screen != ProductScreen.TRANSLATE) {
+    val accountState by accountViewModel.state.collectAsStateWithLifecycle()
+    val navigationMode = accountState.navigationMode
+    LaunchedEffect(navigationMode) {
+        screen = ProductNavigationPolicy.initialScreen(navigationMode)
+    }
+    val showBottomBar = navigationMode != ProductNavigationMode.AUTHENTICATION && ProductNavigationPolicy.showsBottomBar(screen)
+    BackHandler(enabled = navigationMode == ProductNavigationMode.USER && screen != ProductScreen.TRANSLATE) {
         screen = ProductNavigationPolicy.exitTarget(screen)
     }
 
@@ -180,6 +190,7 @@ private fun InterpretationApp(viewModel: InterpretationViewModel = viewModel()) 
         bottomBar = {
             if (showBottomBar) {
                 ProductNavigationBar(
+                    destinations = ProductNavigationPolicy.destinationsFor(navigationMode),
                     selected = ProductNavigationPolicy.selectedDestination(screen),
                     onSelect = { screen = ProductNavigationPolicy.screenFor(it) },
                 )
@@ -210,11 +221,19 @@ private fun InterpretationApp(viewModel: InterpretationViewModel = viewModel()) 
             ProductScreen.PROFILE -> ProfilePage(
                 modifier = Modifier.padding(padding),
                 onAccount = { screen = ProductScreen.ACCOUNT },
+                showTestSettings = navigationMode == ProductNavigationMode.ADMIN_TEST,
                 onEndpointSettings = { screen = ProductScreen.ENDPOINT_SETTINGS },
             )
             ProductScreen.ACCOUNT -> AccountPage(
                 modifier = Modifier.padding(padding),
-                onBack = { screen = ProductNavigationPolicy.exitTarget(screen) },
+                onBack = { screen = ProductNavigationPolicy.initialScreen(navigationMode) },
+                accountViewModel = accountViewModel,
+            )
+            ProductScreen.ADMIN_TEST -> AdminTestPage(
+                modifier = Modifier.padding(padding),
+                accountState = accountState,
+                onPreviewUserExperience = { accountViewModel.setPreviewingUserExperience(true) },
+                onAccount = { screen = ProductScreen.ACCOUNT },
             )
             ProductScreen.ENDPOINT_SETTINGS -> EndpointSettingsPage(
                 modifier = Modifier.padding(padding),
@@ -231,6 +250,7 @@ private fun ProductTopBar(screen: ProductScreen) {
         ProductScreen.TRANSLATE -> BrandConfig.appName
         ProductScreen.HISTORY -> "历史"
         ProductScreen.PROFILE -> "我的"
+        ProductScreen.ADMIN_TEST -> "测试版"
         else -> ""
     }
     TopAppBar(
@@ -254,9 +274,13 @@ private fun ProductTopBar(screen: ProductScreen) {
 }
 
 @Composable
-private fun ProductNavigationBar(selected: ProductDestination, onSelect: (ProductDestination) -> Unit) {
+private fun ProductNavigationBar(
+    destinations: List<ProductDestination>,
+    selected: ProductDestination,
+    onSelect: (ProductDestination) -> Unit,
+) {
     NavigationBar(containerColor = MaterialTheme.colorScheme.surface, tonalElevation = 0.dp) {
-        ProductDestination.entries.forEach { destination ->
+        destinations.forEach { destination ->
             NavigationBarItem(
                 selected = selected == destination,
                 onClick = { onSelect(destination) },
@@ -277,6 +301,7 @@ private fun ProductDestination.icon(): ImageVector = when (this) {
     ProductDestination.FACE_TO_FACE -> Icons.Outlined.Groups
     ProductDestination.HISTORY -> Icons.Outlined.History
     ProductDestination.PROFILE -> Icons.Outlined.PersonOutline
+    ProductDestination.ADMIN_TEST -> Icons.Outlined.Science
 }
 
 @Composable
@@ -1048,6 +1073,49 @@ private fun HistoryEmptyState(query: String, filter: HistoryFilter) {
     }
 }
 
+@Composable
+private fun AdminTestPage(
+    modifier: Modifier,
+    accountState: AccountUiState,
+    onPreviewUserExperience: () -> Unit,
+    onAccount: () -> Unit,
+) {
+    LazyColumn(
+        modifier = modifier.fillMaxSize(),
+        contentPadding = PaddingValues(horizontal = 20.dp, vertical = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp),
+    ) {
+        item {
+            Surface(shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.tertiaryContainer, modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(18.dp)) {
+                    Text("管理员测试版", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+                    Text(
+                        "当前登录角色：${accountState.user?.role?.name?.lowercase() ?: "未知"}。页面导航不授予任何服务端权限。",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onTertiaryContainer,
+                        modifier = Modifier.padding(top = 4.dp),
+                    )
+                }
+            }
+        }
+        item {
+            Text("测试入口", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            Text(
+                "管理操作仍由 Cloud API 的 RBAC、权益与翻译 session token 在服务端校验；本应用不提供隐藏入口或客户端权限绕过。",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 6.dp),
+            )
+        }
+        item {
+            Button(onClick = onPreviewUserExperience, modifier = Modifier.fillMaxWidth()) { Text("预览正式用户版") }
+        }
+        item {
+            OutlinedButton(onClick = onAccount, modifier = Modifier.fillMaxWidth()) { Text("账户与权益") }
+        }
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun AccountPage(
@@ -1103,6 +1171,13 @@ private fun AccountPage(
                     }
                 }
             } else {
+                if (state.isAdmin && state.previewingUserExperience) {
+                    item {
+                        OutlinedButton(onClick = { accountViewModel.setPreviewingUserExperience(false) }, modifier = Modifier.fillMaxWidth()) {
+                            Text("返回管理员测试版")
+                        }
+                    }
+                }
                 item {
                     Text("兑换权益码", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                     OutlinedTextField(redemptionCode, { redemptionCode = it }, label = { Text("兑换码") }, singleLine = true, modifier = Modifier.fillMaxWidth().padding(top = 10.dp))
@@ -1131,7 +1206,12 @@ private fun AccountPage(
 }
 
 @Composable
-private fun ProfilePage(modifier: Modifier, onAccount: () -> Unit, onEndpointSettings: () -> Unit) {
+private fun ProfilePage(
+    modifier: Modifier,
+    onAccount: () -> Unit,
+    showTestSettings: Boolean,
+    onEndpointSettings: () -> Unit,
+) {
     var notice by remember { mutableStateOf<String?>(null) }
     LazyColumn(
         modifier = modifier.fillMaxSize(),
@@ -1194,7 +1274,7 @@ private fun ProfilePage(modifier: Modifier, onAccount: () -> Unit, onEndpointSet
         }
         item {
             Text(
-                "设置",
+                if (showTestSettings) "测试设置" else "设置",
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.SemiBold,
                 modifier = Modifier.semantics { heading() },
@@ -1208,13 +1288,15 @@ private fun ProfilePage(modifier: Modifier, onAccount: () -> Unit, onEndpointSet
                     supporting = "语言、播放与显示",
                     onClick = { notice = "请在同传工作台选择语言与播放位置。" },
                 )
-                HorizontalDivider(Modifier.padding(start = 60.dp), color = MaterialTheme.colorScheme.outlineVariant)
-                ProfileEntry(
-                    icon = Icons.Outlined.Science,
-                    title = "测试服务地址",
-                    supporting = "Agent HTTP 与 WebSocket",
-                    onClick = onEndpointSettings,
-                )
+                if (showTestSettings) {
+                    HorizontalDivider(Modifier.padding(start = 60.dp), color = MaterialTheme.colorScheme.outlineVariant)
+                    ProfileEntry(
+                        icon = Icons.Outlined.Science,
+                        title = "测试服务地址",
+                        supporting = "Agent HTTP、WebSocket 与 Cloud API",
+                        onClick = onEndpointSettings,
+                    )
+                }
             }
         }
         notice?.let { message ->
