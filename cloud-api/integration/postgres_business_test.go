@@ -12,9 +12,9 @@ import (
 
 	"github.com/dngmeng/cloud-api/internal/auth"
 	"github.com/dngmeng/cloud-api/internal/domain"
+	"github.com/dngmeng/cloud-api/internal/migrate"
 	"github.com/dngmeng/cloud-api/internal/store"
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -28,12 +28,12 @@ func TestPostgresBusinessLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal("open isolated test database")
 	}
-	defer db.Close()
+	t.Cleanup(db.Close)
 	raw, err := pgxpool.New(ctx, url)
 	if err != nil {
 		t.Fatal("open isolated fixture pool")
 	}
-	defer raw.Close()
+	t.Cleanup(raw.Close)
 
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	hash, err := auth.HashPassword("integration-password")
@@ -69,9 +69,27 @@ func TestPostgresBusinessLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal("generate fixture redemption code")
 	}
-	if _, err := db.CreateCodeBatch(ctx, domain.CreateBatchParams{AdminID: admin.ID, Name: "integration", DurationDays: 365, CodeHashes: [][]byte{codeHash}, Now: now}); err != nil {
+	var batchID uuid.UUID
+	if err := raw.QueryRow(ctx, `INSERT INTO code_batches(name,duration_days,created_by,created_by_role,created_at) VALUES('integration',365,$1,'admin',$2) RETURNING id`, admin.ID, now).Scan(&batchID); err != nil {
 		t.Fatal("create fixture code batch")
 	}
+	if _, err := raw.Exec(ctx, `INSERT INTO redemption_codes(batch_id,code_hash) VALUES($1,$2)`, batchID, codeHash); err != nil {
+		t.Fatal("create fixture redemption code")
+	}
+	var otherID uuid.UUID
+	t.Cleanup(func() {
+		cleanupContext, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if _, err := raw.Exec(cleanupContext, `DELETE FROM redemption_codes WHERE batch_id=$1`, batchID); err != nil {
+			t.Error("cleanup fixture redemption codes")
+		}
+		if _, err := raw.Exec(cleanupContext, `DELETE FROM code_batches WHERE id=$1`, batchID); err != nil {
+			t.Error("cleanup fixture code batch")
+		}
+		if _, err := raw.Exec(cleanupContext, `DELETE FROM users WHERE id = ANY($1)`, []uuid.UUID{user.ID, admin.ID, otherID}); err != nil {
+			t.Error("cleanup fixture users")
+		}
+	})
 	canonicalHash, err := auth.HashRedemptionCode("  " + strings.ToLower(code) + "  ")
 	if err != nil {
 		t.Fatal("canonicalize fixture redemption code")
@@ -105,6 +123,7 @@ func TestPostgresBusinessLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal("register cross-user fixture")
 	}
+	otherID = other.ID
 	if err := db.EndTranslationSession(ctx, user.ID, first.ID, now.Add(time.Second)); err != nil {
 		t.Fatal("end first session before cross-user fixture")
 	}
@@ -138,17 +157,40 @@ func TestPostgresBusinessLifecycle(t *testing.T) {
 	}
 }
 
+func TestIsolatedPostgresTestDSNRejectsUnsafeFallbackAndOverridesBeforeConnecting(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		dsn  string
+	}{
+		{name: "multi host fallback", dsn: "postgres://cloud:top-secret@127.0.0.1:15432,127.0.0.1:5432/cloud"},
+		{name: "query host override", dsn: "postgres://cloud:top-secret@127.0.0.1:15432/cloud?host=127.0.0.1"},
+		{name: "query service override", dsn: "postgres://cloud:top-secret@127.0.0.1:15432/cloud?service=unsafe"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if _, err := validateIsolatedPostgresTestDSN(test.dsn); !errors.Is(err, migrate.ErrUnsafeDatabaseTarget) {
+				t.Fatalf("validateIsolatedPostgresTestDSN() error = %v, want unsafe target", err)
+			}
+		})
+	}
+}
+
 func isolatedPostgresTestDSN(t *testing.T) string {
 	t.Helper()
-	url := os.Getenv("CLOUD_API_TEST_DATABASE_URL")
-	if url == "" {
+	dsn := os.Getenv("CLOUD_API_TEST_DATABASE_URL")
+	if dsn == "" {
 		t.Skip("CLOUD_API_TEST_DATABASE_URL is not set; skipping isolated PostgreSQL business lifecycle test")
 	}
-	config, err := pgx.ParseConfig(url)
-	if err != nil || config.Host != "127.0.0.1" || config.Port != 15432 || config.Database == "" {
+	if _, err := validateIsolatedPostgresTestDSN(dsn); err != nil {
 		t.Fatal("CLOUD_API_TEST_DATABASE_URL must target the isolated 127.0.0.1:15432 test database")
 	}
-	return url
+	return dsn
+}
+
+func validateIsolatedPostgresTestDSN(dsn string) (string, error) {
+	if err := migrate.ValidateDatabaseURL(dsn, false); err != nil {
+		return "", err
+	}
+	return dsn, nil
 }
 
 func integrationSession(userID, entitlementID uuid.UUID, installID string, expiresAt time.Time) domain.TranslationSession {

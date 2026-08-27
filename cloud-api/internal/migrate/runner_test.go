@@ -31,6 +31,8 @@ func TestValidateDatabaseURLFailsClosed(t *testing.T) {
 		{name: "rejects socket style keyword connection string", dsn: "host=/var/run/postgresql dbname=cloud password=" + secret, wantErr: true},
 		{name: "rejects multi host", dsn: "postgres://cloud:" + secret + "@127.0.0.1:15432,postgres:5432/cloud", wantErr: true},
 		{name: "rejects query host override", dsn: "postgres://cloud:" + secret + "@127.0.0.1:15432/cloud?host=postgres", wantErr: true},
+		{name: "rejects query port override", dsn: "postgres://cloud:" + secret + "@127.0.0.1:15432/cloud?port=5432", wantErr: true},
+		{name: "rejects query fallback host override", dsn: "postgres://cloud:" + secret + "@127.0.0.1:15432/cloud?hostaddr=127.0.0.1", wantErr: true},
 		{name: "rejects empty database", dsn: "postgres://cloud:" + secret + "@127.0.0.1:15432/", wantErr: true},
 	}
 	for _, test := range tests {
@@ -47,14 +49,18 @@ func TestValidateDatabaseURLFailsClosed(t *testing.T) {
 }
 
 func TestRunRejectsUnsafeTargetBeforeReadingMigrationsOrConnecting(t *testing.T) {
-	for _, databaseURL := range []string{
-		"postgres://cloud:top-secret@127.0.0.1:5432/cloud",
-		"postgres://cloud:top-secret@postgres:5432/cloud",
-	} {
-		t.Run(databaseURL, func(t *testing.T) {
+	tests := []struct {
+		name        string
+		databaseURL string
+	}{
+		{name: "host port", databaseURL: "postgres://cloud:top-secret@127.0.0.1:5432/cloud"},
+		{name: "compose target without container opt in", databaseURL: "postgres://cloud:top-secret@postgres:5432/cloud"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
 			t.Setenv("CLOUD_API_MIGRATE_COMPOSE_SERVICE", "")
 			err := Run(context.Background(), Config{
-				DatabaseURL: databaseURL,
+				DatabaseURL: test.databaseURL,
 				Directory:   filepath.Join(t.TempDir(), "does-not-exist"),
 			})
 			if !errors.Is(err, ErrUnsafeDatabaseTarget) {
@@ -83,8 +89,9 @@ func TestRepositoryMigrationsClassifyConcurrentIndexOutsideTransaction(t *testin
 	if migrations[0].OutsideTransaction || !migrations[1].OutsideTransaction || migrations[2].OutsideTransaction {
 		t.Fatalf("transaction strategies = [%t %t %t], want [false true false]", migrations[0].OutsideTransaction, migrations[1].OutsideTransaction, migrations[2].OutsideTransaction)
 	}
-	if migrations[1].ConcurrentIndex != "refresh_tokens_expiry_idx" {
-		t.Fatalf("concurrent index = %q, want refresh_tokens_expiry_idx", migrations[1].ConcurrentIndex)
+	index := migrations[1].ConcurrentIndex
+	if index.Name != "refresh_tokens_expiry_idx" || index.Table != "refresh_tokens" || index.Method != "btree" || index.Unique || strings.Join(index.Columns, ",") != "expires_at,id" || index.Where != "" {
+		t.Fatalf("unexpected repository concurrent index definition: %#v", index)
 	}
 }
 
@@ -111,11 +118,40 @@ func TestTransactionalSQLRejectsUnknownTransactionControl(t *testing.T) {
 	if _, err := transactionalSQL("-- leading comment\nBEGIN TRANSACTION;\nCREATE TABLE events(id integer);\nCOMMIT;\n-- trailing comment\n"); err != nil {
 		t.Fatalf("known transaction envelope was rejected: %v", err)
 	}
-	if _, err := transactionalSQL("CREATE TABLE events(id integer); COMMIT;"); err == nil {
-		t.Fatal("unwrapped transaction control was accepted")
+	for _, sql := range []string{
+		"CREATE TABLE events(id integer); COMMIT;",
+		"CREATE TABLE events(id integer); END;",
+		"CREATE TABLE events(id integer); ABORT;",
+		"CREATE TABLE events(id integer); SAVEPOINT nested;",
+		"CREATE TABLE events(id integer); RELEASE SAVEPOINT nested;",
+		"CREATE TABLE events(id integer); PREPARE TRANSACTION 'prepared';",
+		"CREATE TABLE events(id integer); SET TRANSACTION ISOLATION LEVEL SERIALIZABLE;",
+	} {
+		if _, err := transactionalSQL(sql); err == nil {
+			t.Fatalf("unwrapped transaction control was accepted: %q", sql)
+		}
 	}
 	if _, err := transactionalSQL("CREATE FUNCTION f() RETURNS void LANGUAGE plpgsql AS $$ BEGIN RAISE NOTICE 'ok'; END; $$;"); err != nil {
 		t.Fatalf("transaction words in a dollar-quoted function body were rejected: %v", err)
+	}
+}
+
+func TestConcurrentIndexTargetParsesOnlyVerifiableDefinitions(t *testing.T) {
+	definition, found, err := concurrentIndexTarget("CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS events_active_idx ON app.events USING btree (user_id, created_at) WHERE revoked_at IS NULL;")
+	if err != nil || !found {
+		t.Fatalf("concurrent index definition was not parsed: found=%t error=%v", found, err)
+	}
+	if definition.Name != "events_active_idx" || definition.Schema != "app" || definition.Table != "events" || definition.Method != "btree" || !definition.Unique || strings.Join(definition.Columns, ",") != "user_id,created_at" || definition.Where != "revoked_at is null" {
+		t.Fatalf("unexpected concurrent index definition: %#v", definition)
+	}
+	for _, sql := range []string{
+		"CREATE INDEX CONCURRENTLY unsupported_idx ON events ((lower(email)));",
+		"CREATE INDEX CONCURRENTLY unsupported_idx ON events (email) WHERE deleted_at = now();",
+		"CREATE INDEX CONCURRENTLY unsupported_idx ON events (email) INCLUDE (id);",
+	} {
+		if _, _, err := concurrentIndexTarget(sql); err == nil {
+			t.Fatalf("unsupported concurrent definition was accepted: %q", sql)
+		}
 	}
 }
 
@@ -179,7 +215,7 @@ func TestRunRecordsRepositoryChecksumsIsIdempotentAndFailsBeforeLaterMigration(t
 	if err := os.WriteFile(filepath.Join(directory, "000004_later.up.sql"), []byte("CREATE TABLE must_not_exist(id integer);\n"), 0o600); err != nil {
 		t.Fatal("write later migration")
 	}
-	path := filepath.Join(directory, "000002_refresh_tokens_expiry_idx.up.sql")
+	path := filepath.Join(directory, "000001_init.up.sql")
 	contents, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal("read repository concurrent migration copy")
@@ -187,8 +223,9 @@ func TestRunRecordsRepositoryChecksumsIsIdempotentAndFailsBeforeLaterMigration(t
 	if err := os.WriteFile(path, append(contents, []byte("-- checksum changed\n")...), 0o600); err != nil {
 		t.Fatal("change applied migration copy")
 	}
-	if err := Run(ctx, Config{DatabaseURL: dsn, Directory: directory, Schema: schema}); err == nil {
-		t.Fatal("repository checksum mismatch was accepted")
+	err = Run(ctx, Config{DatabaseURL: dsn, Directory: directory, Schema: schema})
+	if err == nil || !strings.Contains(err.Error(), "migration checksum mismatch for version 000001") {
+		t.Fatal("repository checksum mismatch did not fail through ledger validation")
 	}
 	var laterExists bool
 	if err := conn.QueryRow(ctx, "SELECT to_regclass($1) IS NOT NULL", schema+".must_not_exist").Scan(&laterExists); err != nil {
@@ -233,6 +270,154 @@ func isolatedTestDSN(t *testing.T) string {
 		t.Fatal("CLOUD_API_TEST_DATABASE_URL must target the isolated 127.0.0.1:15432 test database")
 	}
 	return dsn
+}
+
+func TestRunSerializesAndRecoversDedicatedPostgresMigrations(t *testing.T) {
+	dsn := isolatedTestDSN(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	conn, schema := openMigrationTestSchema(t, ctx, dsn)
+	directory := writeMigrations(t, map[string]string{
+		"000001_lock.up.sql": "CREATE TABLE events(id integer);\n",
+	})
+	config := Config{DatabaseURL: dsn, Directory: directory, Schema: schema}
+
+	if _, err := conn.Exec(ctx, "SELECT pg_advisory_lock($1)", migrationAdvisoryLock); err != nil {
+		t.Fatal("hold migration advisory lock")
+	}
+	done := make(chan error, 1)
+	go func() { done <- Run(ctx, config) }()
+	select {
+	case err := <-done:
+		t.Fatalf("runner did not wait for advisory lock: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	if _, err := conn.Exec(ctx, "SELECT pg_advisory_unlock($1)", migrationAdvisoryLock); err != nil {
+		t.Fatal("release migration advisory lock")
+	}
+	if err := <-done; err != nil {
+		t.Fatalf("runner failed after advisory lock release: %v", err)
+	}
+	if err := Run(ctx, config); err != nil {
+		t.Fatalf("second runner was not a no-op after lock contention: %v", err)
+	}
+}
+
+func TestRunRejectsExistingSchemaWithEmptyLedger(t *testing.T) {
+	dsn := isolatedTestDSN(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	conn, schema := openMigrationTestSchema(t, ctx, dsn)
+	if _, err := conn.Exec(ctx, "CREATE TABLE "+quoteIdentifier(schema)+".users(id integer)"); err != nil {
+		t.Fatal("create legacy Cloud relation")
+	}
+	directory := writeMigrations(t, map[string]string{
+		"000001_should_not_run.up.sql": "CREATE TABLE must_not_exist(id integer);\n",
+	})
+	err := Run(ctx, Config{DatabaseURL: dsn, Directory: directory, Schema: schema})
+	if err == nil || !strings.Contains(err.Error(), "empty migration ledger") {
+		t.Fatal("existing schema with empty ledger was accepted")
+	}
+	var exists bool
+	if err := conn.QueryRow(ctx, "SELECT to_regclass($1) IS NOT NULL", schema+".must_not_exist").Scan(&exists); err != nil {
+		t.Fatal("check replay was blocked")
+	}
+	if exists {
+		t.Fatal("runner replayed migration with existing schema and empty ledger")
+	}
+}
+
+func TestRunRejectsMismatchedOrInvalidConcurrentIndexBeforeLedgerAndRecovers(t *testing.T) {
+	dsn := isolatedTestDSN(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	conn, schema := openMigrationTestSchema(t, ctx, dsn)
+	if _, err := conn.Exec(ctx, "CREATE TABLE "+quoteIdentifier(schema)+".events(id integer PRIMARY KEY, email text)"); err != nil {
+		t.Fatal("create concurrent index fixture table")
+	}
+	directory := writeMigrations(t, map[string]string{
+		"000001_concurrent.up.sql": "CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS events_email_idx ON events (email);\n",
+	})
+	config := Config{DatabaseURL: dsn, Directory: directory, Schema: schema}
+
+	if _, err := conn.Exec(ctx, "CREATE INDEX "+quoteIdentifier(schema)+".events_email_idx ON "+quoteIdentifier(schema)+".events(id)"); err != nil {
+		t.Fatal("create wrong same-name index")
+	}
+	assertConcurrentMigrationNotLedgered(t, ctx, conn, config, schema)
+	if _, err := conn.Exec(ctx, "DROP INDEX "+quoteIdentifier(schema)+".events_email_idx"); err != nil {
+		t.Fatal("drop wrong same-name index")
+	}
+	if _, err := conn.Exec(ctx, "INSERT INTO "+quoteIdentifier(schema)+".events(id,email) VALUES(1,'duplicate'),(2,'duplicate')"); err != nil {
+		t.Fatal("seed duplicate values")
+	}
+	if _, err := conn.Exec(ctx, "CREATE UNIQUE INDEX CONCURRENTLY "+quoteIdentifier(schema)+".events_email_idx ON "+quoteIdentifier(schema)+".events(email)"); err == nil {
+		t.Fatal("failed concurrent unique index fixture unexpectedly succeeded")
+	}
+	assertConcurrentMigrationNotLedgered(t, ctx, conn, config, schema)
+	if _, err := conn.Exec(ctx, "DROP INDEX "+quoteIdentifier(schema)+".events_email_idx"); err != nil {
+		t.Fatal("drop invalid same-name index")
+	}
+	if _, err := conn.Exec(ctx, "DELETE FROM "+quoteIdentifier(schema)+".events WHERE id=1"); err != nil {
+		t.Fatal("remove duplicate fixture row")
+	}
+	if err := Run(ctx, config); err != nil {
+		t.Fatalf("runner did not recover after concurrent index repair: %v", err)
+	}
+	var count int
+	if err := conn.QueryRow(ctx, "SELECT count(*) FROM "+quoteIdentifier(schema)+".schema_migrations").Scan(&count); err != nil || count != 1 {
+		t.Fatal("recovered concurrent migration was not recorded exactly once")
+	}
+}
+
+func assertConcurrentMigrationNotLedgered(t *testing.T, ctx context.Context, conn *pgx.Conn, config Config, schema string) {
+	t.Helper()
+	if err := Run(ctx, config); err == nil {
+		t.Fatal("mismatched or invalid concurrent index was accepted")
+	}
+	var ledgerExists bool
+	if err := conn.QueryRow(ctx, "SELECT to_regclass($1) IS NOT NULL", schema+".schema_migrations").Scan(&ledgerExists); err != nil {
+		t.Fatal("check concurrent migration ledger")
+	}
+	if !ledgerExists {
+		return
+	}
+	var count int
+	if err := conn.QueryRow(ctx, "SELECT count(*) FROM "+quoteIdentifier(schema)+".schema_migrations").Scan(&count); err != nil {
+		t.Fatal("count concurrent migration ledger")
+	}
+	if count != 0 {
+		t.Fatal("mismatched or invalid concurrent index was recorded in ledger")
+	}
+}
+
+func openMigrationTestSchema(t *testing.T, ctx context.Context, dsn string) (*pgx.Conn, string) {
+	t.Helper()
+	conn, err := pgx.Connect(ctx, dsn)
+	if err != nil {
+		t.Fatal("connect isolated migration test database")
+	}
+	t.Cleanup(func() { _ = conn.Close(context.Background()) })
+	schema := "migration_test_" + strings.ReplaceAll(uuid.NewString(), "-", "")
+	if _, err := conn.Exec(ctx, "CREATE SCHEMA "+quoteIdentifier(schema)); err != nil {
+		t.Fatal("create isolated migration test schema")
+	}
+	t.Cleanup(func() {
+		if _, err := conn.Exec(context.Background(), "DROP SCHEMA "+quoteIdentifier(schema)+" CASCADE"); err != nil {
+			t.Error("drop isolated migration test schema")
+		}
+	})
+	return conn, schema
+}
+
+func writeMigrations(t *testing.T, files map[string]string) string {
+	t.Helper()
+	directory := t.TempDir()
+	for name, contents := range files {
+		if err := os.WriteFile(filepath.Join(directory, name), []byte(contents), 0o600); err != nil {
+			t.Fatal("write isolated migration")
+		}
+	}
+	return directory
 }
 
 func TestRunRequiresAnExplicitDatabaseURL(t *testing.T) {

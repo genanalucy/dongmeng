@@ -26,7 +26,12 @@ const (
 var (
 	upMigrationName          = regexp.MustCompile(`^(\d+)_[-a-zA-Z0-9_]+\.up\.sql$`)
 	transactionEnvelope      = regexp.MustCompile(`(?is)^\s*(?:(?:--[^\n]*(?:\n|$))|(?:/\*.*?\*/\s*))*BEGIN(?:\s+(?:WORK|TRANSACTION))?\s*;\s*(.*?)\s*COMMIT(?:\s+(?:WORK|TRANSACTION))?\s*;\s*(?:(?:--[^\n]*(?:\n|$))|(?:/\*.*?\*/\s*))*$`)
-	concurrentIndexStatement = regexp.MustCompile(`(?is)^\s*CREATE\s+(?:UNIQUE\s+)?INDEX\s+CONCURRENTLY\s+(?:IF\s+NOT\s+EXISTS\s+)?([a-z_][a-z0-9_]*)\s+ON\s+(?:[a-z_][a-z0-9_]*\.)?[a-z_][a-z0-9_]*\s*\([^;]+\)\s*;\s*$`)
+	concurrentIndexStatement = regexp.MustCompile(`(?is)^\s*CREATE\s+(?:(UNIQUE)\s+)?INDEX\s+CONCURRENTLY\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:(` + identifierPattern + `)\.)?(` + identifierPattern + `)\s+ON\s+(?:(` + identifierPattern + `)\.)?(` + identifierPattern + `)(?:\s+USING\s+(` + identifierPattern + `))?\s*\(\s*(` + identifierPattern + `(?:\s*,\s*` + identifierPattern + `)*)\s*\)(?:\s+WHERE\s+(` + simpleWherePattern + `))?\s*;\s*$`)
+)
+
+const (
+	identifierPattern  = `[a-z_][a-z0-9_]*`
+	simpleWherePattern = `[a-z_][a-z0-9_]*\s+IS\s+(?:NOT\s+)?NULL(?:\s+AND\s+[a-z_][a-z0-9_]*\s+IS\s+(?:NOT\s+)?NULL)*`
 )
 
 // ErrUnsafeDatabaseTarget means the supplied DSN was rejected before any
@@ -48,7 +53,17 @@ type migration struct {
 	SQL                string
 	Checksum           string
 	OutsideTransaction bool
-	ConcurrentIndex    string
+	ConcurrentIndex    concurrentIndexDefinition
+}
+
+type concurrentIndexDefinition struct {
+	Schema  string
+	Name    string
+	Table   string
+	Method  string
+	Unique  bool
+	Columns []string
+	Where   string
 }
 
 // ValidateDatabaseURL permits exactly the host test listener or, when called
@@ -220,7 +235,11 @@ func apply(ctx context.Context, connection *pgxpool.Conn, ledger, schema string,
 		if _, err := connection.Exec(ctx, candidate.SQL); err != nil {
 			return err
 		}
-		valid, err := concurrentIndexIsValid(ctx, connection, schema, candidate.ConcurrentIndex)
+		expected := candidate.ConcurrentIndex
+		if expected.Schema == "" {
+			expected.Schema = schema
+		}
+		valid, err := concurrentIndexMatches(ctx, connection, expected, schema)
 		if err != nil {
 			return err
 		}
@@ -248,21 +267,60 @@ func apply(ctx context.Context, connection *pgxpool.Conn, ledger, schema string,
 	return transaction.Commit(ctx)
 }
 
-func concurrentIndexIsValid(ctx context.Context, connection *pgxpool.Conn, schema, index string) (bool, error) {
-	const validIndex = `
-SELECT i.indisvalid
+func concurrentIndexMatches(ctx context.Context, connection *pgxpool.Conn, expected concurrentIndexDefinition, defaultSchema string) (bool, error) {
+	if expected.Schema == "" {
+		expected.Schema = defaultSchema
+	}
+	const indexDefinition = `
+SELECT i.indisvalid,
+       table_namespace.nspname,
+       table_class.relname,
+       access_method.amname,
+       i.indisunique,
+       COALESCE(array_agg(attribute.attname ORDER BY key_column.ordinality) FILTER (WHERE attribute.attname IS NOT NULL), ARRAY[]::text[]),
+       COALESCE(pg_get_expr(i.indpred, i.indrelid), '')
 FROM pg_catalog.pg_index i
-JOIN pg_catalog.pg_class c ON c.oid = i.indexrelid
-JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
-WHERE n.nspname = $1 AND c.relname = $2`
+JOIN pg_catalog.pg_class index_class ON index_class.oid = i.indexrelid
+JOIN pg_catalog.pg_namespace index_namespace ON index_namespace.oid = index_class.relnamespace
+JOIN pg_catalog.pg_class table_class ON table_class.oid = i.indrelid
+JOIN pg_catalog.pg_namespace table_namespace ON table_namespace.oid = table_class.relnamespace
+JOIN pg_catalog.pg_am access_method ON access_method.oid = index_class.relam
+LEFT JOIN LATERAL unnest(i.indkey) WITH ORDINALITY AS key_column(attnum, ordinality) ON true
+LEFT JOIN pg_catalog.pg_attribute attribute ON attribute.attrelid = table_class.oid AND attribute.attnum = key_column.attnum
+WHERE index_namespace.nspname = $1 AND index_class.relname = $2
+GROUP BY i.indisvalid, table_namespace.nspname, table_class.relname, access_method.amname, i.indisunique, i.indpred, i.indrelid`
+	var actual concurrentIndexDefinition
 	var valid bool
-	if err := connection.QueryRow(ctx, validIndex, schema, index).Scan(&valid); err != nil {
+	if err := connection.QueryRow(ctx, indexDefinition, expected.Schema, expected.Name).Scan(
+		&valid, &actual.Schema, &actual.Table, &actual.Method, &actual.Unique, &actual.Columns, &actual.Where,
+	); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return false, nil
 		}
 		return false, err
 	}
-	return valid, nil
+	actual.Name = expected.Name
+	return valid && sameConcurrentIndexDefinition(expected, actual), nil
+}
+
+func sameConcurrentIndexDefinition(expected, actual concurrentIndexDefinition) bool {
+	if expected.Schema != actual.Schema || expected.Name != actual.Name || expected.Table != actual.Table || expected.Method != actual.Method || expected.Unique != actual.Unique || normalizeIndexPredicate(expected.Where) != normalizeIndexPredicate(actual.Where) || len(expected.Columns) != len(actual.Columns) {
+		return false
+	}
+	for index := range expected.Columns {
+		if expected.Columns[index] != actual.Columns[index] {
+			return false
+		}
+	}
+	return true
+}
+
+func normalizeIndexPredicate(predicate string) string {
+	predicate = strings.ToLower(strings.Join(strings.Fields(predicate), " "))
+	for strings.HasPrefix(predicate, "(") && strings.HasSuffix(predicate, ")") {
+		predicate = strings.TrimSpace(predicate[1 : len(predicate)-1])
+	}
+	return predicate
 }
 
 func discoverMigrations(directory string) ([]migration, error) {
@@ -318,7 +376,7 @@ func transactionalSQL(sql string) (string, error) {
 	words := sqlWords(sql)
 	hasTransactionControl := false
 	for _, word := range words {
-		if word == "BEGIN" || word == "COMMIT" || word == "ROLLBACK" || word == "START" {
+		if word == "BEGIN" || word == "COMMIT" || word == "END" || word == "ROLLBACK" || word == "ABORT" || word == "START" || word == "SAVEPOINT" || word == "RELEASE" || word == "PREPARE" || word == "SET" {
 			hasTransactionControl = true
 			break
 		}
@@ -354,7 +412,7 @@ func createsIndexConcurrently(sql string) bool {
 	return found
 }
 
-func concurrentIndexTarget(sql string) (string, bool, error) {
+func concurrentIndexTarget(sql string) (concurrentIndexDefinition, bool, error) {
 	words := sqlWords(sql)
 	found := false
 	for index := 0; index < len(words); index++ {
@@ -371,13 +429,33 @@ func concurrentIndexTarget(sql string) (string, bool, error) {
 		}
 	}
 	if !found {
-		return "", false, nil
+		return concurrentIndexDefinition{}, false, nil
 	}
 	match := concurrentIndexStatement.FindStringSubmatch(sql)
 	if match == nil {
-		return "", true, errors.New("concurrent migration must contain exactly one unquoted CREATE INDEX CONCURRENTLY statement")
+		return concurrentIndexDefinition{}, true, errors.New("concurrent migration must contain exactly one supported unquoted CREATE INDEX CONCURRENTLY statement")
 	}
-	return match[1], true, nil
+	method := strings.ToLower(match[6])
+	if method == "" {
+		method = "btree"
+	}
+	indexSchema := strings.ToLower(match[2])
+	tableSchema := strings.ToLower(match[4])
+	if indexSchema != "" && tableSchema != "" && indexSchema != tableSchema {
+		return concurrentIndexDefinition{}, true, errors.New("concurrent index schema must match its table schema")
+	}
+	if indexSchema == "" {
+		indexSchema = tableSchema
+	}
+	return concurrentIndexDefinition{
+		Schema:  indexSchema,
+		Name:    strings.ToLower(match[3]),
+		Table:   strings.ToLower(match[5]),
+		Method:  method,
+		Unique:  match[1] != "",
+		Columns: strings.FieldsFunc(strings.ToLower(match[7]), func(r rune) bool { return r == ',' || unicode.IsSpace(r) }),
+		Where:   normalizeIndexPredicate(match[8]),
+	}, true, nil
 }
 
 func sqlWords(sql string) []string {
