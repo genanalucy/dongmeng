@@ -473,6 +473,77 @@ func TestSessionAuthorizationRejectsTokenWithNonTranslationScopeBeforeProviderSt
 	}
 }
 
+func TestSessionAuthorizationRejectsEveryInvalidTokenBeforeProviderStart(t *testing.T) {
+	now := time.Now().UTC()
+	tests := []struct {
+		name      string
+		key       []byte
+		issuer    string
+		audience  string
+		expiresAt time.Time
+		scope     *string
+		userID    string
+		sessionID string
+		installID string
+	}{
+		{name: "missing scope", key: testSessionKey, issuer: testIssuer, audience: testAudience, expiresAt: now.Add(5 * time.Minute), userID: testUserID, sessionID: testSessionID, installID: testInstallID},
+		{name: "wrong scope", key: testSessionKey, issuer: testIssuer, audience: testAudience, expiresAt: now.Add(5 * time.Minute), scope: stringPointer("api"), userID: testUserID, sessionID: testSessionID, installID: testInstallID},
+		{name: "wrong issuer", key: testSessionKey, issuer: "other-api", audience: testAudience, expiresAt: now.Add(5 * time.Minute), scope: stringPointer("translation"), userID: testUserID, sessionID: testSessionID, installID: testInstallID},
+		{name: "wrong audience", key: testSessionKey, issuer: testIssuer, audience: "other-agent", expiresAt: now.Add(5 * time.Minute), scope: stringPointer("translation"), userID: testUserID, sessionID: testSessionID, installID: testInstallID},
+		{name: "expired", key: testSessionKey, issuer: testIssuer, audience: testAudience, expiresAt: now.Add(-time.Minute), scope: stringPointer("translation"), userID: testUserID, sessionID: testSessionID, installID: testInstallID},
+		{name: "wrong signature", key: []byte("abcdef0123456789abcdef0123456789"), issuer: testIssuer, audience: testAudience, expiresAt: now.Add(5 * time.Minute), scope: stringPointer("translation"), userID: testUserID, sessionID: testSessionID, installID: testInstallID},
+		{name: "wrong user", key: testSessionKey, issuer: testIssuer, audience: testAudience, expiresAt: now.Add(5 * time.Minute), scope: stringPointer("translation"), userID: "other-user", sessionID: testSessionID, installID: testInstallID},
+		{name: "wrong session", key: testSessionKey, issuer: testIssuer, audience: testAudience, expiresAt: now.Add(5 * time.Minute), scope: stringPointer("translation"), userID: testUserID, sessionID: "123e4567-e89b-12d3-a456-426614174001", installID: testInstallID},
+		{name: "wrong install", key: testSessionKey, issuer: testIssuer, audience: testAudience, expiresAt: now.Add(5 * time.Minute), scope: stringPointer("translation"), userID: testUserID, sessionID: testSessionID, installID: "other-install"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fake := &fakeClient{}
+			var logs bytes.Buffer
+			ts := testAuthorizedHTTPServer(t, fake, slog.New(slog.NewTextHandler(&logs, nil)))
+			defer ts.Close()
+			token := signSessionTokenClaims(t, tt.key, tt.issuer, tt.audience, tt.expiresAt, tt.scope, tt.userID, tt.sessionID, tt.installID)
+			conn := dialWithProtocols(t, ts.URL, "http://localhost:5173", []string{SessionSubprotocol, SessionTokenProtocolPrefix + token})
+			defer conn.CloseNow()
+			startAuthorized(t, conn, nil)
+			if event := readEvent(t, conn); event.Type != "error" || event.Code != "TRANSLATION_AUTH_INVALID" || event.Message != "translation session authorization failed" {
+				t.Fatalf("event = %#v", event)
+			}
+			if fake.starts() != 0 {
+				t.Fatalf("provider started %d times", fake.starts())
+			}
+			if strings.Contains(logs.String(), token) {
+				t.Fatal("server log leaked session token")
+			}
+		})
+	}
+}
+
+func TestSessionAuthorizationRejectsDisallowedSubprotocolBeforeProviderStart(t *testing.T) {
+	fake := &fakeClient{}
+	ts := testAuthorizedHTTPServer(t, fake, nil)
+	defer ts.Close()
+	token := signSessionToken(t, testSessionKey, testUserID, testSessionID, testInstallID)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	_, response, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(ts.URL, "http")+"/ws/translate", &websocket.DialOptions{
+		HTTPHeader:   http.Header{"Origin": {"http://localhost:5173"}},
+		Subprotocols: []string{SessionSubprotocol, "bearer." + token},
+	})
+	if err == nil || response == nil || response.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("response = (%v, %#v), want 401", err, response)
+	}
+	body, readErr := io.ReadAll(response.Body)
+	response.Body.Close()
+	if readErr != nil || strings.Contains(string(body), token) || response.Header.Get("Sec-WebSocket-Protocol") != "" {
+		t.Fatalf("rejection leaked credential or failed to read: %v", readErr)
+	}
+	if fake.starts() != 0 {
+		t.Fatalf("provider started %d times", fake.starts())
+	}
+}
+
 func TestSessionAuthorizationRequiresStartBindings(t *testing.T) {
 	for _, updates := range []map[string]any{{"userId": ""}, {"installId": ""}} {
 		fake := &fakeClient{}
@@ -695,12 +766,19 @@ func signSessionToken(t *testing.T, key []byte, userID, sessionID, installID str
 
 func signSessionTokenWithScope(t *testing.T, key []byte, userID, sessionID, installID, scope string) string {
 	t.Helper()
+	return signSessionTokenClaims(t, key, testIssuer, testAudience, time.Now().UTC().Add(5*time.Minute), &scope, userID, sessionID, installID)
+}
+
+func signSessionTokenClaims(t *testing.T, key []byte, issuer, audience string, expiresAt time.Time, scope *string, userID, sessionID, installID string) string {
+	t.Helper()
 	now := time.Now().UTC()
 	claims := jwt.MapClaims{
-		"iss": testIssuer, "sub": userID, "aud": []string{testAudience},
-		"iat": now.Unix(), "exp": now.Add(5 * time.Minute).Unix(),
+		"iss": issuer, "sub": userID, "aud": []string{audience},
+		"iat": now.Unix(), "exp": expiresAt.Unix(),
 		"user_id": userID, "session_id": sessionID, "install_id": installID,
-		"scope": scope,
+	}
+	if scope != nil {
+		claims["scope"] = *scope
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	token.Header["typ"] = sessionauth.TokenType
@@ -710,5 +788,7 @@ func signSessionTokenWithScope(t *testing.T, key []byte, userID, sessionID, inst
 	}
 	return signed
 }
+
+func stringPointer(value string) *string { return &value }
 
 var _ = errors.New
