@@ -38,6 +38,8 @@ const (
 // the DSN and its credentials.
 var ErrUnsafeDatabaseTarget = errors.New("migration database target is not approved")
 
+var errUnsupportedSQLQuoting = errors.New("migration contains unsupported SQL quoting")
+
 // Config identifies an explicit database and a directory containing only the
 // repository's migration files. Run applies up migrations only.
 type Config struct {
@@ -69,6 +71,8 @@ type concurrentIndexDefinition struct {
 	DefaultCollations     bool
 	DefaultSortOrder      bool
 	NoPredicate           bool
+	NullsNotDistinct      bool
+	Immediate             bool
 }
 
 // ValidateDatabaseURL permits exactly the host test listener or, when called
@@ -254,15 +258,15 @@ func apply(ctx context.Context, connection *pgxpool.Conn, ledger, schema string,
 		_, err = connection.Exec(ctx, "INSERT INTO "+ledger+" (version, checksum) VALUES ($1, $2)", candidate.Version, candidate.Checksum)
 		return err
 	}
+	sql, err := transactionalSQL(candidate.SQL)
+	if err != nil {
+		return err
+	}
 	transaction, err := connection.Begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = transaction.Rollback(ctx) }()
-	sql, err := transactionalSQL(candidate.SQL)
-	if err != nil {
-		return err
-	}
 	if _, err := transaction.Exec(ctx, sql); err != nil {
 		return err
 	}
@@ -282,6 +286,8 @@ SELECT i.indisvalid,
        table_class.relname,
        access_method.amname,
        i.indisunique,
+       i.indnullsnotdistinct,
+       i.indimmediate,
        i.indnkeyatts,
        i.indnatts - i.indnkeyatts,
        COALESCE(array_agg(attribute.attname ORDER BY key_column.ordinality) FILTER (WHERE key_column.ordinality <= i.indnkeyatts), ARRAY[]::text[]),
@@ -299,10 +305,10 @@ LEFT JOIN LATERAL unnest(i.indkey::smallint[], i.indclass::oid[], i.indcollation
 LEFT JOIN pg_catalog.pg_attribute attribute ON attribute.attrelid = table_class.oid AND attribute.attnum = key_column.attnum
 LEFT JOIN pg_catalog.pg_opclass opclass ON opclass.oid = key_column.opclass_oid
 WHERE index_namespace.nspname = $1 AND index_class.relname = $2
-GROUP BY i.indisvalid, table_namespace.nspname, table_class.relname, access_method.amname, i.indisunique, i.indnkeyatts, i.indnatts, i.indpred`
+GROUP BY i.indisvalid, table_namespace.nspname, table_class.relname, access_method.amname, i.indisunique, i.indnullsnotdistinct, i.indimmediate, i.indnkeyatts, i.indnatts, i.indpred`
 	var actual concurrentIndexDefinition
 	if err := connection.QueryRow(ctx, indexDefinition, expected.Schema, expected.Name).Scan(
-		&actual.Valid, &actual.Schema, &actual.Table, &actual.Method, &actual.Unique, &actual.KeyCount, &actual.IncludeCount, &actual.Columns,
+		&actual.Valid, &actual.Schema, &actual.Table, &actual.Method, &actual.Unique, &actual.NullsNotDistinct, &actual.Immediate, &actual.KeyCount, &actual.IncludeCount, &actual.Columns,
 		&actual.DefaultBtreeOpclasses, &actual.DefaultCollations, &actual.DefaultSortOrder, &actual.NoPredicate,
 	); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -315,7 +321,7 @@ GROUP BY i.indisvalid, table_namespace.nspname, table_class.relname, access_meth
 }
 
 func sameConcurrentIndexDefinition(expected, actual concurrentIndexDefinition) bool {
-	if !actual.Valid || actual.KeyCount != len(expected.Columns) || actual.IncludeCount != 0 || !actual.DefaultBtreeOpclasses || !actual.DefaultCollations || !actual.DefaultSortOrder || !actual.NoPredicate || expected.Schema != actual.Schema || expected.Name != actual.Name || expected.Table != actual.Table || expected.Method != "btree" || actual.Method != "btree" || expected.Unique != actual.Unique || len(expected.Columns) != len(actual.Columns) {
+	if !actual.Valid || actual.KeyCount != len(expected.Columns) || actual.IncludeCount != 0 || !actual.DefaultBtreeOpclasses || !actual.DefaultCollations || !actual.DefaultSortOrder || !actual.NoPredicate || expected.Schema != actual.Schema || expected.Name != actual.Name || expected.Table != actual.Table || expected.Method != "btree" || actual.Method != "btree" || expected.Unique != actual.Unique || expected.NullsNotDistinct != actual.NullsNotDistinct || expected.Immediate != actual.Immediate || len(expected.Columns) != len(actual.Columns) {
 		return false
 	}
 	for index := range expected.Columns {
@@ -376,12 +382,19 @@ func discoverMigrations(directory string) ([]migration, error) {
 // outer transaction envelope. Any other transaction-control statement is
 // refused, preventing runner-managed transactions from being committed early.
 func transactionalSQL(sql string) (string, error) {
-	words := sqlWords(sql)
+	words, err := sqlWords(sql)
+	if err != nil {
+		return "", err
+	}
 	if !hasTransactionControl(words) {
 		return sql, nil
 	}
 	match := transactionEnvelope.FindStringSubmatch(sql)
-	if match == nil || hasTransactionControl(sqlWords(match[1])) {
+	if match == nil {
+		return "", errors.New("migration contains unsupported transaction control")
+	}
+	bodyWords, err := sqlWords(match[1])
+	if err != nil || hasTransactionControl(bodyWords) {
 		return "", errors.New("migration contains unsupported transaction control")
 	}
 	return match[1], nil
@@ -419,7 +432,10 @@ func createsIndexConcurrently(sql string) bool {
 }
 
 func concurrentIndexTarget(sql string) (concurrentIndexDefinition, bool, error) {
-	words := sqlWords(sql)
+	words, err := sqlWords(sql)
+	if err != nil {
+		return concurrentIndexDefinition{}, false, err
+	}
 	found := false
 	for index := 0; index < len(words); index++ {
 		if words[index] != "CREATE" || index+2 >= len(words) {
@@ -457,16 +473,21 @@ func concurrentIndexTarget(sql string) (concurrentIndexDefinition, bool, error) 
 		indexSchema = tableSchema
 	}
 	return concurrentIndexDefinition{
-		Schema:  indexSchema,
-		Name:    strings.ToLower(match[3]),
-		Table:   strings.ToLower(match[5]),
-		Method:  method,
-		Unique:  match[1] != "",
-		Columns: strings.FieldsFunc(strings.ToLower(match[7]), func(r rune) bool { return r == ',' || unicode.IsSpace(r) }),
+		Schema:           indexSchema,
+		Name:             strings.ToLower(match[3]),
+		Table:            strings.ToLower(match[5]),
+		Method:           method,
+		Unique:           match[1] != "",
+		Columns:          strings.FieldsFunc(strings.ToLower(match[7]), func(r rune) bool { return r == ',' || unicode.IsSpace(r) }),
+		NullsNotDistinct: false,
+		Immediate:        true,
 	}, true, nil
 }
 
-func sqlWords(sql string) []string {
+// sqlWords returns executable SQL words while skipping lexical forms that this
+// restricted migration grammar permits. Escape and Unicode-escape strings are
+// rejected instead of partially emulating PostgreSQL escape semantics.
+func sqlWords(sql string) ([]string, error) {
 	words := make([]string, 0)
 	for index := 0; index < len(sql); {
 		switch {
@@ -474,35 +495,32 @@ func sqlWords(sql string) []string {
 			if newline := strings.IndexByte(sql[index:], '\n'); newline >= 0 {
 				index += newline + 1
 			} else {
-				return words
+				return words, nil
 			}
 		case strings.HasPrefix(sql[index:], "/*"):
-			if end := strings.Index(sql[index+2:], "*/"); end >= 0 {
-				index += end + 4
-			} else {
-				return words
+			next, ok := blockCommentEnd(sql, index)
+			if !ok {
+				return nil, errUnsupportedSQLQuoting
 			}
+			index = next
+		case isEscapeStringPrefix(sql, index) || isUnicodeEscapePrefix(sql, index):
+			return nil, errUnsupportedSQLQuoting
 		case sql[index] == '\'' || sql[index] == '"':
-			quote := sql[index]
-			index++
-			for index < len(sql) {
-				if sql[index] == quote {
-					index++
-					if quote == '\'' && index < len(sql) && sql[index] == '\'' {
-						index++
-						continue
-					}
-					break
-				}
-				index++
+			next, ok := quotedEnd(sql, index)
+			if !ok {
+				return nil, errUnsupportedSQLQuoting
 			}
+			index = next
 		case sql[index] == '$':
-			if end := dollarQuoteEnd(sql[index:]); end != "" {
-				start := index + len(end)
-				if close := strings.Index(sql[start:], end); close >= 0 {
-					index = start + close + len(end)
-					continue
+			delimiter := dollarQuoteEnd(sql[index:])
+			if (index == 0 || !sqlIdentifierByte(sql[index-1])) && delimiter != "" {
+				start := index + len(delimiter)
+				close := strings.Index(sql[start:], delimiter)
+				if close < 0 {
+					return nil, errUnsupportedSQLQuoting
 				}
+				index = start + close + len(delimiter)
+				continue
 			}
 			index++
 		case unicode.IsLetter(rune(sql[index])):
@@ -515,20 +533,79 @@ func sqlWords(sql string) []string {
 			index++
 		}
 	}
-	return words
+	return words, nil
+}
+
+func blockCommentEnd(sql string, start int) (int, bool) {
+	depth := 1
+	for index := start + 2; index < len(sql)-1; index++ {
+		switch sql[index : index+2] {
+		case "/*":
+			depth++
+			index++
+		case "*/":
+			depth--
+			index++
+			if depth == 0 {
+				return index + 1, true
+			}
+		}
+	}
+	return 0, false
+}
+
+func quotedEnd(sql string, start int) (int, bool) {
+	quote := sql[start]
+	for index := start + 1; index < len(sql); index++ {
+		if sql[index] != quote {
+			continue
+		}
+		if index+1 < len(sql) && sql[index+1] == quote {
+			index++
+			continue
+		}
+		return index + 1, true
+	}
+	return 0, false
+}
+
+func isEscapeStringPrefix(sql string, index int) bool {
+	return index+1 < len(sql) && (sql[index] == 'E' || sql[index] == 'e') && sql[index+1] == '\'' && (index == 0 || !sqlIdentifierByte(sql[index-1]))
+}
+
+func isUnicodeEscapePrefix(sql string, index int) bool {
+	return index+2 < len(sql) && (sql[index] == 'U' || sql[index] == 'u') && sql[index+1] == '&' && (sql[index+2] == '\'' || sql[index+2] == '"') && (index == 0 || !sqlIdentifierByte(sql[index-1]))
+}
+
+func sqlIdentifierByte(value byte) bool {
+	return value == '_' || value == '$' || value >= 0x80 || (value >= 'a' && value <= 'z') || (value >= 'A' && value <= 'Z') || (value >= '0' && value <= '9')
 }
 
 func dollarQuoteEnd(sql string) string {
-	if !strings.HasPrefix(sql, "$") {
+	if len(sql) < 2 || sql[0] != '$' {
 		return ""
 	}
-	for index := 1; index < len(sql); index++ {
+	if sql[1] == '$' {
+		return "$$"
+	}
+	if !isDollarQuoteTagStart(sql[1]) {
+		return ""
+	}
+	for index := 2; index < len(sql); index++ {
 		if sql[index] == '$' {
 			return sql[:index+1]
 		}
-		if !unicode.IsLetter(rune(sql[index])) && !unicode.IsDigit(rune(sql[index])) && sql[index] != '_' {
+		if !isDollarQuoteTagByte(sql[index]) {
 			return ""
 		}
 	}
 	return ""
+}
+
+func isDollarQuoteTagStart(value byte) bool {
+	return value == '_' || (value >= 'a' && value <= 'z') || (value >= 'A' && value <= 'Z')
+}
+
+func isDollarQuoteTagByte(value byte) bool {
+	return isDollarQuoteTagStart(value) || (value >= '0' && value <= '9')
 }

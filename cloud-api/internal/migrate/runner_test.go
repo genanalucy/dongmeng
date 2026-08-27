@@ -90,7 +90,7 @@ func TestRepositoryMigrationsClassifyConcurrentIndexOutsideTransaction(t *testin
 		t.Fatalf("transaction strategies = [%t %t %t], want [false true false]", migrations[0].OutsideTransaction, migrations[1].OutsideTransaction, migrations[2].OutsideTransaction)
 	}
 	index := migrations[1].ConcurrentIndex
-	if index.Name != "refresh_tokens_expiry_idx" || index.Table != "refresh_tokens" || index.Method != "btree" || index.Unique || strings.Join(index.Columns, ",") != "expires_at,id" {
+	if index.Name != "refresh_tokens_expiry_idx" || index.Table != "refresh_tokens" || index.Method != "btree" || index.Unique || index.NullsNotDistinct || !index.Immediate || strings.Join(index.Columns, ",") != "expires_at,id" {
 		t.Fatalf("unexpected repository concurrent index definition: %#v", index)
 	}
 }
@@ -142,6 +142,31 @@ func TestTransactionalSQLAcceptsOnlyOneOuterEnvelope(t *testing.T) {
 	if _, err := transactionalSQL("CREATE FUNCTION f() RETURNS void LANGUAGE plpgsql AS $$ BEGIN RAISE NOTICE 'ok'; END; $$;"); err != nil {
 		t.Fatalf("transaction words in a dollar-quoted function body were rejected: %v", err)
 	}
+	for _, sql := range []string{
+		"CREATE TABLE e_identifier(id integer);",
+		"CREATE TABLE users(e text);",
+		"SELECT identifierE'ordinary string';",
+		"SELECT identifier$tag$not a dollar quote$tag$;",
+	} {
+		if _, err := transactionalSQL(sql); err != nil {
+			t.Fatalf("identifier content was treated as a string prefix: %q: %v", sql, err)
+		}
+	}
+}
+
+func TestTransactionalSQLRejectsEscapeStrings(t *testing.T) {
+	for _, sql := range []string{
+		"SELECT E'ordinary escape string';",
+		"SELECT e'ordinary escape string';",
+		"SELECT U&'unicode escape string';",
+		"SELECT u&\"unicode quoted identifier\";",
+		"BEGIN; SELECT E'foo\\'bar'; COMMIT; CREATE TABLE committed_without_ledger(id integer); COMMIT;",
+	} {
+		body, err := transactionalSQL(sql)
+		if err == nil || body != "" {
+			t.Fatalf("escape string was not rejected before execution: sql=%q body=%q error=%v", sql, body, err)
+		}
+	}
 }
 
 func TestConcurrentIndexTargetParsesOnlyVerifiableDefinitions(t *testing.T) {
@@ -149,7 +174,7 @@ func TestConcurrentIndexTargetParsesOnlyVerifiableDefinitions(t *testing.T) {
 	if err != nil || !found {
 		t.Fatalf("concurrent index definition was not parsed: found=%t error=%v", found, err)
 	}
-	if definition.Name != "events_active_idx" || definition.Schema != "app" || definition.Table != "events" || definition.Method != "btree" || !definition.Unique || strings.Join(definition.Columns, ",") != "user_id,created_at" {
+	if definition.Name != "events_active_idx" || definition.Schema != "app" || definition.Table != "events" || definition.Method != "btree" || !definition.Unique || definition.NullsNotDistinct || !definition.Immediate || strings.Join(definition.Columns, ",") != "user_id,created_at" {
 		t.Fatalf("unexpected concurrent index definition: %#v", definition)
 	}
 	for _, sql := range []string{
@@ -169,7 +194,7 @@ func TestConcurrentIndexTargetParsesOnlyVerifiableDefinitions(t *testing.T) {
 
 func TestSameConcurrentIndexDefinitionFailsClosedOnUnexpectedCatalogState(t *testing.T) {
 	expected := concurrentIndexDefinition{
-		Schema: "app", Name: "events_email_id_idx", Table: "events", Method: "btree", Columns: []string{"email", "id"},
+		Schema: "app", Name: "events_email_id_idx", Table: "events", Method: "btree", Columns: []string{"email", "id"}, Immediate: true,
 	}
 	actual := expected
 	actual.KeyCount = 1
@@ -199,6 +224,8 @@ func TestSameConcurrentIndexDefinitionFailsClosedOnUnexpectedCatalogState(t *tes
 		func(definition *concurrentIndexDefinition) { definition.DefaultCollations = false },
 		func(definition *concurrentIndexDefinition) { definition.DefaultSortOrder = false },
 		func(definition *concurrentIndexDefinition) { definition.NoPredicate = false },
+		func(definition *concurrentIndexDefinition) { definition.NullsNotDistinct = true },
+		func(definition *concurrentIndexDefinition) { definition.Immediate = false },
 		func(definition *concurrentIndexDefinition) { definition.Columns[1] = "other_id" },
 	} {
 		mismatched := actual
@@ -441,6 +468,31 @@ func TestRunRejectsMismatchedOrInvalidConcurrentIndexBeforeLedgerAndRecovers(t *
 	if err := conn.QueryRow(ctx, "SELECT count(*) FROM "+quoteIdentifier(schema)+".schema_migrations").Scan(&count); err != nil || count != 1 {
 		t.Fatal("recovered concurrent migration was not recorded exactly once")
 	}
+}
+
+func TestRunRejectsNullsNotDistinctConcurrentIndexBeforeLedger(t *testing.T) {
+	dsn := isolatedTestDSN(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	conn, schema := openMigrationTestSchema(t, ctx, dsn)
+	var serverVersion int
+	if err := conn.QueryRow(ctx, "SHOW server_version_num").Scan(&serverVersion); err != nil {
+		t.Fatal("read PostgreSQL server version")
+	}
+	if serverVersion < 150000 {
+		t.Skipf("PostgreSQL %d does not support NULLS NOT DISTINCT indexes; skipping capability-specific case", serverVersion)
+	}
+	if _, err := conn.Exec(ctx, "CREATE TABLE "+quoteIdentifier(schema)+".events(id integer PRIMARY KEY, email text)"); err != nil {
+		t.Fatal("create NULLS NOT DISTINCT fixture table")
+	}
+	directory := writeMigrations(t, map[string]string{
+		"000001_concurrent.up.sql": "CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS events_email_idx ON events (email);\n",
+	})
+	config := Config{DatabaseURL: dsn, Directory: directory, Schema: schema}
+	if _, err := conn.Exec(ctx, "CREATE UNIQUE INDEX "+quoteIdentifier(schema)+".events_email_idx ON "+quoteIdentifier(schema)+".events(email) NULLS NOT DISTINCT"); err != nil {
+		t.Fatal("create same-name NULLS NOT DISTINCT index")
+	}
+	assertConcurrentMigrationNotLedgered(t, ctx, conn, config, schema)
 }
 
 func assertConcurrentMigrationNotLedgered(t *testing.T, ctx context.Context, conn *pgx.Conn, config Config, schema string) {
