@@ -14,9 +14,21 @@ services:
       retries: 20
     volumes:
       - cloud-postgres-data:/var/lib/postgresql/data
-      - ./migrations/000001_init.up.sql:/docker-entrypoint-initdb.d/000001_init.sql:ro
-      - ./migrations/000002_refresh_tokens_expiry_idx.up.sql:/docker-entrypoint-initdb.d/000002_refresh_tokens_expiry_idx.sql:ro
-      - ./migrations/000003_business_lifecycle.up.sql:/docker-entrypoint-initdb.d/000003_business_lifecycle.sql:ro
+
+  migrate:
+    image: golang:1.25-alpine
+    working_dir: /workspace
+    command:
+      ["go", "run", "./cmd/migrate", "up", "-database-url", "postgres://cloud:cloud-dev-only@postgres:5432/cloud?sslmode=disable", "-migrations-dir", "/migrations"]
+    environment:
+      GOTOOLCHAIN: local
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./cloud-api:/workspace:ro
+      - ./migrations:/migrations:ro
+      - cloud-go-mod-cache:/go/pkg/mod
 
   cloud-api:
     image: golang:1.25-alpine
@@ -33,8 +45,8 @@ services:
     ports:
       - "127.0.0.1:8080:8080"
     depends_on:
-      postgres:
-        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     volumes:
       - ./cloud-api:/workspace:ro
       - cloud-go-mod-cache:/go/pkg/mod
