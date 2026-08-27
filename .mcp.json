@@ -6,6 +6,12 @@
       "environment": {
         "CBM_CACHE_DIR": ".codebase-memory/cache"
       }
+    },
+    "codegraph": {
+      "command": "npx",
+      "args": ["--yes", "@colbymchenry/codegraph@1.6.0", "serve", "--mcp"],
+      "cwd": "/home/genanalucy/dngmeng_project",
+      "lifecycle": "lazy"
     }
   }
 }

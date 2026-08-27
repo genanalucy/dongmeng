@@ -21,3 +21,6 @@ api/*.csv
 # Python bytecode caches
 __pycache__/
 *.py[cod]
+
+# Local CodeGraph index
+.codegraph/

@@ -21,3 +21,14 @@ ALWAYS prefer MCP graph tools over grep/glob/file-search for code discovery.
 - Who calls it: `trace_path(function_name="OrderHandler", direction="inbound")`
 - Read source: `get_code_snippet(qualified_name="pkg/orders.OrderHandler")`
 <!-- codebase-memory-mcp:end -->
+
+## superpowers skills overrides
+
+### subagent-driven-development
+
+Modified agent selection and escalation flow:
+
+1. **BLOCKED** → Orchestrator collects fix_hint, escalates via `subagent_type: expert`
+2. **`expert` subagent BLOCKED** → mark task failed, return to user
+
+Otherwise follow the skill exactly as written.
