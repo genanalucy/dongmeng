@@ -456,6 +456,23 @@ func TestSessionAuthorizationRejectsInvalidOrMismatchedTokenWithoutLeakingIt(t *
 	}
 }
 
+func TestSessionAuthorizationRejectsTokenWithNonTranslationScopeBeforeProviderStart(t *testing.T) {
+	fake := &fakeClient{}
+	ts := testAuthorizedHTTPServer(t, fake, nil)
+	defer ts.Close()
+	token := signSessionTokenWithScope(t, testSessionKey, testUserID, testSessionID, testInstallID, "api")
+
+	conn := dialWithProtocols(t, ts.URL, "http://localhost:5173", []string{SessionSubprotocol, SessionTokenProtocolPrefix + token})
+	defer conn.CloseNow()
+	startAuthorized(t, conn, nil)
+	if event := readEvent(t, conn); event.Type != "error" || event.Code != "TRANSLATION_AUTH_INVALID" {
+		t.Fatalf("event = %#v", event)
+	}
+	if fake.starts() != 0 {
+		t.Fatalf("provider started %d times", fake.starts())
+	}
+}
+
 func TestSessionAuthorizationRequiresStartBindings(t *testing.T) {
 	for _, updates := range []map[string]any{{"userId": ""}, {"installId": ""}} {
 		fake := &fakeClient{}
@@ -673,13 +690,17 @@ func TestUnavailableCodecNeverSendsReady(t *testing.T) {
 
 func signSessionToken(t *testing.T, key []byte, userID, sessionID, installID string) string {
 	t.Helper()
+	return signSessionTokenWithScope(t, key, userID, sessionID, installID, "translation")
+}
+
+func signSessionTokenWithScope(t *testing.T, key []byte, userID, sessionID, installID, scope string) string {
+	t.Helper()
 	now := time.Now().UTC()
-	claims := sessionauth.Claims{
-		UserID: userID, SessionID: sessionID, InstallID: installID,
-		RegisteredClaims: jwt.RegisteredClaims{
-			Issuer: testIssuer, Subject: userID, Audience: jwt.ClaimStrings{testAudience},
-			IssuedAt: jwt.NewNumericDate(now), ExpiresAt: jwt.NewNumericDate(now.Add(5 * time.Minute)),
-		},
+	claims := jwt.MapClaims{
+		"iss": testIssuer, "sub": userID, "aud": []string{testAudience},
+		"iat": now.Unix(), "exp": now.Add(5 * time.Minute).Unix(),
+		"user_id": userID, "session_id": sessionID, "install_id": installID,
+		"scope": scope,
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	token.Header["typ"] = sessionauth.TokenType

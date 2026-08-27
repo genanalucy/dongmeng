@@ -83,7 +83,7 @@ zh ↔ en                    → Volcengine AST
 ```text
 客户端 → Agent
 - 文本 start JSON
-- PCM16 二进制音频包（16 kHz，20 ms，2560 bytes）
+- PCM16 二进制音频包（16 kHz，80 ms，2560 bytes）
 - finish JSON
 
 Agent → 客户端

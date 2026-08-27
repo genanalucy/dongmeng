@@ -1,0 +1,60 @@
+# Cloud API
+
+Base URL: `http://127.0.0.1:8080`. All JSON errors are `{ "error": "code", "request_id": "..." }`; every response has `X-Request-ID`. Business responses use `Cache-Control: no-store`. Bearer credentials, refresh tokens, request bodies, query strings and client IPs are excluded from access logs.
+
+## Public
+
+| Method | Path | Body | Result |
+|---|---|---|---|
+| POST | `/api/v1/auth/register` | `email`, `password` | `201 user, trial_entitlement`; creates the user and fixed 3-day trial atomically |
+| POST | `/api/v1/auth/login` | `email`, `password` | access/refresh token pair |
+| POST | `/api/v1/auth/refresh` | `refresh_token` | rotated pair; replay revokes the complete refresh family |
+| GET | `/healthz`, `/api/v1/health` | | liveness |
+| GET | `/readyz`, `/api/v1/ready` | | PostgreSQL readiness |
+| GET | `/api/v1/config` | | non-secret service metadata |
+
+## Authenticated user
+
+All endpoints below require exactly one `Authorization: Bearer <access JWT>`.
+
+| Method | Path | Body / Result |
+|---|---|---|
+| POST | `/api/v1/auth/logout` | `refresh_token`; revokes its family |
+| GET | `/api/v1/users/me` | current user |
+| GET | `/api/v1/users/me/devices` | devices observed from persisted `install_id` values |
+| GET | `/api/v1/entitlements/current` | active, non-revoked entitlement |
+| POST | `/api/v1/redemptions` | `code`; one-time canonicalized code redemption creates a fixed 365-day entitlement |
+| POST/GET | `/api/v1/translation-sessions` | POST requires an opaque client `install_id`; one active session per user; GET lists caller-owned sessions |
+| POST | `/api/v1/translation-sessions/{sessionID}/end` | ends caller-owned session |
+| POST | `/api/v1/translation-sessions/{sessionID}/revoke` | revokes caller-owned session |
+| POST | `/api/v1/usage-records` | `session_id`, non-negative `audio_seconds`, `characters`; owner FK prevents cross-user writes |
+| POST | `/api/v1/feedback/consents` | `granted` |
+| POST | `/api/v1/feedback/artifacts` | `consent_id`, `object_key`; consent ownership is enforced, retention is exactly 14 days |
+| GET | `/api/v1/feedback/artifacts/{artifactID}` | caller-owned artifact only |
+
+## Admin
+
+Admin access JWT only. All mutations append an immutable audit record.
+
+- `GET /api/v1/admin/users?q=<email>&limit=&offset=` — bounded email search.
+- `POST /api/v1/admin/users/{userID}/disable`
+- `GET /api/v1/admin/users/{userID}/translation-sessions?limit=&offset=`
+- `GET /api/v1/admin/users/{userID}/usage-records?limit=&offset=`
+- `POST /api/v1/admin/users/{userID}/entitlements` — grant a stacked 365-day entitlement.
+- `POST /api/v1/admin/users/{userID}/entitlements/{entitlementID}/revoke`
+- `POST /api/v1/admin/code-batches` — `{ "name": "…", "count": 1..1000 }`; response includes plaintext codes once only.
+- `GET /api/v1/admin/audit-logs?limit=&offset=`
+
+## Translation JWT / main Agent contract
+
+`POST /api/v1/translation-sessions` returns a short-lived token signed with the distinct session HMAC key:
+
+- `alg=HS256`, `typ=translation_session`, one configured `iss` and `aud`;
+- `sub == user_id`, plus `user_id`, `session_id`, `install_id`, `entitlement_id`, `scope=translation`, `iat`, `nbf`, `exp`, `jti`;
+- `install_id` is provided by the client and stored on the session/device; **it is never an entitlement ID**.
+
+Use it only in the Agent WebSocket protocols `translation.v1` and `translation.jwt.<token>`, with matching `start.userId`, `start.sessionId`, and `start.installId`.
+
+## Runtime configuration
+
+`TOKEN_ISSUER`, `ACCESS_TOKEN_AUDIENCE`, `TRANSLATION_SESSION_AUDIENCE`, `ACCESS_TOKEN_HS256_KEY`, and `TRANSLATION_SESSION_HS256_KEY` are mandatory. Audiences and keys must be distinct; both keys require at least 32 bytes. Production secret injection must supply the keys—do not commit or log them.

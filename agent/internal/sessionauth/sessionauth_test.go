@@ -145,6 +145,21 @@ func TestVerifyStrictlyChecksIdentityAndPurposeClaims(t *testing.T) {
 	}
 }
 
+func TestVerifyRejectsTranslationSessionTokenWithMissingOrWrongScope(t *testing.T) {
+	verifier := newTestVerifier(t)
+	for _, scope := range []string{"", "api"} {
+		t.Run("scope="+scope, func(t *testing.T) {
+			token := signMapClaimsToken(t, jwt.MapClaims{
+				"iss": testIssuer, "sub": testUserID, "aud": []string{testAudience},
+				"iat": testNow.Unix(), "exp": testNow.Add(5 * time.Minute).Unix(),
+				"user_id": testUserID, "session_id": testSession, "install_id": testInstall,
+				"scope": scope,
+			})
+			assertInvalidToken(t, verifier, token, validExpected())
+		})
+	}
+}
+
 func TestVerifyRejectsWrongExpectedBinding(t *testing.T) {
 	verifier := newTestVerifier(t)
 	token := signToken(t, validClaims(), jwt.SigningMethodHS256, map[string]any{"typ": TokenType})
@@ -294,6 +309,7 @@ func validClaims() Claims {
 		UserID:    testUserID,
 		SessionID: testSession,
 		InstallID: testInstall,
+		Scope:     translationScope,
 		RegisteredClaims: jwt.RegisteredClaims{
 			Issuer:    testIssuer,
 			Subject:   testUserID,
@@ -307,6 +323,17 @@ func validClaims() Claims {
 func signToken(t *testing.T, claims Claims, method jwt.SigningMethod, headers map[string]any) string {
 	t.Helper()
 	return signTokenWithKey(t, claims, method, headers, testKey)
+}
+
+func signMapClaimsToken(t *testing.T, claims jwt.MapClaims) string {
+	t.Helper()
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	token.Header["typ"] = TokenType
+	signed, err := token.SignedString(testKey)
+	if err != nil {
+		t.Fatalf("SignedString() error = %v", err)
+	}
+	return signed
 }
 
 func signTokenWithKey(t *testing.T, claims Claims, method jwt.SigningMethod, headers map[string]any, key []byte) string {

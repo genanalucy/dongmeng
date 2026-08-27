@@ -11,8 +11,8 @@ import (
 
 const (
 	// TokenType is the only accepted JWT typ header value.
-	TokenType = "translation_session"
-
+	TokenType           = "translation_session"
+	translationScope    = "translation"
 	minimumHMACKeyBytes = 32
 )
 
@@ -48,6 +48,7 @@ type Claims struct {
 	UserID    string `json:"user_id"`
 	SessionID string `json:"session_id"`
 	InstallID string `json:"install_id"`
+	Scope     string `json:"scope"`
 	jwt.RegisteredClaims
 }
 
@@ -129,7 +130,7 @@ func (v *Verifier) validateClaims(claims Claims, expected Expected) error {
 		claims.InstallID != expected.InstallID {
 		return errors.New("claims do not match expected context")
 	}
-	if claims.Subject != claims.UserID || claims.IssuedAt == nil || claims.ExpiresAt == nil {
+	if claims.Subject != claims.UserID || claims.Scope != translationScope || claims.IssuedAt == nil || claims.ExpiresAt == nil {
 		return errors.New("required claims are missing or inconsistent")
 	}
 	if len(claims.Audience) != 1 || claims.Audience[0] != v.audience {
