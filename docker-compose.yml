@@ -18,9 +18,10 @@ services:
   migrate:
     image: golang:1.25-alpine
     working_dir: /workspace
-    command:
-      ["go", "run", "./cmd/migrate", "up", "-database-url", "postgres://cloud:cloud-dev-only@postgres:5432/cloud?sslmode=disable", "-migrations-dir", "/migrations"]
+    command: ["go", "run", "./cmd/migrate", "up", "-migrations-dir", "/migrations"]
     environment:
+      CLOUD_API_MIGRATE_DATABASE_URL: postgres://cloud:cloud-dev-only@postgres:5432/cloud?sslmode=disable
+      CLOUD_API_MIGRATE_COMPOSE_SERVICE: "1"
       GOTOOLCHAIN: local
     depends_on:
       postgres:

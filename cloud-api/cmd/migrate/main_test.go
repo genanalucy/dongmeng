@@ -18,8 +18,8 @@ func TestMigrationConfigRequiresExplicitUpAndDSN(t *testing.T) {
 	}
 }
 
-func TestMigrationConfigAcceptsExplicitEnvironmentDSNWithoutExposingValue(t *testing.T) {
-	const dsn = "postgres://migration-test"
+func TestMigrationConfigAcceptsExactHostEnvironmentDSNWithoutExposingValue(t *testing.T) {
+	const dsn = "postgres://cloud:top-secret@127.0.0.1:15432/cloud?sslmode=disable"
 	if err := os.Setenv("CLOUD_API_MIGRATE_DATABASE_URL", dsn); err != nil {
 		t.Fatal(err)
 	}
@@ -30,5 +30,16 @@ func TestMigrationConfigAcceptsExplicitEnvironmentDSNWithoutExposingValue(t *tes
 	}
 	if config.DatabaseURL != dsn {
 		t.Fatal("environment DSN was not passed to runner configuration")
+	}
+}
+
+func TestMigrationConfigPreservesComposeDSNForRunnerPolicy(t *testing.T) {
+	const dsn = "postgres://cloud:top-secret@postgres:5432/cloud?sslmode=disable"
+	config, err := migrationConfig([]string{"up", "--database-url", dsn})
+	if err != nil {
+		t.Fatalf("Compose DSN parsing was rejected before runner policy: %v", err)
+	}
+	if config.DatabaseURL != dsn {
+		t.Fatal("Compose DSN was not passed to runner policy")
 	}
 }

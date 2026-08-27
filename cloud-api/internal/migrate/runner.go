@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -13,12 +14,25 @@ import (
 	"strings"
 	"unicode"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-const ledgerTable = "schema_migrations"
+const (
+	ledgerTable           = "schema_migrations"
+	migrationAdvisoryLock = int64(402860951630942811)
+)
 
-var upMigrationName = regexp.MustCompile(`^(\d+)_[-a-zA-Z0-9_]+\.up\.sql$`)
+var (
+	upMigrationName          = regexp.MustCompile(`^(\d+)_[-a-zA-Z0-9_]+\.up\.sql$`)
+	transactionEnvelope      = regexp.MustCompile(`(?is)^\s*(?:(?:--[^\n]*(?:\n|$))|(?:/\*.*?\*/\s*))*BEGIN(?:\s+(?:WORK|TRANSACTION))?\s*;\s*(.*?)\s*COMMIT(?:\s+(?:WORK|TRANSACTION))?\s*;\s*(?:(?:--[^\n]*(?:\n|$))|(?:/\*.*?\*/\s*))*$`)
+	concurrentIndexStatement = regexp.MustCompile(`(?is)^\s*CREATE\s+(?:UNIQUE\s+)?INDEX\s+CONCURRENTLY\s+(?:IF\s+NOT\s+EXISTS\s+)?([a-z_][a-z0-9_]*)\s+ON\s+(?:[a-z_][a-z0-9_]*\.)?[a-z_][a-z0-9_]*\s*\([^;]+\)\s*;\s*$`)
+)
+
+// ErrUnsafeDatabaseTarget means the supplied DSN was rejected before any
+// network connection or migration-file access. Its text intentionally excludes
+// the DSN and its credentials.
+var ErrUnsafeDatabaseTarget = errors.New("migration database target is not approved")
 
 // Config identifies an explicit database and a directory containing only the
 // repository's migration files. Run applies up migrations only.
@@ -34,16 +48,48 @@ type migration struct {
 	SQL                string
 	Checksum           string
 	OutsideTransaction bool
+	ConcurrentIndex    string
+}
+
+// ValidateDatabaseURL permits exactly the host test listener or, when called
+// by the controlled Compose migration service, the exact Compose service DNS
+// target. It rejects aliases, IPv6, socket/keyword connection strings, query
+// host overrides, and multi-host forms before a connection is opened.
+func ValidateDatabaseURL(databaseURL string, allowComposeServiceTarget bool) error {
+	parsed, err := url.ParseRequestURI(databaseURL)
+	if err != nil || (parsed.Scheme != "postgres" && parsed.Scheme != "postgresql") || parsed.User == nil || parsed.Host == "" || parsed.RawQuery == "" && parsed.ForceQuery {
+		return ErrUnsafeDatabaseTarget
+	}
+	if parsed.Host != parsed.Hostname()+":"+parsed.Port() || parsed.Port() == "" || parsed.Path == "" || parsed.Path == "/" {
+		return ErrUnsafeDatabaseTarget
+	}
+	for key := range parsed.Query() {
+		switch strings.ToLower(key) {
+		case "host", "port", "hostaddr", "service", "servicefile":
+			return ErrUnsafeDatabaseTarget
+		}
+	}
+	if parsed.Hostname() == "127.0.0.1" && parsed.Port() == "15432" {
+		return nil
+	}
+	if allowComposeServiceTarget && parsed.Hostname() == "postgres" && parsed.Port() == "5432" {
+		return nil
+	}
+	return ErrUnsafeDatabaseTarget
 }
 
 // Run applies every pending up migration in lexical numeric order. It never
-// executes down migrations and it never logs the database URL.
+// executes down migrations, never logs the database URL, and serializes all
+// ledger validation and application through a PostgreSQL advisory lock.
 func Run(ctx context.Context, config Config) error {
 	if ctx == nil {
 		return errors.New("migration context is required")
 	}
 	if strings.TrimSpace(config.DatabaseURL) == "" {
 		return errors.New("migration database URL is required")
+	}
+	if err := ValidateDatabaseURL(config.DatabaseURL, isComposeMigrationService()); err != nil {
+		return err
 	}
 	if strings.TrimSpace(config.Directory) == "" {
 		return errors.New("migration directory is required")
@@ -58,7 +104,7 @@ func Run(ctx context.Context, config Config) error {
 
 	poolConfig, err := pgxpool.ParseConfig(config.DatabaseURL)
 	if err != nil {
-		return errors.New("migration database URL is invalid")
+		return ErrUnsafeDatabaseTarget
 	}
 	poolConfig.ConnConfig.RuntimeParams["search_path"] = quoteIdentifier(config.Schema)
 	pool, err := pgxpool.NewWithConfig(ctx, poolConfig)
@@ -66,46 +112,58 @@ func Run(ctx context.Context, config Config) error {
 		return errors.New("open migration database")
 	}
 	defer pool.Close()
+	connection, err := pool.Acquire(ctx)
+	if err != nil {
+		return errors.New("acquire migration database connection")
+	}
+	defer connection.Release()
+	if _, err := connection.Exec(ctx, "SELECT pg_advisory_lock($1)", migrationAdvisoryLock); err != nil {
+		return errors.New("acquire migration advisory lock")
+	}
+	defer func() {
+		_, _ = connection.Exec(context.Background(), "SELECT pg_advisory_unlock($1)", migrationAdvisoryLock)
+	}()
 
-	if _, err := pool.Exec(ctx, "CREATE SCHEMA IF NOT EXISTS "+quoteIdentifier(config.Schema)); err != nil {
+	if _, err := connection.Exec(ctx, "CREATE SCHEMA IF NOT EXISTS "+quoteIdentifier(config.Schema)); err != nil {
 		return errors.New("create migration schema")
 	}
 	ledger := quoteIdentifier(config.Schema) + "." + ledgerTable
-	if _, err := pool.Exec(ctx, "CREATE TABLE IF NOT EXISTS "+ledger+" (version text PRIMARY KEY, checksum text NOT NULL, applied_at timestamptz NOT NULL DEFAULT now())"); err != nil {
+	if _, err := connection.Exec(ctx, "CREATE TABLE IF NOT EXISTS "+ledger+" (version text PRIMARY KEY, checksum text NOT NULL, applied_at timestamptz NOT NULL DEFAULT now())"); err != nil {
 		return errors.New("create migration ledger")
 	}
-	applied, err := loadApplied(ctx, pool, ledger)
+	applied, err := loadApplied(ctx, connection, ledger)
 	if err != nil {
 		return errors.New("read migration ledger")
 	}
-	for version, checksum := range applied {
-		found := false
-		for _, candidate := range migrations {
-			if candidate.Version == version {
-				found = true
-				if candidate.Checksum != checksum {
-					return fmt.Errorf("migration checksum mismatch for version %s", version)
-				}
-				break
-			}
+	if len(applied) == 0 {
+		existing, err := hasExistingCloudSchema(ctx, connection, config.Schema)
+		if err != nil {
+			return errors.New("inspect existing cloud schema")
 		}
-		if !found {
-			return fmt.Errorf("migration ledger contains unknown version %s", version)
+		if existing {
+			return errors.New("existing Cloud schema has an empty migration ledger; do not replay 000001: restore the matching ledger from backup or rebuild the dedicated development volume")
 		}
+	}
+	if err := verifyApplied(migrations, applied); err != nil {
+		return err
 	}
 	for _, candidate := range migrations {
 		if _, ok := applied[candidate.Version]; ok {
 			continue
 		}
-		if err := apply(ctx, pool, ledger, candidate); err != nil {
+		if err := apply(ctx, connection, ledger, config.Schema, candidate); err != nil {
 			return fmt.Errorf("apply migration %s", candidate.Version)
 		}
 	}
 	return nil
 }
 
-func loadApplied(ctx context.Context, pool *pgxpool.Pool, ledger string) (map[string]string, error) {
-	rows, err := pool.Query(ctx, "SELECT version, checksum FROM "+ledger)
+type queryer interface {
+	Query(context.Context, string, ...any) (pgx.Rows, error)
+}
+
+func loadApplied(ctx context.Context, database queryer, ledger string) (map[string]string, error) {
+	rows, err := database.Query(ctx, "SELECT version, checksum FROM "+ledger)
 	if err != nil {
 		return nil, err
 	}
@@ -121,26 +179,90 @@ func loadApplied(ctx context.Context, pool *pgxpool.Pool, ledger string) (map[st
 	return applied, rows.Err()
 }
 
-func apply(ctx context.Context, pool *pgxpool.Pool, ledger string, candidate migration) error {
+func verifyApplied(migrations []migration, applied map[string]string) error {
+	for version, checksum := range applied {
+		found := false
+		for _, candidate := range migrations {
+			if candidate.Version == version {
+				found = true
+				if candidate.Checksum != checksum {
+					return fmt.Errorf("migration checksum mismatch for version %s", version)
+				}
+				break
+			}
+		}
+		if !found {
+			return fmt.Errorf("migration ledger contains unknown version %s", version)
+		}
+	}
+	return nil
+}
+
+func hasExistingCloudSchema(ctx context.Context, connection *pgxpool.Conn, schema string) (bool, error) {
+	const cloudSchemaRelation = `
+SELECT EXISTS (
+  SELECT 1 FROM pg_catalog.pg_class c
+  JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+  WHERE n.nspname = $1
+    AND c.relkind IN ('r', 'p')
+    AND c.relname = ANY($2)
+)`
+	var exists bool
+	err := connection.QueryRow(ctx, cloudSchemaRelation, schema, []string{
+		"users", "entitlements", "refresh_tokens", "code_batches", "redemption_codes",
+		"translation_sessions", "usage_records", "feedback_consents", "feedback_artifacts", "audit_logs",
+	}).Scan(&exists)
+	return exists, err
+}
+
+func apply(ctx context.Context, connection *pgxpool.Conn, ledger, schema string, candidate migration) error {
 	if candidate.OutsideTransaction {
-		if _, err := pool.Exec(ctx, candidate.SQL); err != nil {
+		if _, err := connection.Exec(ctx, candidate.SQL); err != nil {
 			return err
 		}
-		_, err := pool.Exec(ctx, "INSERT INTO "+ledger+" (version, checksum) VALUES ($1, $2)", candidate.Version, candidate.Checksum)
+		valid, err := concurrentIndexIsValid(ctx, connection, schema, candidate.ConcurrentIndex)
+		if err != nil {
+			return err
+		}
+		if !valid {
+			return errors.New("concurrent migration target index is absent or invalid")
+		}
+		_, err = connection.Exec(ctx, "INSERT INTO "+ledger+" (version, checksum) VALUES ($1, $2)", candidate.Version, candidate.Checksum)
 		return err
 	}
-	transaction, err := pool.Begin(ctx)
+	transaction, err := connection.Begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = transaction.Rollback(ctx) }()
-	if _, err := transaction.Exec(ctx, transactionalSQL(candidate.SQL)); err != nil {
+	sql, err := transactionalSQL(candidate.SQL)
+	if err != nil {
+		return err
+	}
+	if _, err := transaction.Exec(ctx, sql); err != nil {
 		return err
 	}
 	if _, err := transaction.Exec(ctx, "INSERT INTO "+ledger+" (version, checksum) VALUES ($1, $2)", candidate.Version, candidate.Checksum); err != nil {
 		return err
 	}
 	return transaction.Commit(ctx)
+}
+
+func concurrentIndexIsValid(ctx context.Context, connection *pgxpool.Conn, schema, index string) (bool, error) {
+	const validIndex = `
+SELECT i.indisvalid
+FROM pg_catalog.pg_index i
+JOIN pg_catalog.pg_class c ON c.oid = i.indexrelid
+JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+WHERE n.nspname = $1 AND c.relname = $2`
+	var valid bool
+	if err := connection.QueryRow(ctx, validIndex, schema, index).Scan(&valid); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return false, nil
+		}
+		return false, err
+	}
+	return valid, nil
 }
 
 func discoverMigrations(directory string) ([]migration, error) {
@@ -165,13 +287,18 @@ func discoverMigrations(directory string) ([]migration, error) {
 		if err != nil {
 			return nil, fmt.Errorf("read migration %s", entry.Name())
 		}
+		concurrentIndex, outsideTransaction, err := concurrentIndexTarget(string(contents))
+		if err != nil {
+			return nil, fmt.Errorf("invalid concurrent migration %s", entry.Name())
+		}
 		digest := sha256.Sum256(contents)
 		migrations = append(migrations, migration{
 			Version:            match[1],
 			Name:               entry.Name(),
 			SQL:                string(contents),
 			Checksum:           fmt.Sprintf("%x", digest),
-			OutsideTransaction: createsIndexConcurrently(string(contents)),
+			OutsideTransaction: outsideTransaction,
+			ConcurrentIndex:    concurrentIndex,
 		})
 		versions[match[1]] = struct{}{}
 	}
@@ -184,16 +311,38 @@ func discoverMigrations(directory string) ([]migration, error) {
 	return migrations, nil
 }
 
-var transactionEnvelope = regexp.MustCompile(`(?is)^\s*BEGIN\s*;\s*(.*?)\s*COMMIT\s*;?\s*$`)
-
-// transactionalSQL preserves the migration checksum while removing only an
-// enclosing BEGIN/COMMIT pair: the runner itself owns the migration's tx.
-func transactionalSQL(sql string) string {
+// transactionalSQL preserves the migration checksum while removing a complete
+// outer transaction envelope. Any other transaction-control statement is
+// refused, preventing runner-managed transactions from being committed early.
+func transactionalSQL(sql string) (string, error) {
+	words := sqlWords(sql)
+	hasTransactionControl := false
+	for _, word := range words {
+		if word == "BEGIN" || word == "COMMIT" || word == "ROLLBACK" || word == "START" {
+			hasTransactionControl = true
+			break
+		}
+	}
+	if !hasTransactionControl {
+		return sql, nil
+	}
 	match := transactionEnvelope.FindStringSubmatch(sql)
 	if match == nil {
-		return sql
+		return "", errors.New("migration contains unsupported transaction control")
 	}
-	return match[1]
+	return match[1], nil
+}
+
+// isComposeMigrationService makes postgres:5432 available only inside the
+// containerized one-shot service. The environment opt-in alone is insufficient
+// on a host process, so it cannot turn the service-network exception into a
+// host-network bypass.
+func isComposeMigrationService() bool {
+	if os.Getenv("CLOUD_API_MIGRATE_COMPOSE_SERVICE") != "1" {
+		return false
+	}
+	_, err := os.Stat("/.dockerenv")
+	return err == nil
 }
 
 func quoteIdentifier(value string) string {
@@ -201,7 +350,13 @@ func quoteIdentifier(value string) string {
 }
 
 func createsIndexConcurrently(sql string) bool {
+	_, found, _ := concurrentIndexTarget(sql)
+	return found
+}
+
+func concurrentIndexTarget(sql string) (string, bool, error) {
 	words := sqlWords(sql)
+	found := false
 	for index := 0; index < len(words); index++ {
 		if words[index] != "CREATE" || index+2 >= len(words) {
 			continue
@@ -211,10 +366,18 @@ func createsIndexConcurrently(sql string) bool {
 			next++
 		}
 		if next+1 < len(words) && words[next] == "INDEX" && words[next+1] == "CONCURRENTLY" {
-			return true
+			found = true
+			break
 		}
 	}
-	return false
+	if !found {
+		return "", false, nil
+	}
+	match := concurrentIndexStatement.FindStringSubmatch(sql)
+	if match == nil {
+		return "", true, errors.New("concurrent migration must contain exactly one unquoted CREATE INDEX CONCURRENTLY statement")
+	}
+	return match[1], true, nil
 }
 
 func sqlWords(sql string) []string {
@@ -247,6 +410,15 @@ func sqlWords(sql string) []string {
 				}
 				index++
 			}
+		case sql[index] == '$':
+			if end := dollarQuoteEnd(sql[index:]); end != "" {
+				start := index + len(end)
+				if close := strings.Index(sql[start:], end); close >= 0 {
+					index = start + close + len(end)
+					continue
+				}
+			}
+			index++
 		case unicode.IsLetter(rune(sql[index])):
 			start := index
 			for index < len(sql) && (unicode.IsLetter(rune(sql[index])) || sql[index] == '_') {
@@ -258,4 +430,19 @@ func sqlWords(sql string) []string {
 		}
 	}
 	return words
+}
+
+func dollarQuoteEnd(sql string) string {
+	if !strings.HasPrefix(sql, "$") {
+		return ""
+	}
+	for index := 1; index < len(sql); index++ {
+		if sql[index] == '$' {
+			return sql[:index+1]
+		}
+		if !unicode.IsLetter(rune(sql[index])) && !unicode.IsDigit(rune(sql[index])) && sql[index] != '_' {
+			return ""
+		}
+	}
+	return ""
 }

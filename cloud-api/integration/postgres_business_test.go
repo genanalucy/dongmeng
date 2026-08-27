@@ -45,7 +45,14 @@ func TestPostgresBusinessLifecycle(t *testing.T) {
 		t.Fatal("register fixture user")
 	}
 	if trial.UserID != user.ID || !trial.StartsAt.Equal(now) || !trial.ExpiresAt.Equal(now.Add(3*24*time.Hour)) {
-		t.Fatal("registration did not create exactly one fixed three-day trial")
+		t.Fatal("registration did not create a fixed three-day trial")
+	}
+	var trialCount int
+	if err := raw.QueryRow(ctx, `SELECT count(*) FROM entitlements WHERE user_id=$1 AND kind='trial'`, user.ID).Scan(&trialCount); err != nil {
+		t.Fatal("count registration trials")
+	}
+	if trialCount != 1 {
+		t.Fatalf("registration trial count = %d, want 1", trialCount)
 	}
 	if _, _, err := db.Register(ctx, domain.RegisterParams{Email: user.Email, PasswordHash: hash, Now: now}); !errors.Is(err, domain.ErrConflict) {
 		t.Fatal("duplicate registration was not rejected")
@@ -94,32 +101,39 @@ func TestPostgresBusinessLifecycle(t *testing.T) {
 		t.Fatal("second active session was not rejected")
 	}
 
-	usage := domain.CreateUsageParams{UserID: user.ID, SessionID: first.ID, AudioSeconds: 1, Characters: 1, Now: now}
+	other, _, err := db.Register(ctx, domain.RegisterParams{Email: integrationEmail(), PasswordHash: hash, Now: now})
+	if err != nil {
+		t.Fatal("register cross-user fixture")
+	}
+	if err := db.EndTranslationSession(ctx, user.ID, first.ID, now.Add(time.Second)); err != nil {
+		t.Fatal("end first session before cross-user fixture")
+	}
+	unused := integrationSession(user.ID, active.ID, "install-"+uuid.NewString(), now.Add(time.Minute))
+	if err := db.CreateSession(ctx, unused, now.Add(time.Second)); err != nil {
+		t.Fatal("create unused owner session")
+	}
+	if err := db.CreateUsageRecord(ctx, domain.CreateUsageParams{UserID: other.ID, SessionID: unused.ID, AudioSeconds: 1, Characters: 1, Now: now}); err == nil {
+		t.Fatal("cross-user usage/session association was accepted")
+	}
+	usage := domain.CreateUsageParams{UserID: user.ID, SessionID: unused.ID, AudioSeconds: 1, Characters: 1, Now: now}
 	if err := db.CreateUsageRecord(ctx, usage); err != nil {
 		t.Fatal("write first session usage")
 	}
 	if err := db.CreateUsageRecord(ctx, usage); !errors.Is(err, domain.ErrConflict) {
 		t.Fatal("second usage record for one session was not rejected")
 	}
-	other, _, err := db.Register(ctx, domain.RegisterParams{Email: integrationEmail(), PasswordHash: hash, Now: now})
-	if err != nil {
-		t.Fatal("register cross-user fixture")
-	}
-	if err := db.CreateUsageRecord(ctx, domain.CreateUsageParams{UserID: other.ID, SessionID: first.ID, AudioSeconds: 1, Characters: 1, Now: now}); err == nil {
-		t.Fatal("cross-user usage/session association was accepted")
-	}
 
-	if err := db.EndTranslationSession(ctx, user.ID, first.ID, now.Add(time.Second)); err != nil {
-		t.Fatal("end first session")
+	if err := db.EndTranslationSession(ctx, user.ID, unused.ID, now.Add(2*time.Second)); err != nil {
+		t.Fatal("end unused session")
 	}
 	second := integrationSession(user.ID, active.ID, "install-"+uuid.NewString(), now.Add(time.Minute))
-	if err := db.CreateSession(ctx, second, now.Add(time.Second)); err != nil {
+	if err := db.CreateSession(ctx, second, now.Add(2*time.Second)); err != nil {
 		t.Fatal("ended session did not release active-session slot")
 	}
-	if err := db.RevokeTranslationSession(ctx, user.ID, second.ID, now.Add(2*time.Second)); err != nil {
+	if err := db.RevokeTranslationSession(ctx, user.ID, second.ID, now.Add(3*time.Second)); err != nil {
 		t.Fatal("revoke second session")
 	}
-	if err := db.CreateSession(ctx, integrationSession(user.ID, active.ID, "install-"+uuid.NewString(), now.Add(time.Minute)), now.Add(2*time.Second)); err != nil {
+	if err := db.CreateSession(ctx, integrationSession(user.ID, active.ID, "install-"+uuid.NewString(), now.Add(time.Minute)), now.Add(3*time.Second)); err != nil {
 		t.Fatal("revoked session did not release active-session slot")
 	}
 }
@@ -132,7 +146,7 @@ func isolatedPostgresTestDSN(t *testing.T) string {
 	}
 	config, err := pgx.ParseConfig(url)
 	if err != nil || config.Host != "127.0.0.1" || config.Port != 15432 || config.Database == "" {
-		t.Skip("CLOUD_API_TEST_DATABASE_URL is not an isolated 127.0.0.1:15432 database target; skipping PostgreSQL business lifecycle test")
+		t.Fatal("CLOUD_API_TEST_DATABASE_URL must target the isolated 127.0.0.1:15432 test database")
 	}
 	return url
 }

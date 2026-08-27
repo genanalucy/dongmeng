@@ -2,8 +2,7 @@ package migrate
 
 import (
 	"context"
-	"fmt"
-	"net"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,8 +13,62 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
+func TestValidateDatabaseURLFailsClosed(t *testing.T) {
+	const secret = "top-secret"
+	tests := []struct {
+		name         string
+		dsn          string
+		allowCompose bool
+		wantErr      bool
+	}{
+		{name: "allows exact host target", dsn: "postgres://cloud:" + secret + "@127.0.0.1:15432/cloud?sslmode=disable"},
+		{name: "allows exact compose service target only when opted in", dsn: "postgres://cloud:" + secret + "@postgres:5432/cloud?sslmode=disable", allowCompose: true},
+		{name: "rejects compose service target without opt in", dsn: "postgres://cloud:" + secret + "@postgres:5432/cloud", wantErr: true},
+		{name: "rejects host postgres port", dsn: "postgres://cloud:" + secret + "@127.0.0.1:5432/cloud", wantErr: true},
+		{name: "rejects localhost alias", dsn: "postgres://cloud:" + secret + "@localhost:15432/cloud", wantErr: true},
+		{name: "rejects IPv6 loopback", dsn: "postgres://cloud:" + secret + "@[::1]:15432/cloud", wantErr: true},
+		{name: "rejects missing port", dsn: "postgres://cloud:" + secret + "@127.0.0.1/cloud", wantErr: true},
+		{name: "rejects socket style keyword connection string", dsn: "host=/var/run/postgresql dbname=cloud password=" + secret, wantErr: true},
+		{name: "rejects multi host", dsn: "postgres://cloud:" + secret + "@127.0.0.1:15432,postgres:5432/cloud", wantErr: true},
+		{name: "rejects query host override", dsn: "postgres://cloud:" + secret + "@127.0.0.1:15432/cloud?host=postgres", wantErr: true},
+		{name: "rejects empty database", dsn: "postgres://cloud:" + secret + "@127.0.0.1:15432/", wantErr: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := ValidateDatabaseURL(test.dsn, test.allowCompose)
+			if (err != nil) != test.wantErr {
+				t.Fatalf("ValidateDatabaseURL() error = %v, wantErr %t", err, test.wantErr)
+			}
+			if err != nil && strings.Contains(err.Error(), secret) {
+				t.Fatal("database target validation error exposed the DSN secret")
+			}
+		})
+	}
+}
+
+func TestRunRejectsUnsafeTargetBeforeReadingMigrationsOrConnecting(t *testing.T) {
+	for _, databaseURL := range []string{
+		"postgres://cloud:top-secret@127.0.0.1:5432/cloud",
+		"postgres://cloud:top-secret@postgres:5432/cloud",
+	} {
+		t.Run(databaseURL, func(t *testing.T) {
+			t.Setenv("CLOUD_API_MIGRATE_COMPOSE_SERVICE", "")
+			err := Run(context.Background(), Config{
+				DatabaseURL: databaseURL,
+				Directory:   filepath.Join(t.TempDir(), "does-not-exist"),
+			})
+			if !errors.Is(err, ErrUnsafeDatabaseTarget) {
+				t.Fatalf("Run() error = %v, want unsafe target error", err)
+			}
+			if strings.Contains(err.Error(), "top-secret") {
+				t.Fatal("unsafe target error exposed the DSN secret")
+			}
+		})
+	}
+}
+
 func TestRepositoryMigrationsClassifyConcurrentIndexOutsideTransaction(t *testing.T) {
-	migrations, err := discoverMigrations(filepath.Join("..", "..", "..", "migrations"))
+	migrations, err := discoverMigrations(repositoryMigrationDirectory(t))
 	if err != nil {
 		t.Fatalf("discover repository migrations: %v", err)
 	}
@@ -30,9 +83,43 @@ func TestRepositoryMigrationsClassifyConcurrentIndexOutsideTransaction(t *testin
 	if migrations[0].OutsideTransaction || !migrations[1].OutsideTransaction || migrations[2].OutsideTransaction {
 		t.Fatalf("transaction strategies = [%t %t %t], want [false true false]", migrations[0].OutsideTransaction, migrations[1].OutsideTransaction, migrations[2].OutsideTransaction)
 	}
+	if migrations[1].ConcurrentIndex != "refresh_tokens_expiry_idx" {
+		t.Fatalf("concurrent index = %q, want refresh_tokens_expiry_idx", migrations[1].ConcurrentIndex)
+	}
 }
 
-func TestRunRecordsChecksumsIsIdempotentAndFailsBeforeLaterMigration(t *testing.T) {
+func TestDiscoverMigrationsRejectsUnsafeConcurrentMigrationShapes(t *testing.T) {
+	tests := []string{
+		"CREATE INDEX CONCURRENTLY idx ON events(value); INSERT INTO events VALUES ('unsafe');",
+		"CREATE INDEX CONCURRENTLY IF NOT EXISTS idx ON events(value)",
+		"CREATE INDEX CONCURRENTLY \"quoted_idx\" ON events(value);",
+	}
+	for index, sql := range tests {
+		t.Run(string(rune('a'+index)), func(t *testing.T) {
+			directory := t.TempDir()
+			if err := os.WriteFile(filepath.Join(directory, "000001_invalid.up.sql"), []byte(sql), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := discoverMigrations(directory); err == nil {
+				t.Fatal("unsafe concurrent migration structure was accepted")
+			}
+		})
+	}
+}
+
+func TestTransactionalSQLRejectsUnknownTransactionControl(t *testing.T) {
+	if _, err := transactionalSQL("-- leading comment\nBEGIN TRANSACTION;\nCREATE TABLE events(id integer);\nCOMMIT;\n-- trailing comment\n"); err != nil {
+		t.Fatalf("known transaction envelope was rejected: %v", err)
+	}
+	if _, err := transactionalSQL("CREATE TABLE events(id integer); COMMIT;"); err == nil {
+		t.Fatal("unwrapped transaction control was accepted")
+	}
+	if _, err := transactionalSQL("CREATE FUNCTION f() RETURNS void LANGUAGE plpgsql AS $$ BEGIN RAISE NOTICE 'ok'; END; $$;"); err != nil {
+		t.Fatalf("transaction words in a dollar-quoted function body were rejected: %v", err)
+	}
+}
+
+func TestRunRecordsRepositoryChecksumsIsIdempotentAndFailsBeforeLaterMigration(t *testing.T) {
 	dsn := isolatedTestDSN(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -41,77 +128,96 @@ func TestRunRecordsChecksumsIsIdempotentAndFailsBeforeLaterMigration(t *testing.
 	if err != nil {
 		t.Fatal("connect isolated migration test database")
 	}
-	defer conn.Close(ctx)
+	t.Cleanup(func() { _ = conn.Close(context.Background()) })
 
 	schema := "migration_test_" + strings.ReplaceAll(uuid.NewString(), "-", "")
 	if _, err := conn.Exec(ctx, "CREATE SCHEMA "+quoteIdentifier(schema)); err != nil {
 		t.Fatal("create isolated migration test schema")
 	}
 	t.Cleanup(func() {
-		_, _ = conn.Exec(context.Background(), "DROP SCHEMA "+quoteIdentifier(schema)+" CASCADE")
+		if _, err := conn.Exec(context.Background(), "DROP SCHEMA "+quoteIdentifier(schema)+" CASCADE"); err != nil {
+			t.Error("drop isolated migration test schema")
+		}
 	})
 
-	directory := testMigrationDirectory(t)
-	config := Config{DatabaseURL: dsn, Directory: directory, Schema: schema}
+	config := Config{DatabaseURL: dsn, Directory: repositoryMigrationDirectory(t), Schema: schema}
 	if err := Run(ctx, config); err != nil {
-		t.Fatalf("first migration run: %v", err)
+		t.Fatalf("first repository migration run: %v", err)
 	}
 
-	var version, checksum string
-	var appliedAt time.Time
-	if err := conn.QueryRow(ctx, "SELECT version, checksum, applied_at FROM "+quoteIdentifier(schema)+".schema_migrations ORDER BY version LIMIT 1").Scan(&version, &checksum, &appliedAt); err != nil {
-		t.Fatal("read schema migration ledger")
+	ledger := quoteIdentifier(schema) + ".schema_migrations"
+	var count int
+	if err := conn.QueryRow(ctx, "SELECT count(*) FROM "+ledger).Scan(&count); err != nil {
+		t.Fatal("count repository migration ledger")
 	}
-	if version != "000001" || len(checksum) != 64 || appliedAt.IsZero() {
-		t.Fatalf("invalid first ledger entry: version=%q checksum length=%d applied=%t", version, len(checksum), !appliedAt.IsZero())
+	if count != 3 {
+		t.Fatalf("ledger count = %d, want 3", count)
 	}
-
-	var eventCount int
-	if err := conn.QueryRow(ctx, "SELECT count(*) FROM "+quoteIdentifier(schema)+".migration_runner_events").Scan(&eventCount); err != nil {
-		t.Fatal("count first-run events")
+	var valid bool
+	if err := conn.QueryRow(ctx, `SELECT i.indisvalid FROM pg_catalog.pg_index i JOIN pg_catalog.pg_class c ON c.oid=i.indexrelid JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=$1 AND c.relname='refresh_tokens_expiry_idx'`, schema).Scan(&valid); err != nil {
+		t.Fatal("read concurrent index validity")
 	}
-	if eventCount != 1 {
-		t.Fatalf("first run event count = %d, want 1", eventCount)
+	if !valid {
+		t.Fatal("repository concurrent index is invalid")
+	}
+	var before time.Time
+	if err := conn.QueryRow(ctx, "SELECT max(applied_at) FROM "+ledger).Scan(&before); err != nil {
+		t.Fatal("read first migration timestamp")
 	}
 	if err := Run(ctx, config); err != nil {
-		t.Fatalf("repeat migration run: %v", err)
+		t.Fatalf("repeat repository migration run: %v", err)
 	}
-	if err := conn.QueryRow(ctx, "SELECT count(*) FROM "+quoteIdentifier(schema)+".migration_runner_events").Scan(&eventCount); err != nil {
-		t.Fatal("count repeated-run events")
+	var after time.Time
+	if err := conn.QueryRow(ctx, "SELECT max(applied_at) FROM "+ledger).Scan(&after); err != nil {
+		t.Fatal("read repeated migration timestamp")
 	}
-	if eventCount != 1 {
-		t.Fatalf("repeat run event count = %d, want 1", eventCount)
+	if !after.Equal(before) {
+		t.Fatal("repeat repository migration run rewrote the ledger")
 	}
 
-	if err := os.WriteFile(filepath.Join(directory, "000004_later.up.sql"), []byte("INSERT INTO migration_runner_events(value) VALUES ('later');\n"), 0o600); err != nil {
+	directory := copyRepositoryMigrations(t)
+	if err := os.WriteFile(filepath.Join(directory, "000004_later.up.sql"), []byte("CREATE TABLE must_not_exist(id integer);\n"), 0o600); err != nil {
 		t.Fatal("write later migration")
 	}
-	if err := os.WriteFile(filepath.Join(directory, "000002_concurrent_index.up.sql"), []byte("CREATE INDEX CONCURRENTLY migration_runner_events_value_idx ON migration_runner_events(value);\n-- changed\n"), 0o600); err != nil {
-		t.Fatal("change applied migration")
+	path := filepath.Join(directory, "000002_refresh_tokens_expiry_idx.up.sql")
+	contents, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal("read repository concurrent migration copy")
 	}
-	if err := Run(ctx, config); err == nil {
-		t.Fatal("checksum mismatch was accepted")
+	if err := os.WriteFile(path, append(contents, []byte("-- checksum changed\n")...), 0o600); err != nil {
+		t.Fatal("change applied migration copy")
 	}
-	if err := conn.QueryRow(ctx, "SELECT count(*) FROM "+quoteIdentifier(schema)+".migration_runner_events").Scan(&eventCount); err != nil {
-		t.Fatal("count checksum-failure events")
+	if err := Run(ctx, Config{DatabaseURL: dsn, Directory: directory, Schema: schema}); err == nil {
+		t.Fatal("repository checksum mismatch was accepted")
 	}
-	if eventCount != 1 {
-		t.Fatalf("later migration ran after checksum mismatch: event count = %d", eventCount)
+	var laterExists bool
+	if err := conn.QueryRow(ctx, "SELECT to_regclass($1) IS NOT NULL", schema+".must_not_exist").Scan(&laterExists); err != nil {
+		t.Fatal("check later migration table")
+	}
+	if laterExists {
+		t.Fatal("later migration ran after checksum mismatch")
 	}
 }
 
-func testMigrationDirectory(t *testing.T) string {
+func repositoryMigrationDirectory(t *testing.T) string {
+	t.Helper()
+	return filepath.Join("..", "..", "..", "migrations")
+}
+
+func copyRepositoryMigrations(t *testing.T) string {
 	t.Helper()
 	directory := t.TempDir()
-	files := map[string]string{
-		"000001_create_events.up.sql":    "BEGIN;\nCREATE TABLE migration_runner_events (value text NOT NULL);\nCOMMIT;\n",
-		"000002_concurrent_index.up.sql": "CREATE INDEX CONCURRENTLY migration_runner_events_value_idx ON migration_runner_events(value);\n",
-		"000003_insert_event.up.sql":     "BEGIN;\nINSERT INTO migration_runner_events(value) VALUES ('first');\nCOMMIT;\n",
-		"000003_insert_event.down.sql":   "DROP TABLE migration_runner_events;\n",
-	}
-	for name, contents := range files {
-		if err := os.WriteFile(filepath.Join(directory, name), []byte(contents), 0o600); err != nil {
-			t.Fatalf("write test migration %s: %v", name, err)
+	for _, name := range []string{
+		"000001_init.up.sql",
+		"000002_refresh_tokens_expiry_idx.up.sql",
+		"000003_business_lifecycle.up.sql",
+	} {
+		contents, err := os.ReadFile(filepath.Join(repositoryMigrationDirectory(t), name))
+		if err != nil {
+			t.Fatalf("read repository migration %s: %v", name, err)
+		}
+		if err := os.WriteFile(filepath.Join(directory, name), contents, 0o600); err != nil {
+			t.Fatalf("copy repository migration %s: %v", name, err)
 		}
 	}
 	return directory
@@ -123,18 +229,8 @@ func isolatedTestDSN(t *testing.T) string {
 	if dsn == "" {
 		t.Skip("CLOUD_API_TEST_DATABASE_URL is not set; skipping isolated PostgreSQL migration test")
 	}
-	config, err := pgx.ParseConfig(dsn)
-	if err != nil {
-		t.Skip("CLOUD_API_TEST_DATABASE_URL is invalid; skipping PostgreSQL migration test")
-	}
-	if config.Host != "127.0.0.1" || config.Port != 15432 {
-		t.Skip("CLOUD_API_TEST_DATABASE_URL is not an isolated 127.0.0.1:15432 target; skipping PostgreSQL migration test")
-	}
-	if _, port, err := net.SplitHostPort(fmt.Sprintf("%s:%d", config.Host, config.Port)); err != nil || port != "15432" {
-		t.Skip("CLOUD_API_TEST_DATABASE_URL does not use port 15432; skipping PostgreSQL migration test")
-	}
-	if config.Database == "" {
-		t.Skip("CLOUD_API_TEST_DATABASE_URL has no database name; skipping PostgreSQL migration test")
+	if err := ValidateDatabaseURL(dsn, false); err != nil {
+		t.Fatal("CLOUD_API_TEST_DATABASE_URL must target the isolated 127.0.0.1:15432 test database")
 	}
 	return dsn
 }
