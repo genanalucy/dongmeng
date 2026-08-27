@@ -24,3 +24,10 @@ __pycache__/
 
 # Local CodeGraph index
 .codegraph/
+
+# Android local/build artifacts; source and Gradle wrapper remain trackable.
+android/.gradle/
+android/.kotlin/
+android/app/build/
+android/local.properties
+*.apk
