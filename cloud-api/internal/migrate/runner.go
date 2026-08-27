@@ -15,6 +15,7 @@ import (
 	"unicode"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -75,31 +76,43 @@ type concurrentIndexDefinition struct {
 	Immediate             bool
 }
 
+var migrationDSNAllowedKeys = []string{"host", "port", "database", "user", "password", "sslmode"}
+
 // ValidateDatabaseURL permits exactly the host test listener or, when called
 // by the controlled Compose migration service, the exact Compose service DNS
-// target. It rejects aliases, IPv6, socket/keyword connection strings, query
-// host overrides, and multi-host forms before a connection is opened.
+// target. Only sslmode=disable is permitted as a URL query parameter. It
+// rejects aliases, IPv6, socket/keyword connection strings, query overrides,
+// runtime parameters, and multi-host forms before a connection is opened.
 func ValidateDatabaseURL(databaseURL string, allowComposeServiceTarget bool) error {
 	parsed, err := url.ParseRequestURI(databaseURL)
-	if err != nil || (parsed.Scheme != "postgres" && parsed.Scheme != "postgresql") || parsed.User == nil || parsed.Host == "" || parsed.RawQuery == "" && parsed.ForceQuery {
+	if err != nil || (parsed.Scheme != "postgres" && parsed.Scheme != "postgresql") || parsed.User == nil || parsed.User.Username() == "" || parsed.Host == "" || parsed.RawQuery == "" && parsed.ForceQuery {
 		return ErrUnsafeDatabaseTarget
 	}
 	if parsed.Host != parsed.Hostname()+":"+parsed.Port() || parsed.Port() == "" || parsed.Path == "" || parsed.Path == "/" {
 		return ErrUnsafeDatabaseTarget
 	}
-	for key := range parsed.Query() {
-		switch strings.ToLower(key) {
-		case "host", "port", "hostaddr", "service", "servicefile":
+	for key, values := range parsed.Query() {
+		if key != "sslmode" || len(values) != 1 || values[0] != "disable" {
 			return ErrUnsafeDatabaseTarget
 		}
 	}
-	if parsed.Hostname() == "127.0.0.1" && parsed.Port() == "15432" {
-		return nil
+	connectionConfig, err := pgx.ParseConfigWithOptions(databaseURL, pgx.ParseConfigOptions{
+		ParseConfigOptions: pgconn.ParseConfigOptions{ConnStringAllowedKeys: migrationDSNAllowedKeys},
+	})
+	if err != nil || !validMigrationConnectionConfig(connectionConfig, allowComposeServiceTarget) {
+		return ErrUnsafeDatabaseTarget
 	}
-	if allowComposeServiceTarget && parsed.Hostname() == "postgres" && parsed.Port() == "5432" {
-		return nil
+	return nil
+}
+
+func validMigrationConnectionConfig(connectionConfig *pgx.ConnConfig, allowComposeServiceTarget bool) bool {
+	if connectionConfig == nil || len(connectionConfig.Config.Fallbacks) != 0 || len(connectionConfig.Config.RuntimeParams) != 0 {
+		return false
 	}
-	return ErrUnsafeDatabaseTarget
+	if connectionConfig.Config.Host == "127.0.0.1" && connectionConfig.Config.Port == 15432 {
+		return true
+	}
+	return allowComposeServiceTarget && connectionConfig.Config.Host == "postgres" && connectionConfig.Config.Port == 5432
 }
 
 // Run applies every pending up migration in lexical numeric order. It never
@@ -127,7 +140,7 @@ func Run(ctx context.Context, config Config) error {
 	}
 
 	poolConfig, err := pgxpool.ParseConfig(config.DatabaseURL)
-	if err != nil {
+	if err != nil || !validMigrationConnectionConfig(poolConfig.ConnConfig, isComposeMigrationService()) {
 		return ErrUnsafeDatabaseTarget
 	}
 	poolConfig.ConnConfig.RuntimeParams["search_path"] = quoteIdentifier(config.Schema)

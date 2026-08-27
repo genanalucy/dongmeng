@@ -33,6 +33,9 @@ func TestValidateDatabaseURLFailsClosed(t *testing.T) {
 		{name: "rejects query host override", dsn: "postgres://cloud:" + secret + "@127.0.0.1:15432/cloud?host=postgres", wantErr: true},
 		{name: "rejects query port override", dsn: "postgres://cloud:" + secret + "@127.0.0.1:15432/cloud?port=5432", wantErr: true},
 		{name: "rejects query fallback host override", dsn: "postgres://cloud:" + secret + "@127.0.0.1:15432/cloud?hostaddr=127.0.0.1", wantErr: true},
+		{name: "rejects standard conforming strings override", dsn: "postgres://cloud:" + secret + "@127.0.0.1:15432/cloud?sslmode=disable&standard_conforming_strings=off", wantErr: true},
+		{name: "rejects options override", dsn: "postgres://cloud:" + secret + "@127.0.0.1:15432/cloud?sslmode=disable&options=-c%20standard_conforming_strings%3Doff", wantErr: true},
+		{name: "rejects unknown query parameter", dsn: "postgres://cloud:" + secret + "@127.0.0.1:15432/cloud?sslmode=disable&application_name=migrate", wantErr: true},
 		{name: "rejects empty database", dsn: "postgres://cloud:" + secret + "@127.0.0.1:15432/", wantErr: true},
 	}
 	for _, test := range tests {
@@ -48,6 +51,18 @@ func TestValidateDatabaseURLFailsClosed(t *testing.T) {
 	}
 }
 
+func TestValidateDatabaseURLRejectsRuntimeParametersFromEnvironment(t *testing.T) {
+	const secret = "top-secret"
+	t.Setenv("PGOPTIONS", "-c standard_conforming_strings=off")
+	err := ValidateDatabaseURL("postgres://cloud:"+secret+"@127.0.0.1:15432/cloud?sslmode=disable", false)
+	if !errors.Is(err, ErrUnsafeDatabaseTarget) {
+		t.Fatalf("ValidateDatabaseURL() error = %v, want unsafe target error", err)
+	}
+	if strings.Contains(err.Error(), secret) {
+		t.Fatal("database target validation error exposed the DSN secret")
+	}
+}
+
 func TestRunRejectsUnsafeTargetBeforeReadingMigrationsOrConnecting(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -55,13 +70,18 @@ func TestRunRejectsUnsafeTargetBeforeReadingMigrationsOrConnecting(t *testing.T)
 	}{
 		{name: "host port", databaseURL: "postgres://cloud:top-secret@127.0.0.1:5432/cloud"},
 		{name: "compose target without container opt in", databaseURL: "postgres://cloud:top-secret@postgres:5432/cloud"},
+		{name: "standard conforming strings transaction control bypass", databaseURL: "postgres://cloud:top-secret@127.0.0.1:15432/cloud?sslmode=disable&standard_conforming_strings=off"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			t.Setenv("CLOUD_API_MIGRATE_COMPOSE_SERVICE", "")
+			directory := t.TempDir()
+			if err := os.WriteFile(filepath.Join(directory, "000001_escape.up.sql"), []byte("BEGIN; SELECT 'foo\\'bar'; COMMIT; CREATE TABLE committed_without_ledger(id integer); COMMIT;"), 0o600); err != nil {
+				t.Fatal("write migration fixture")
+			}
 			err := Run(context.Background(), Config{
 				DatabaseURL: test.databaseURL,
-				Directory:   filepath.Join(t.TempDir(), "does-not-exist"),
+				Directory:   directory,
 			})
 			if !errors.Is(err, ErrUnsafeDatabaseTarget) {
 				t.Fatalf("Run() error = %v, want unsafe target error", err)

@@ -177,6 +177,9 @@ func TestIsolatedPostgresTestDSNRejectsUnsafeFallbackAndOverridesBeforeConnectin
 		{name: "multi host fallback", dsn: "postgres://cloud:top-secret@127.0.0.1:15432,127.0.0.1:5432/cloud"},
 		{name: "query host override", dsn: "postgres://cloud:top-secret@127.0.0.1:15432/cloud?host=127.0.0.1"},
 		{name: "query service override", dsn: "postgres://cloud:top-secret@127.0.0.1:15432/cloud?service=unsafe"},
+		{name: "standard conforming strings override", dsn: "postgres://cloud:top-secret@127.0.0.1:15432/cloud?sslmode=disable&standard_conforming_strings=off"},
+		{name: "options override", dsn: "postgres://cloud:top-secret@127.0.0.1:15432/cloud?sslmode=disable&options=-c%20standard_conforming_strings%3Doff"},
+		{name: "unknown runtime parameter", dsn: "postgres://cloud:top-secret@127.0.0.1:15432/cloud?sslmode=disable&application_name=unsafe"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			if _, err := validateIsolatedPostgresTestDSN(test.dsn); !errors.Is(err, migrate.ErrUnsafeDatabaseTarget) {
