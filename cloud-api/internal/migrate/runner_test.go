@@ -90,7 +90,7 @@ func TestRepositoryMigrationsClassifyConcurrentIndexOutsideTransaction(t *testin
 		t.Fatalf("transaction strategies = [%t %t %t], want [false true false]", migrations[0].OutsideTransaction, migrations[1].OutsideTransaction, migrations[2].OutsideTransaction)
 	}
 	index := migrations[1].ConcurrentIndex
-	if index.Name != "refresh_tokens_expiry_idx" || index.Table != "refresh_tokens" || index.Method != "btree" || index.Unique || strings.Join(index.Columns, ",") != "expires_at,id" || index.Where != "" {
+	if index.Name != "refresh_tokens_expiry_idx" || index.Table != "refresh_tokens" || index.Method != "btree" || index.Unique || strings.Join(index.Columns, ",") != "expires_at,id" {
 		t.Fatalf("unexpected repository concurrent index definition: %#v", index)
 	}
 }
@@ -114,9 +114,13 @@ func TestDiscoverMigrationsRejectsUnsafeConcurrentMigrationShapes(t *testing.T) 
 	}
 }
 
-func TestTransactionalSQLRejectsUnknownTransactionControl(t *testing.T) {
-	if _, err := transactionalSQL("-- leading comment\nBEGIN TRANSACTION;\nCREATE TABLE events(id integer);\nCOMMIT;\n-- trailing comment\n"); err != nil {
+func TestTransactionalSQLAcceptsOnlyOneOuterEnvelope(t *testing.T) {
+	body, err := transactionalSQL("-- leading comment\nBEGIN TRANSACTION;\nCREATE TABLE events(id integer);\nCOMMIT;\n-- trailing comment\n")
+	if err != nil {
 		t.Fatalf("known transaction envelope was rejected: %v", err)
+	}
+	if strings.TrimSpace(body) != "CREATE TABLE events(id integer);" {
+		t.Fatalf("transactionalSQL() body = %q, want only the enclosed DDL", body)
 	}
 	for _, sql := range []string{
 		"CREATE TABLE events(id integer); COMMIT;",
@@ -126,9 +130,13 @@ func TestTransactionalSQLRejectsUnknownTransactionControl(t *testing.T) {
 		"CREATE TABLE events(id integer); RELEASE SAVEPOINT nested;",
 		"CREATE TABLE events(id integer); PREPARE TRANSACTION 'prepared';",
 		"CREATE TABLE events(id integer); SET TRANSACTION ISOLATION LEVEL SERIALIZABLE;",
+		"BEGIN; CREATE TABLE first_table(id integer); COMMIT; CREATE TABLE second_table(id integer); COMMIT;",
+		"BEGIN; BEGIN; CREATE TABLE events(id integer); COMMIT; COMMIT;",
+		"BEGIN; CREATE TABLE events(id integer); END; COMMIT;",
+		"BEGIN; CREATE TABLE events(id integer); ABORT; COMMIT;",
 	} {
 		if _, err := transactionalSQL(sql); err == nil {
-			t.Fatalf("unwrapped transaction control was accepted: %q", sql)
+			t.Fatalf("transaction control was accepted: %q", sql)
 		}
 	}
 	if _, err := transactionalSQL("CREATE FUNCTION f() RETURNS void LANGUAGE plpgsql AS $$ BEGIN RAISE NOTICE 'ok'; END; $$;"); err != nil {
@@ -137,20 +145,67 @@ func TestTransactionalSQLRejectsUnknownTransactionControl(t *testing.T) {
 }
 
 func TestConcurrentIndexTargetParsesOnlyVerifiableDefinitions(t *testing.T) {
-	definition, found, err := concurrentIndexTarget("CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS events_active_idx ON app.events USING btree (user_id, created_at) WHERE revoked_at IS NULL;")
+	definition, found, err := concurrentIndexTarget("CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS events_active_idx ON app.events USING btree (user_id, created_at);")
 	if err != nil || !found {
 		t.Fatalf("concurrent index definition was not parsed: found=%t error=%v", found, err)
 	}
-	if definition.Name != "events_active_idx" || definition.Schema != "app" || definition.Table != "events" || definition.Method != "btree" || !definition.Unique || strings.Join(definition.Columns, ",") != "user_id,created_at" || definition.Where != "revoked_at is null" {
+	if definition.Name != "events_active_idx" || definition.Schema != "app" || definition.Table != "events" || definition.Method != "btree" || !definition.Unique || strings.Join(definition.Columns, ",") != "user_id,created_at" {
 		t.Fatalf("unexpected concurrent index definition: %#v", definition)
 	}
 	for _, sql := range []string{
 		"CREATE INDEX CONCURRENTLY unsupported_idx ON events ((lower(email)));",
 		"CREATE INDEX CONCURRENTLY unsupported_idx ON events (email) WHERE deleted_at = now();",
 		"CREATE INDEX CONCURRENTLY unsupported_idx ON events (email) INCLUDE (id);",
+		"CREATE INDEX CONCURRENTLY unsupported_idx ON events USING hash (email);",
+		"CREATE INDEX CONCURRENTLY unsupported_idx ON events (email DESC);",
+		"CREATE INDEX CONCURRENTLY unsupported_idx ON events (email NULLS FIRST);",
+		"CREATE INDEX CONCURRENTLY unsupported_idx ON events (email COLLATE \"C\");",
 	} {
 		if _, _, err := concurrentIndexTarget(sql); err == nil {
 			t.Fatalf("unsupported concurrent definition was accepted: %q", sql)
+		}
+	}
+}
+
+func TestSameConcurrentIndexDefinitionFailsClosedOnUnexpectedCatalogState(t *testing.T) {
+	expected := concurrentIndexDefinition{
+		Schema: "app", Name: "events_email_id_idx", Table: "events", Method: "btree", Columns: []string{"email", "id"},
+	}
+	actual := expected
+	actual.KeyCount = 1
+	actual.IncludeCount = 1
+	actual.DefaultBtreeOpclasses = true
+	actual.DefaultCollations = true
+	actual.DefaultSortOrder = true
+	actual.NoPredicate = true
+	actual.Valid = true
+	if sameConcurrentIndexDefinition(expected, actual) {
+		t.Fatal("sameConcurrentIndexDefinition() accepted an INCLUDE index with the same aggregate attributes")
+	}
+
+	actual = expected
+	actual.KeyCount = 2
+	actual.DefaultBtreeOpclasses = true
+	actual.DefaultCollations = true
+	actual.DefaultSortOrder = true
+	actual.NoPredicate = true
+	actual.Valid = true
+	if !sameConcurrentIndexDefinition(expected, actual) {
+		t.Fatal("sameConcurrentIndexDefinition() rejected the exact restricted btree definition")
+	}
+	for _, mutate := range []func(*concurrentIndexDefinition){
+		func(definition *concurrentIndexDefinition) { definition.Valid = false },
+		func(definition *concurrentIndexDefinition) { definition.DefaultBtreeOpclasses = false },
+		func(definition *concurrentIndexDefinition) { definition.DefaultCollations = false },
+		func(definition *concurrentIndexDefinition) { definition.DefaultSortOrder = false },
+		func(definition *concurrentIndexDefinition) { definition.NoPredicate = false },
+		func(definition *concurrentIndexDefinition) { definition.Columns[1] = "other_id" },
+	} {
+		mismatched := actual
+		mismatched.Columns = append([]string(nil), actual.Columns...)
+		mutate(&mismatched)
+		if sameConcurrentIndexDefinition(expected, mismatched) {
+			t.Fatal("sameConcurrentIndexDefinition() accepted an unknown or mismatched catalog state")
 		}
 	}
 }
@@ -287,11 +342,7 @@ func TestRunSerializesAndRecoversDedicatedPostgresMigrations(t *testing.T) {
 	}
 	done := make(chan error, 1)
 	go func() { done <- Run(ctx, config) }()
-	select {
-	case err := <-done:
-		t.Fatalf("runner did not wait for advisory lock: %v", err)
-	case <-time.After(100 * time.Millisecond):
-	}
+	waitForMigrationLockWaiter(t, ctx, conn)
 	if _, err := conn.Exec(ctx, "SELECT pg_advisory_unlock($1)", migrationAdvisoryLock); err != nil {
 		t.Fatal("release migration advisory lock")
 	}
@@ -301,6 +352,29 @@ func TestRunSerializesAndRecoversDedicatedPostgresMigrations(t *testing.T) {
 	if err := Run(ctx, config); err != nil {
 		t.Fatalf("second runner was not a no-op after lock contention: %v", err)
 	}
+}
+
+func waitForMigrationLockWaiter(t *testing.T, ctx context.Context, conn *pgx.Conn) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		var waiters int
+		err := conn.QueryRow(ctx, `
+SELECT count(*)
+FROM pg_catalog.pg_locks
+WHERE locktype = 'advisory'
+  AND classid::bigint = $1 / 4294967296
+  AND objid::bigint = $1 % 4294967296
+  AND granted = false`, migrationAdvisoryLock).Scan(&waiters)
+		if err != nil {
+			t.Fatal("observe migration advisory lock waiter")
+		}
+		if waiters > 0 {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("runner never reached migration advisory lock wait")
 }
 
 func TestRunRejectsExistingSchemaWithEmptyLedger(t *testing.T) {
@@ -336,25 +410,25 @@ func TestRunRejectsMismatchedOrInvalidConcurrentIndexBeforeLedgerAndRecovers(t *
 		t.Fatal("create concurrent index fixture table")
 	}
 	directory := writeMigrations(t, map[string]string{
-		"000001_concurrent.up.sql": "CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS events_email_idx ON events (email);\n",
+		"000001_concurrent.up.sql": "CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS events_email_id_idx ON events (email, id);\n",
 	})
 	config := Config{DatabaseURL: dsn, Directory: directory, Schema: schema}
 
-	if _, err := conn.Exec(ctx, "CREATE INDEX "+quoteIdentifier(schema)+".events_email_idx ON "+quoteIdentifier(schema)+".events(id)"); err != nil {
-		t.Fatal("create wrong same-name index")
+	if _, err := conn.Exec(ctx, "CREATE UNIQUE INDEX "+quoteIdentifier(schema)+".events_email_id_idx ON "+quoteIdentifier(schema)+".events(email) INCLUDE (id)"); err != nil {
+		t.Fatal("create same-attribute INCLUDE boundary mismatch index")
 	}
 	assertConcurrentMigrationNotLedgered(t, ctx, conn, config, schema)
-	if _, err := conn.Exec(ctx, "DROP INDEX "+quoteIdentifier(schema)+".events_email_idx"); err != nil {
-		t.Fatal("drop wrong same-name index")
+	if _, err := conn.Exec(ctx, "DROP INDEX "+quoteIdentifier(schema)+".events_email_id_idx"); err != nil {
+		t.Fatal("drop INCLUDE boundary mismatch index")
 	}
 	if _, err := conn.Exec(ctx, "INSERT INTO "+quoteIdentifier(schema)+".events(id,email) VALUES(1,'duplicate'),(2,'duplicate')"); err != nil {
 		t.Fatal("seed duplicate values")
 	}
-	if _, err := conn.Exec(ctx, "CREATE UNIQUE INDEX CONCURRENTLY "+quoteIdentifier(schema)+".events_email_idx ON "+quoteIdentifier(schema)+".events(email)"); err == nil {
+	if _, err := conn.Exec(ctx, "CREATE UNIQUE INDEX CONCURRENTLY "+quoteIdentifier(schema)+".events_email_id_idx ON "+quoteIdentifier(schema)+".events(email)"); err == nil {
 		t.Fatal("failed concurrent unique index fixture unexpectedly succeeded")
 	}
 	assertConcurrentMigrationNotLedgered(t, ctx, conn, config, schema)
-	if _, err := conn.Exec(ctx, "DROP INDEX "+quoteIdentifier(schema)+".events_email_idx"); err != nil {
+	if _, err := conn.Exec(ctx, "DROP INDEX "+quoteIdentifier(schema)+".events_email_id_idx"); err != nil {
 		t.Fatal("drop invalid same-name index")
 	}
 	if _, err := conn.Exec(ctx, "DELETE FROM "+quoteIdentifier(schema)+".events WHERE id=1"); err != nil {

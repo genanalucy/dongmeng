@@ -40,10 +40,36 @@ func TestPostgresBusinessLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal("hash integration fixture password")
 	}
+	var userID, adminID, otherID, batchID uuid.UUID
+	t.Cleanup(func() {
+		cleanupContext, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if batchID != uuid.Nil {
+			if _, err := raw.Exec(cleanupContext, `DELETE FROM redemption_codes WHERE batch_id=$1`, batchID); err != nil {
+				t.Error("cleanup fixture redemption codes")
+			}
+			if _, err := raw.Exec(cleanupContext, `DELETE FROM code_batches WHERE id=$1`, batchID); err != nil {
+				t.Error("cleanup fixture code batch")
+			}
+		}
+		userIDs := make([]uuid.UUID, 0, 3)
+		for _, id := range []uuid.UUID{userID, adminID, otherID} {
+			if id != uuid.Nil {
+				userIDs = append(userIDs, id)
+			}
+		}
+		if len(userIDs) > 0 {
+			if _, err := raw.Exec(cleanupContext, `DELETE FROM users WHERE id = ANY($1)`, userIDs); err != nil {
+				t.Error("cleanup fixture users")
+			}
+		}
+	})
+
 	user, trial, err := db.Register(ctx, domain.RegisterParams{Email: integrationEmail(), PasswordHash: hash, Now: now})
 	if err != nil {
 		t.Fatal("register fixture user")
 	}
+	userID = user.ID
 	if trial.UserID != user.ID || !trial.StartsAt.Equal(now) || !trial.ExpiresAt.Equal(now.Add(3*24*time.Hour)) {
 		t.Fatal("registration did not create a fixed three-day trial")
 	}
@@ -62,6 +88,7 @@ func TestPostgresBusinessLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal("register fixture admin")
 	}
+	adminID = admin.ID
 	if _, err := raw.Exec(ctx, `UPDATE users SET role='admin' WHERE id=$1`, admin.ID); err != nil {
 		t.Fatal("make fixture admin")
 	}
@@ -69,27 +96,12 @@ func TestPostgresBusinessLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal("generate fixture redemption code")
 	}
-	var batchID uuid.UUID
 	if err := raw.QueryRow(ctx, `INSERT INTO code_batches(name,duration_days,created_by,created_by_role,created_at) VALUES('integration',365,$1,'admin',$2) RETURNING id`, admin.ID, now).Scan(&batchID); err != nil {
 		t.Fatal("create fixture code batch")
 	}
 	if _, err := raw.Exec(ctx, `INSERT INTO redemption_codes(batch_id,code_hash) VALUES($1,$2)`, batchID, codeHash); err != nil {
 		t.Fatal("create fixture redemption code")
 	}
-	var otherID uuid.UUID
-	t.Cleanup(func() {
-		cleanupContext, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		if _, err := raw.Exec(cleanupContext, `DELETE FROM redemption_codes WHERE batch_id=$1`, batchID); err != nil {
-			t.Error("cleanup fixture redemption codes")
-		}
-		if _, err := raw.Exec(cleanupContext, `DELETE FROM code_batches WHERE id=$1`, batchID); err != nil {
-			t.Error("cleanup fixture code batch")
-		}
-		if _, err := raw.Exec(cleanupContext, `DELETE FROM users WHERE id = ANY($1)`, []uuid.UUID{user.ID, admin.ID, otherID}); err != nil {
-			t.Error("cleanup fixture users")
-		}
-	})
 	canonicalHash, err := auth.HashRedemptionCode("  " + strings.ToLower(code) + "  ")
 	if err != nil {
 		t.Fatal("canonicalize fixture redemption code")
