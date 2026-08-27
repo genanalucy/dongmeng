@@ -1,0 +1,9 @@
+<resources>
+    <!-- 系统窗口仅使用中性色；Compose 品牌色由 BrandConfig/BrandTheme 集中提供。 -->
+    <style name="Theme.Interpretation" parent="android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:fontFamily">sans</item>
+        <item name="android:navigationBarColor">#F7FAF9</item>
+        <item name="android:statusBarColor">#F7FAF9</item>
+        <item name="android:windowLightStatusBar">true</item>
+    </style>
+</resources>

@@ -1,0 +1,447 @@
+package httpapi
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"io"
+	"net/http"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/dngmeng/cloud-api/internal/auth"
+	"github.com/dngmeng/cloud-api/internal/domain"
+	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
+)
+
+const maxBodyBytes int64 = 1 << 20
+
+type businessStore interface {
+	domain.Store
+	auth.AuthorizationStore
+	auth.EntitlementLifecycleStore
+	auth.ConcurrentTranslationSessionStore
+	CreateSession(context.Context, domain.TranslationSession, time.Time) error
+	UserEnabled(context.Context, uuid.UUID) (bool, error)
+	DisableUser(context.Context, uuid.UUID, uuid.UUID, time.Time) error
+	GrantEntitlementByAdmin(context.Context, uuid.UUID, uuid.UUID, time.Time) (domain.Entitlement, error)
+	RevokeEntitlementByAdmin(context.Context, uuid.UUID, uuid.UUID, uuid.UUID, time.Time) error
+}
+type authService interface {
+	Register(context.Context, string, string, time.Time) (auth.RegistrationResult, error)
+	ActiveEntitlement(context.Context, uuid.UUID, time.Time) (domain.Entitlement, error)
+	CreateTranslationSession(context.Context, uuid.UUID, string, time.Time) (auth.TranslationGrant, error)
+	EndTranslationSession(context.Context, uuid.UUID, uuid.UUID, time.Time) error
+	RevokeTranslationSession(context.Context, uuid.UUID, uuid.UUID, time.Time) error
+}
+type api struct {
+	store      businessStore
+	tokens     auth.TokenIssuer
+	authorizer authService
+	now        func() time.Time
+}
+type principalKey struct{}
+type principal struct {
+	id   uuid.UUID
+	role domain.Role
+}
+
+func current(r *http.Request) (principal, bool) {
+	p, ok := r.Context().Value(principalKey{}).(principal)
+	return p, ok
+}
+func (a api) require(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, ok := bearer(r.Header.Values("Authorization"))
+		if !ok {
+			unauthorized(w, r)
+			return
+		}
+		c, err := a.tokens.ParseAccessAt(raw, a.now())
+		if err != nil {
+			unauthorized(w, r)
+			return
+		}
+		id, err := uuid.Parse(c.Subject)
+		if err != nil || id == uuid.Nil {
+			unauthorized(w, r)
+			return
+		}
+		enabled, err := a.store.UserEnabled(r.Context(), id)
+		if err != nil || !enabled {
+			unauthorized(w, r)
+			return
+		}
+		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), principalKey{}, principal{id: id, role: c.Role})))
+	})
+}
+func (a api) admin(next http.Handler) http.Handler {
+	return a.require(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		p, _ := current(r)
+		if !p.role.IsAdmin() {
+			writeError(w, r, http.StatusForbidden, "forbidden")
+			return
+		}
+		next.ServeHTTP(w, r)
+	}))
+}
+func bearer(v []string) (string, bool) {
+	if len(v) != 1 {
+		return "", false
+	}
+	parts := strings.Fields(v[0])
+	return func() (string, bool) {
+		if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") || len(parts[1]) > 4096 {
+			return "", false
+		}
+		return parts[1], true
+	}()
+}
+func unauthorized(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("WWW-Authenticate", `Bearer realm="cloud-api"`)
+	writeError(w, r, http.StatusUnauthorized, "unauthorized")
+}
+func decode(w http.ResponseWriter, r *http.Request, d any) error {
+	if !strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") {
+		return errors.New("content-type")
+	}
+	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBodyBytes))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(d); err != nil {
+		return err
+	}
+	if err := dec.Decode(&struct{}{}); err != io.EOF {
+		return errors.New("multiple values")
+	}
+	return nil
+}
+func inputError(w http.ResponseWriter, r *http.Request) {
+	writeError(w, r, http.StatusBadRequest, "invalid_request")
+}
+func domainError(w http.ResponseWriter, r *http.Request, err error) {
+	switch {
+	case errors.Is(err, domain.ErrInvalid):
+		inputError(w, r)
+	case errors.Is(err, domain.ErrUnauthorized):
+		unauthorized(w, r)
+	case errors.Is(err, domain.ErrForbidden), errors.Is(err, domain.ErrNoEntitlement):
+		writeError(w, r, http.StatusForbidden, "forbidden")
+	case errors.Is(err, domain.ErrNotFound):
+		writeError(w, r, http.StatusNotFound, "not_found")
+	case errors.Is(err, domain.ErrConflict):
+		writeError(w, r, http.StatusConflict, "conflict")
+	default:
+		writeError(w, r, http.StatusInternalServerError, "internal_error")
+	}
+}
+func (a api) register(w http.ResponseWriter, r *http.Request) {
+	var x struct {
+		Email    string `json:"email"`
+		Password string `json:"password"`
+	}
+	if decode(w, r, &x) != nil {
+		inputError(w, r)
+		return
+	}
+	v, e := a.authorizer.Register(r.Context(), x.Email, x.Password, a.now())
+	if e != nil {
+		domainError(w, r, e)
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{"user": v.User, "trial_entitlement": v.Trial})
+}
+func (a api) login(w http.ResponseWriter, r *http.Request) {
+	var x struct {
+		Email    string `json:"email"`
+		Password string `json:"password"`
+	}
+	if decode(w, r, &x) != nil {
+		inputError(w, r)
+		return
+	}
+	email, e := domain.ParseEmail(x.Email)
+	if e != nil {
+		unauthorized(w, r)
+		return
+	}
+	u, hash, e := a.store.UserByEmail(r.Context(), email.String())
+	if e != nil {
+		unauthorized(w, r)
+		return
+	}
+	ok, e := auth.VerifyPassword(hash, x.Password)
+	if e != nil || !ok {
+		unauthorized(w, r)
+		return
+	}
+	a.issueTokens(w, r, u)
+}
+func (a api) issueTokens(w http.ResponseWriter, r *http.Request, u domain.User) {
+	now := a.now()
+	access, e := a.tokens.AccessToken(u.ID, u.Role, 15*time.Minute, now)
+	if e != nil {
+		writeError(w, r, 500, "internal_error")
+		return
+	}
+	refresh, e := (auth.RefreshManager{Store: a.store}).Issue(r.Context(), u.ID, 30*24*time.Hour, now)
+	if e != nil {
+		domainError(w, r, e)
+		return
+	}
+	writeJSON(w, 200, map[string]any{"access_token": access, "refresh_token": refresh.Plaintext, "token_type": "Bearer", "expires_in": 900})
+}
+func (a api) refresh(w http.ResponseWriter, r *http.Request) {
+	var x struct {
+		RefreshToken string `json:"refresh_token"`
+	}
+	if decode(w, r, &x) != nil {
+		inputError(w, r)
+		return
+	}
+	issue, e := (auth.RefreshManager{Store: a.store}).Rotate(r.Context(), x.RefreshToken, 30*24*time.Hour, a.now())
+	if e != nil {
+		unauthorized(w, r)
+		return
+	}
+	u, e := a.store.UserByID(r.Context(), issue.Token.UserID)
+	if e != nil {
+		unauthorized(w, r)
+		return
+	}
+	access, e := a.tokens.AccessToken(u.ID, u.Role, 15*time.Minute, a.now())
+	if e != nil {
+		writeError(w, r, 500, "internal_error")
+		return
+	}
+	writeJSON(w, 200, map[string]any{"access_token": access, "refresh_token": issue.Plaintext, "token_type": "Bearer", "expires_in": 900})
+}
+func (a api) logout(w http.ResponseWriter, r *http.Request) {
+	var x struct {
+		RefreshToken string `json:"refresh_token"`
+	}
+	if decode(w, r, &x) != nil {
+		inputError(w, r)
+		return
+	}
+	if e := (auth.RefreshManager{Store: a.store}).Revoke(r.Context(), x.RefreshToken, a.now()); e != nil {
+		inputError(w, r)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+func (a api) me(w http.ResponseWriter, r *http.Request) {
+	p, _ := current(r)
+	u, e := a.store.UserByID(r.Context(), p.id)
+	if e != nil {
+		domainError(w, r, e)
+		return
+	}
+	writeJSON(w, 200, u)
+}
+func (a api) devices(w http.ResponseWriter, r *http.Request) {
+	p, _ := current(r)
+	v, e := a.store.ListDevices(r.Context(), p.id)
+	if e != nil {
+		domainError(w, r, e)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"devices": v})
+}
+
+func (a api) entitlement(w http.ResponseWriter, r *http.Request) {
+	p, _ := current(r)
+	v, e := a.authorizer.ActiveEntitlement(r.Context(), p.id, a.now())
+	if e != nil {
+		domainError(w, r, e)
+		return
+	}
+	writeJSON(w, 200, v)
+}
+func (a api) redeem(w http.ResponseWriter, r *http.Request) {
+	var x struct {
+		Code string `json:"code"`
+	}
+	if decode(w, r, &x) != nil {
+		inputError(w, r)
+		return
+	}
+	h, e := auth.HashRedemptionCode(x.Code)
+	if e != nil {
+		inputError(w, r)
+		return
+	}
+	p, _ := current(r)
+	v, e := a.store.RedeemCode(r.Context(), p.id, h, a.now())
+	if e != nil {
+		domainError(w, r, e)
+		return
+	}
+	writeJSON(w, 201, v)
+}
+func (a api) session(w http.ResponseWriter, r *http.Request) {
+	var x struct {
+		InstallID string `json:"install_id"`
+	}
+	if decode(w, r, &x) != nil {
+		inputError(w, r)
+		return
+	}
+	p, _ := current(r)
+	v, e := a.authorizer.CreateTranslationSession(r.Context(), p.id, x.InstallID, a.now())
+	if e != nil {
+		domainError(w, r, e)
+		return
+	}
+	writeJSON(w, 201, map[string]any{"session_id": v.Session.ID, "user_id": p.id, "install_id": v.Session.InstallID, "expires_at": v.Session.ExpiresAt, "token": v.Token})
+}
+func (a api) sessions(w http.ResponseWriter, r *http.Request) {
+	p, _ := current(r)
+	l, o := page(r)
+	v, e := a.store.ListTranslationSessions(r.Context(), p.id, l, o)
+	if e != nil {
+		domainError(w, r, e)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"translation_sessions": v})
+}
+func (a api) sessionTerminal(revoke bool) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, e := uuid.Parse(chi.URLParam(r, "sessionID"))
+		if e != nil || id == uuid.Nil || id.String() != chi.URLParam(r, "sessionID") {
+			inputError(w, r)
+			return
+		}
+		p, _ := current(r)
+		if revoke {
+			e = a.authorizer.RevokeTranslationSession(r.Context(), p.id, id, a.now())
+		} else {
+			e = a.authorizer.EndTranslationSession(r.Context(), p.id, id, a.now())
+		}
+		if e != nil {
+			domainError(w, r, e)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+func (a api) usage(w http.ResponseWriter, r *http.Request) {
+	var x struct {
+		SessionID    uuid.UUID `json:"session_id"`
+		AudioSeconds int       `json:"audio_seconds"`
+		Characters   int       `json:"characters"`
+	}
+	if decode(w, r, &x) != nil || x.SessionID == uuid.Nil || x.AudioSeconds < 0 || x.Characters < 0 {
+		inputError(w, r)
+		return
+	}
+	p, _ := current(r)
+	e := a.store.CreateUsageRecord(r.Context(), domain.CreateUsageParams{UserID: p.id, SessionID: x.SessionID, AudioSeconds: x.AudioSeconds, Characters: x.Characters, Now: a.now()})
+	if e != nil {
+		domainError(w, r, e)
+		return
+	}
+	w.WriteHeader(201)
+}
+func (a api) consent(w http.ResponseWriter, r *http.Request) {
+	var x struct {
+		Granted bool `json:"granted"`
+	}
+	if decode(w, r, &x) != nil {
+		inputError(w, r)
+		return
+	}
+	p, _ := current(r)
+	v, e := a.store.CreateFeedbackConsent(r.Context(), p.id, x.Granted, a.now())
+	if e != nil {
+		domainError(w, r, e)
+		return
+	}
+	writeJSON(w, 201, v)
+}
+func (a api) artifact(w http.ResponseWriter, r *http.Request) {
+	var x struct {
+		ConsentID uuid.UUID `json:"consent_id"`
+		ObjectKey string    `json:"object_key"`
+	}
+	if decode(w, r, &x) != nil || x.ConsentID == uuid.Nil || strings.TrimSpace(x.ObjectKey) != x.ObjectKey || x.ObjectKey == "" {
+		inputError(w, r)
+		return
+	}
+	p, _ := current(r)
+	now := a.now()
+	v, e := a.store.CreateFeedbackArtifact(r.Context(), domain.CreateArtifactParams{UserID: p.id, ConsentID: x.ConsentID, ObjectKey: x.ObjectKey, Now: now, ExpiresAt: now.Add(14 * 24 * time.Hour)})
+	if e != nil {
+		domainError(w, r, e)
+		return
+	}
+	writeJSON(w, 201, v)
+}
+func (a api) getArtifact(w http.ResponseWriter, r *http.Request) {
+	id, e := uuid.Parse(chi.URLParam(r, "artifactID"))
+	if e != nil || id == uuid.Nil {
+		inputError(w, r)
+		return
+	}
+	p, _ := current(r)
+	v, e := a.store.FeedbackArtifact(r.Context(), p.id, id)
+	if e != nil {
+		domainError(w, r, e)
+		return
+	}
+	writeJSON(w, 200, v)
+}
+func page(r *http.Request) (int, int) {
+	l, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	o, _ := strconv.Atoi(r.URL.Query().Get("offset"))
+	if l < 1 || l > 100 {
+		l = 50
+	}
+	if o < 0 {
+		o = 0
+	}
+	return l, o
+}
+func (a api) users(w http.ResponseWriter, r *http.Request) {
+	l, o := page(r)
+	search := strings.TrimSpace(r.URL.Query().Get("q"))
+	if len(search) > 254 {
+		inputError(w, r)
+		return
+	}
+	v, e := a.store.ListUsers(r.Context(), search, l, o)
+	if e != nil {
+		domainError(w, r, e)
+		return
+	}
+	writeJSON(w, 200, map[string]any{"users": v})
+}
+func (a api) sessionsAdmin(w http.ResponseWriter, r *http.Request) {
+	user, ok := pathUUID(r, "userID")
+	if !ok {
+		inputError(w, r)
+		return
+	}
+	l, o := page(r)
+	v, e := a.store.ListTranslationSessions(r.Context(), user, l, o)
+	if e != nil {
+		domainError(w, r, e)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"translation_sessions": v})
+}
+func (a api) usageAdmin(w http.ResponseWriter, r *http.Request) {
+	user, ok := pathUUID(r, "userID")
+	if !ok {
+		inputError(w, r)
+		return
+	}
+	l, o := page(r)
+	v, e := a.store.ListUsageRecords(r.Context(), user, l, o)
+	if e != nil {
+		domainError(w, r, e)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"usage_records": v})
+}

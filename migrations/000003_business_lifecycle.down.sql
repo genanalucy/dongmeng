@@ -1,0 +1,16 @@
+BEGIN;
+DROP TABLE IF EXISTS user_devices;
+ALTER TABLE code_batches DROP CONSTRAINT IF EXISTS code_batches_annual_duration;
+DROP INDEX IF EXISTS translation_sessions_active_user_idx;
+DROP INDEX IF EXISTS entitlements_active_unrevoked_idx;
+DROP INDEX IF EXISTS users_active_email_idx;
+ALTER TABLE translation_sessions DROP CONSTRAINT IF EXISTS translation_sessions_revocation_valid;
+ALTER TABLE translation_sessions DROP CONSTRAINT IF EXISTS translation_sessions_terminal_valid;
+ALTER TABLE entitlements DROP CONSTRAINT IF EXISTS entitlements_revocation_valid;
+ALTER TABLE translation_sessions DROP CONSTRAINT IF EXISTS translation_sessions_install_id_valid;
+ALTER TABLE translation_sessions DROP COLUMN IF EXISTS revoked_at;
+ALTER TABLE translation_sessions DROP COLUMN IF EXISTS ended_at;
+ALTER TABLE translation_sessions DROP COLUMN IF EXISTS install_id;
+ALTER TABLE entitlements DROP COLUMN IF EXISTS revoked_at;
+ALTER TABLE users DROP COLUMN IF EXISTS disabled_at;
+COMMIT;
