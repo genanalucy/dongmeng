@@ -129,6 +129,33 @@ type concurrentIndexDefinition struct {
 	Immediate             bool
 }
 
+const concurrentIndexDefinitionQuery = `
+SELECT i.indisvalid,
+       table_namespace.nspname,
+       table_class.relname,
+       access_method.amname,
+       i.indisunique,
+       i.indnullsnotdistinct,
+       i.indimmediate,
+       i.indnkeyatts,
+       i.indnatts - i.indnkeyatts,
+       COALESCE(array_agg(attribute.attname ORDER BY key_column.ordinality) FILTER (WHERE key_column.ordinality <= i.indnkeyatts), ARRAY[]::text[]),
+       COALESCE(bool_and((attribute.attname IS NOT NULL AND opclass.opcdefault) IS TRUE) FILTER (WHERE key_column.ordinality <= i.indnkeyatts), false),
+       COALESCE(bool_and((key_column.collation_oid = 0 OR key_column.collation_oid = attribute.attcollation) IS TRUE) FILTER (WHERE key_column.ordinality <= i.indnkeyatts), false),
+       COALESCE(bool_and((key_column.option = 0) IS TRUE) FILTER (WHERE key_column.ordinality <= i.indnkeyatts), false),
+       i.indpred IS NULL
+FROM pg_catalog.pg_index i
+JOIN pg_catalog.pg_class index_class ON index_class.oid = i.indexrelid
+JOIN pg_catalog.pg_namespace index_namespace ON index_namespace.oid = index_class.relnamespace
+JOIN pg_catalog.pg_class table_class ON table_class.oid = i.indrelid
+JOIN pg_catalog.pg_namespace table_namespace ON table_namespace.oid = table_class.relnamespace
+JOIN pg_catalog.pg_am access_method ON access_method.oid = index_class.relam
+LEFT JOIN LATERAL unnest(i.indkey::smallint[], i.indclass::oid[], i.indcollation::oid[], i.indoption::smallint[]) WITH ORDINALITY AS key_column(attnum, opclass_oid, collation_oid, option, ordinality) ON true
+LEFT JOIN pg_catalog.pg_attribute attribute ON attribute.attrelid = table_class.oid AND attribute.attnum = key_column.attnum
+LEFT JOIN pg_catalog.pg_opclass opclass ON opclass.oid = key_column.opclass_oid
+WHERE index_namespace.nspname = $1 AND index_class.relname = $2
+GROUP BY i.indisvalid, table_namespace.nspname, table_class.relname, access_method.amname, i.indisunique, i.indnullsnotdistinct, i.indimmediate, i.indnkeyatts, i.indnatts, (i.indpred IS NULL)`
+
 var migrationDSNAllowedKeys = []string{"host", "port", "database", "user", "password", "sslmode"}
 
 // ValidateDatabaseURL permits exactly the host test listener or, when called
@@ -363,34 +390,8 @@ func concurrentIndexMatches(ctx context.Context, connection *pgxpool.Conn, expec
 	if expected.Schema == "" {
 		expected.Schema = defaultSchema
 	}
-	const indexDefinition = `
-SELECT i.indisvalid,
-       table_namespace.nspname,
-       table_class.relname,
-       access_method.amname,
-       i.indisunique,
-       i.indnullsnotdistinct,
-       i.indimmediate,
-       i.indnkeyatts,
-       i.indnatts - i.indnkeyatts,
-       COALESCE(array_agg(attribute.attname ORDER BY key_column.ordinality) FILTER (WHERE key_column.ordinality <= i.indnkeyatts), ARRAY[]::text[]),
-       COALESCE(bool_and((attribute.attname IS NOT NULL AND opclass.opcdefault) IS TRUE) FILTER (WHERE key_column.ordinality <= i.indnkeyatts), false),
-       COALESCE(bool_and((key_column.collation = 0 OR key_column.collation = attribute.attcollation) IS TRUE) FILTER (WHERE key_column.ordinality <= i.indnkeyatts), false),
-       COALESCE(bool_and((key_column.option = 0) IS TRUE) FILTER (WHERE key_column.ordinality <= i.indnkeyatts), false),
-       i.indpred IS NULL
-FROM pg_catalog.pg_index i
-JOIN pg_catalog.pg_class index_class ON index_class.oid = i.indexrelid
-JOIN pg_catalog.pg_namespace index_namespace ON index_namespace.oid = index_class.relnamespace
-JOIN pg_catalog.pg_class table_class ON table_class.oid = i.indrelid
-JOIN pg_catalog.pg_namespace table_namespace ON table_namespace.oid = table_class.relnamespace
-JOIN pg_catalog.pg_am access_method ON access_method.oid = index_class.relam
-LEFT JOIN LATERAL unnest(i.indkey::smallint[], i.indclass::oid[], i.indcollation::oid[], i.indoption::smallint[]) WITH ORDINALITY AS key_column(attnum, opclass_oid, collation, option, ordinality) ON true
-LEFT JOIN pg_catalog.pg_attribute attribute ON attribute.attrelid = table_class.oid AND attribute.attnum = key_column.attnum
-LEFT JOIN pg_catalog.pg_opclass opclass ON opclass.oid = key_column.opclass_oid
-WHERE index_namespace.nspname = $1 AND index_class.relname = $2
-GROUP BY i.indisvalid, table_namespace.nspname, table_class.relname, access_method.amname, i.indisunique, i.indnullsnotdistinct, i.indimmediate, i.indnkeyatts, i.indnatts, (i.indpred IS NULL)`
 	var actual concurrentIndexDefinition
-	if err := connection.QueryRow(ctx, indexDefinition, expected.Schema, expected.Name).Scan(
+	if err := connection.QueryRow(ctx, concurrentIndexDefinitionQuery, expected.Schema, expected.Name).Scan(
 		&actual.Valid, &actual.Schema, &actual.Table, &actual.Method, &actual.Unique, &actual.NullsNotDistinct, &actual.Immediate, &actual.KeyCount, &actual.IncludeCount, &actual.Columns,
 		&actual.DefaultBtreeOpclasses, &actual.DefaultCollations, &actual.DefaultSortOrder, &actual.NoPredicate,
 	); err != nil {

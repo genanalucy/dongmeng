@@ -3,6 +3,7 @@ package migrate
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -271,6 +272,31 @@ func TestDatabaseFailureOnlyReturnsWhitelistedDiagnostics(t *testing.T) {
 				t.Fatal("database failure exposed an underlying database error")
 			}
 		})
+	}
+}
+
+const nullsNotDistinctFixtureSQLTemplate = "CREATE UNIQUE INDEX events_email_idx ON %s.events(email) NULLS NOT DISTINCT"
+
+func nullsNotDistinctFixtureSQL(schema string) string {
+	return fmt.Sprintf(nullsNotDistinctFixtureSQLTemplate, quoteIdentifier(schema))
+}
+
+func TestPG17SyntaxFixturesAvoidReservedAliasAndPlaceNullsClauseAfterKeys(t *testing.T) {
+	const alias = "AS key_column(attnum, opclass_oid, collation_oid, option, ordinality)"
+	if !strings.Contains(concurrentIndexDefinitionQuery, alias) {
+		t.Fatal("catalog query does not use a non-keyword collation alias")
+	}
+	if strings.Count(concurrentIndexDefinitionQuery, "key_column.collation_oid") != 2 {
+		t.Fatal("catalog query does not reference the replacement collation alias twice")
+	}
+	if strings.Contains(concurrentIndexDefinitionQuery, "key_column.collation =") {
+		t.Fatal("catalog query still references the reserved collation alias")
+	}
+
+	const schema = "migration_test"
+	want := `CREATE UNIQUE INDEX events_email_idx ON "migration_test".events(email) NULLS NOT DISTINCT`
+	if got := nullsNotDistinctFixtureSQL(schema); got != want {
+		t.Fatalf("NULLS NOT DISTINCT fixture SQL = %q, want %q", got, want)
 	}
 }
 
@@ -577,7 +603,7 @@ func TestRunRejectsNullsNotDistinctConcurrentIndexBeforeLedger(t *testing.T) {
 		"000001_concurrent.up.sql": "CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS events_email_idx ON events (email);\n",
 	})
 	config := Config{DatabaseURL: dsn, Directory: directory, Schema: schema}
-	if _, err := conn.Exec(ctx, "CREATE UNIQUE NULLS NOT DISTINCT INDEX events_email_idx ON "+quoteIdentifier(schema)+".events(email)"); err != nil {
+	if _, err := conn.Exec(ctx, nullsNotDistinctFixtureSQL(schema)); err != nil {
 		fatalDatabase(t, "fixture.create-nulls-not-distinct-index", err)
 	}
 	assertConcurrentMigrationNotLedgered(t, ctx, conn, config, schema)
