@@ -25,23 +25,37 @@ type ListState<T> =
   | { readonly kind: 'forbidden'; readonly error: string }
   | { readonly kind: 'error'; readonly error: string }
 
+interface LastNonEmptyPage<T> {
+  readonly search: string
+  readonly offset: number
+  readonly data: readonly T[]
+}
+
 export function AdminListPanel<T>({ eyebrow, title, description, endpoint, emptyMessage, load, headers, renderRow, searchLabel }: AdminListPanelProps<T>): ReactElement {
   const [state, setState] = useState<ListState<T>>({ kind: 'loading', data: null })
-  const lastNonEmptyData = useRef<readonly T[] | null>(null)
+  const requestGeneration = useRef(0)
+  const lastNonEmptyPage = useRef<LastNonEmptyPage<T> | null>(null)
   const [offset, setOffset] = useState(0)
   const [searchInput, setSearchInput] = useState('')
   const [search, setSearch] = useState('')
 
   const loadPage = useCallback(async (nextOffset: number, nextSearch: string): Promise<void> => {
-    setState({ kind: 'loading', data: lastNonEmptyData.current })
+    const generation = requestGeneration.current + 1
+    requestGeneration.current = generation
+    const cachedPage = lastNonEmptyPage.current
+    const loadingData = cachedPage !== null && cachedPage.search === nextSearch ? cachedPage.data : null
+    setState({ kind: 'loading', data: loadingData })
     const result = await load({ limit: pageSize, offset: nextOffset, ...(nextSearch === '' ? {} : { q: nextSearch }) })
+    if (generation !== requestGeneration.current) return
     if (result.kind === 'success') {
-      if (result.data.length === 0 && nextOffset > 0 && lastNonEmptyData.current !== null) {
-        setOffset(nextOffset - pageSize)
-        setState({ kind: 'ready', data: lastNonEmptyData.current })
+      const previousPage = lastNonEmptyPage.current
+      if (result.data.length === 0 && nextOffset > 0 && previousPage !== null
+        && previousPage.search === nextSearch && previousPage.offset === nextOffset - pageSize) {
+        setOffset(previousPage.offset)
+        setState({ kind: 'ready', data: previousPage.data })
         return
       }
-      if (result.data.length > 0) lastNonEmptyData.current = result.data
+      if (result.data.length > 0) lastNonEmptyPage.current = { search: nextSearch, offset: nextOffset, data: result.data }
       setState({ kind: 'ready', data: result.data })
       return
     }
