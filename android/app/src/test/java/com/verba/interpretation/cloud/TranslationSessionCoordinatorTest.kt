@@ -2,12 +2,18 @@ package com.verba.interpretation.cloud
 
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.DelicateCoroutinesApi
-import kotlinx.coroutines.ExecutorCoroutineDispatcher
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.ExecutorCoroutineDispatcher
 import kotlinx.coroutines.newSingleThreadContext
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.runCurrent
+import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -121,6 +127,35 @@ class TranslationSessionCoordinatorTest {
         assertEquals("session-1", service.ended)
         assertEquals(1, service.usageCalls)
         assertEquals(2, service.endCalls)
+    }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    @Test fun successfulEndRetryDoesNotPublishTerminalFailure() = runTest {
+        val service = FakeService(failEndAttempts = 1)
+        val coordinator = TranslationSessionCoordinator(
+            cloud = service,
+            scope = this,
+            elapsedRealtimeMillis = { 1_000L },
+            ioDispatcher = StandardTestDispatcher(testScheduler),
+            maxEndAttempts = 2,
+            retryDelayMillis = { 0L },
+        )
+        val terminalFailure = MutableStateFlow<CloudSessionFailureCode?>(null)
+        val observer = collectTerminalCloudSessionFailures(
+            coordinator.endFailures,
+            backgroundScope,
+        ) { terminalFailure.value = it }
+        runCurrent()
+        var actual: TranslationSessionGrant? = null
+        coordinator.open(onGranted = { actual = it }, onFailure = { throw AssertionError(it) })
+        advanceUntilIdle()
+
+        coordinator.end(actual?.sessionId)
+        advanceUntilIdle()
+
+        assertEquals(2, service.endCalls)
+        assertNull(terminalFailure.value)
+        observer.cancel()
     }
 
     @Test fun endReportsBoundedRetryFailureWithoutRepeatingUsage() = runBlocking {

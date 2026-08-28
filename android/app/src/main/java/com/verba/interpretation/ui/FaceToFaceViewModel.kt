@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import com.verba.interpretation.audio.CaptureResult
 import com.verba.interpretation.cloud.CloudApi
 import com.verba.interpretation.cloud.CloudEndpointSettings
+import com.verba.interpretation.cloud.CloudSessionFailureCode
 import com.verba.interpretation.cloud.KeystoreTokenStore
 import com.verba.interpretation.cloud.SharedPreferencesInstallationIdStore
 import com.verba.interpretation.cloud.TranslationSessionCoordinator
@@ -36,6 +37,8 @@ class FaceToFaceViewModel(application: Application) : AndroidViewModel(applicati
         CloudApi(CloudEndpointSettings(application), KeystoreTokenStore(application), SharedPreferencesInstallationIdStore(application)),
         viewModelScope,
     )
+    private val mutableCloudSessionCloseFailure = MutableStateFlow<CloudSessionFailureCode?>(null)
+    val cloudSessionCloseFailure: StateFlow<CloudSessionFailureCode?> = mutableCloudSessionCloseFailure.asStateFlow()
     private val playbackExecutor = Executors.newSingleThreadExecutor { task ->
         Thread(task, "verba-face-tts").apply { isDaemon = true }
     }
@@ -46,6 +49,14 @@ class FaceToFaceViewModel(application: Application) : AndroidViewModel(applicati
     private var pendingGrantOpen: OpenHandle? = null
     private var operationGeneration = 0L
     private var nextTurnId = 1L
+
+    init {
+        observeFaceToFaceCloudSessionFailures(
+            cloudSessions.endFailures,
+            viewModelScope,
+            mutableCloudSessionCloseFailure,
+        )
+    }
 
     fun setMode(mode: FaceToFaceMode) = synchronized(actionLock) {
         if (coordinator.setMode(mode)) publishState()

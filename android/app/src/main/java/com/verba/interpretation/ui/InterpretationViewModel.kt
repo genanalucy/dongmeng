@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import com.verba.interpretation.audio.CaptureResult
 import com.verba.interpretation.cloud.CloudApi
 import com.verba.interpretation.cloud.CloudEndpointSettings
+import com.verba.interpretation.cloud.CloudSessionFailureCode
 import com.verba.interpretation.cloud.KeystoreTokenStore
 import com.verba.interpretation.cloud.SharedPreferencesInstallationIdStore
 import com.verba.interpretation.cloud.TranslationSessionCoordinator
@@ -33,12 +34,22 @@ class InterpretationViewModel(application: Application) : AndroidViewModel(appli
         CloudApi(CloudEndpointSettings(application), KeystoreTokenStore(application), SharedPreferencesInstallationIdStore(application)),
         viewModelScope,
     )
+    private val mutableCloudSessionCloseFailure = MutableStateFlow<CloudSessionFailureCode?>(null)
+    val cloudSessionCloseFailure: StateFlow<CloudSessionFailureCode?> = mutableCloudSessionCloseFailure.asStateFlow()
     private val sessions = TurnSessionCoordinator<AgentSocket>()
     private val actionLock = Any()
     private var cloudGrant: TranslationSessionGrant? = null
     private var pendingGrantOpen: OpenHandle? = null
     private var operationGeneration = 0L
     private var nextTurnId = 1L
+
+    init {
+        observeInterpretationCloudSessionFailures(
+            cloudSessions.endFailures,
+            viewModelScope,
+            mutableCloudSessionCloseFailure,
+        )
+    }
 
     fun setLanguages(sourceLanguage: String, targetLanguage: String) {
         if (mutableState.value.phase != SessionPhase.IDLE || !supportsTranslationPair(sourceLanguage, targetLanguage)) return
