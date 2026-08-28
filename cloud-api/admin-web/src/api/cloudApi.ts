@@ -30,6 +30,17 @@ export interface AuthTokens {
   readonly expiresIn: number
 }
 
+export interface Pagination {
+  readonly limit: number
+  readonly offset: number
+}
+
+export interface UserListQuery extends Pagination {
+  readonly q?: string
+}
+
+export type AuditListQuery = Pagination
+
 export interface AuditLog {
   readonly id: string
   readonly admin_id: string
@@ -213,7 +224,7 @@ export class CloudApiClient {
   }
 
   logout(refreshToken: string): Promise<ApiResult<Record<string, never>>> {
-    return this.post('/api/v1/auth/logout', { refresh_token: refreshToken }, (body) => isRecord(body) ? {} : {})
+    return this.post('/api/v1/auth/logout', { refresh_token: refreshToken }, (body) => isRecord(body) ? {} : {}, true)
   }
 
   me(): Promise<ApiResult<CurrentUser>> {
@@ -242,8 +253,18 @@ export class CloudApiClient {
     return { health: toProbe(healthResult, 'ok', '存活探针'), ready: toProbe(readyResult, 'ready', '就绪探针'), config: configResult.data }
   }
 
-  listUsers(): Promise<ApiResult<readonly AdminUser[]>> { return this.get('/api/v1/admin/users', parseArrayEnvelope('users', parseAdminUser)) }
-  listAuditLogs(): Promise<ApiResult<readonly AuditLog[]>> { return this.get('/api/v1/admin/audit-logs', parseArrayEnvelope('audit_logs', parseAuditLog)) }
+  listUsers(query: UserListQuery = { limit: 50, offset: 0 }): Promise<ApiResult<readonly AdminUser[]>> {
+    const parameters = new URLSearchParams()
+    if (query.q !== undefined && query.q !== '') parameters.set('q', query.q)
+    parameters.set('limit', String(query.limit))
+    parameters.set('offset', String(query.offset))
+    return this.get(`/api/v1/admin/users?${parameters.toString()}`, parseArrayEnvelope('users', parseAdminUser))
+  }
+
+  listAuditLogs(query: AuditListQuery = { limit: 50, offset: 0 }): Promise<ApiResult<readonly AuditLog[]>> {
+    const parameters = new URLSearchParams({ limit: String(query.limit), offset: String(query.offset) })
+    return this.get(`/api/v1/admin/audit-logs?${parameters.toString()}`, parseArrayEnvelope('audit_logs', parseAuditLog))
+  }
 }
 
 export function apiErrorMessage<T>(result: Exclude<ApiResult<T>, { readonly kind: 'success' }>): string { return errorMessage(result.error, result.requestId) }

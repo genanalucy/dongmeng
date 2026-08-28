@@ -3,6 +3,7 @@ package httpapi
 import (
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/dngmeng/cloud-api/internal/auth"
 	"github.com/dngmeng/cloud-api/internal/domain"
@@ -92,6 +93,24 @@ func (a api) codeBatch(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusCreated, map[string]any{"batch": v, "codes": codes})
 }
+
+type adminAuditLogResponse struct {
+	ID         uuid.UUID      `json:"id"`
+	AdminID    uuid.UUID      `json:"admin_id"`
+	Action     string         `json:"action"`
+	TargetType string         `json:"target_type"`
+	TargetID   *uuid.UUID     `json:"target_id,omitempty"`
+	Metadata   map[string]any `json:"metadata"`
+	CreatedAt  time.Time      `json:"created_at"`
+}
+
+func safeAuditLogResponse(log domain.AuditLog) adminAuditLogResponse {
+	return adminAuditLogResponse{
+		ID: log.ID, AdminID: log.AdminID, Action: log.Action, TargetType: log.TargetType,
+		TargetID: log.TargetID, Metadata: map[string]any{}, CreatedAt: log.CreatedAt,
+	}
+}
+
 func (a api) auditLogs(w http.ResponseWriter, r *http.Request) {
 	l, o := page(r)
 	v, e := a.store.ListAuditLogs(r.Context(), l, o)
@@ -99,7 +118,11 @@ func (a api) auditLogs(w http.ResponseWriter, r *http.Request) {
 		domainError(w, r, e)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"audit_logs": v})
+	response := make([]adminAuditLogResponse, len(v))
+	for i, log := range v {
+		response[i] = safeAuditLogResponse(log)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"audit_logs": response})
 }
 
 var _ = strings.TrimSpace

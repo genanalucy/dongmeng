@@ -34,16 +34,34 @@ All endpoints below require exactly one `Authorization: Bearer <access JWT>`.
 
 ## Admin
 
-Admin access JWT only. All mutations append an immutable audit record.
+管理员端点需要有效 access JWT 且 JWT `role=admin`。缺少、无效或已禁用用户的 token 返回 `401`；有效但非管理员 token 返回 `403`。所有 mutation 追加不可变 audit record。
 
-- `GET /api/v1/admin/users?q=<email>&limit=&offset=` — bounded email search.
+### 列表读取
+
+`GET /api/v1/admin/users?q=<email>&limit=<n>&offset=<n>` 返回：
+
+```json
+{"users":[{"id":"uuid","email":"admin@example.com","role":"admin","created_at":"2026-01-02T03:04:05Z"}]}
+```
+
+`q` 可选（最多 254 字符）；`limit` 默认 `50`、最大 `100`，无效值使用默认；`offset` 默认 `0`，负值按 `0` 处理。
+
+`GET /api/v1/admin/audit-logs?limit=<n>&offset=<n>` 返回：
+
+```json
+{"audit_logs":[{"id":"uuid","admin_id":"uuid","action":"user.disabled","target_type":"user","target_id":"uuid","metadata":{},"created_at":"2026-01-02T03:04:05Z"}]}
+```
+
+审计 `limit`/`offset` 使用与用户列表相同的默认和上限。`target_id` 可选。服务端 HTTP DTO 固定把审计 `metadata` 投影为 `{}`；绝不把存储层的开放 metadata、secret 或任意嵌套值暴露给浏览器。
+
+### 其他管理员端点
+
 - `POST /api/v1/admin/users/{userID}/disable`
 - `GET /api/v1/admin/users/{userID}/translation-sessions?limit=&offset=`
 - `GET /api/v1/admin/users/{userID}/usage-records?limit=&offset=`
 - `POST /api/v1/admin/users/{userID}/entitlements` — grant a stacked 365-day entitlement.
 - `POST /api/v1/admin/users/{userID}/entitlements/{entitlementID}/revoke`
 - `POST /api/v1/admin/code-batches` — `{ "name": "…", "count": 1..1000 }`; response includes plaintext codes once only.
-- `GET /api/v1/admin/audit-logs?limit=&offset=`
 
 ## Translation JWT / main Agent contract
 

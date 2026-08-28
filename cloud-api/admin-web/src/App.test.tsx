@@ -72,7 +72,7 @@ describe('App', () => {
   it('calls the logout endpoint and clears the session', async () => {
     sessionStorage.setItem('cloud-api.admin.access-token', 'access-value')
     sessionStorage.setItem('cloud-api.admin.refresh-token', 'refresh-value')
-    const fetchMock = vi.fn((url: string) => {
+    const fetchMock = vi.fn<(url: string, init?: RequestInit) => Promise<Response>>((url: string) => {
       if (url.endsWith('/users/me')) return Promise.resolve(adminUser())
       if (url.endsWith('/auth/logout')) return Promise.resolve(jsonResponse({}))
       return Promise.resolve(platformResponse(url))
@@ -84,7 +84,59 @@ describe('App', () => {
     fireEvent.click(screen.getByRole('button', { name: '退出登录' }))
 
     await waitFor(() => expect(screen.getByRole('heading', { name: '管理员登录' })).toBeInTheDocument())
-    expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith('/auth/logout'))).toBe(true)
+    const logoutCall = fetchMock.mock.calls.find(([url]) => String(url).endsWith('/auth/logout'))
+    expect(logoutCall).toBeDefined()
+    expect(logoutCall?.[1]).toMatchObject({ method: 'POST', body: JSON.stringify({ refresh_token: 'refresh-value' }) })
+    expect(((logoutCall?.[1] as RequestInit).headers as Headers).get('Authorization')).toBe('Bearer access-value')
     expect(sessionStorage.getItem('cloud-api.admin.access-token')).toBeNull()
+  })
+
+  it('submits an email search at offset zero and lets users page through results', async () => {
+    sessionStorage.setItem('cloud-api.admin.access-token', 'access-value')
+    sessionStorage.setItem('cloud-api.admin.refresh-token', 'refresh-value')
+    const fetchMock = vi.fn<(url: string, init?: RequestInit) => Promise<Response>>((url: string) => {
+      if (url.endsWith('/users/me')) return Promise.resolve(adminUser())
+      if (url.includes('/admin/users')) return Promise.resolve(jsonResponse({ users: Array.from({ length: 50 }, (_, index) => ({ id: `user-${index}`, email: `user-${index}@example.test`, role: 'user', created_at: '2026-01-02T03:04:05Z' })) }))
+      return Promise.resolve(platformResponse(url))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(<App />)
+    await screen.findByRole('button', { name: '用户' })
+    fireEvent.click(screen.getByRole('button', { name: '用户' }))
+    await screen.findByText('user-0@example.test')
+    fireEvent.click(screen.getByRole('button', { name: '下一页' }))
+    await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/admin/users?limit=50&offset=50'))).toBe(true))
+    fireEvent.click(screen.getByRole('button', { name: '上一页' }))
+    await waitFor(() => expect(fetchMock.mock.calls.filter(([url]) => String(url).includes('/admin/users?limit=50&offset=0'))).toHaveLength(2))
+    fireEvent.change(screen.getByLabelText('按邮箱搜索用户'), { target: { value: 'admin+test@example.com' } })
+    fireEvent.click(screen.getByRole('button', { name: '搜索' }))
+
+    await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/admin/users?q=admin%2Btest%40example.com&limit=50&offset=0'))).toBe(true))
+  })
+
+  it('pages audit results and recovers from an empty next page', async () => {
+    sessionStorage.setItem('cloud-api.admin.access-token', 'access-value')
+    sessionStorage.setItem('cloud-api.admin.refresh-token', 'refresh-value')
+    let auditCalls = 0
+    const fetchMock = vi.fn<(url: string, init?: RequestInit) => Promise<Response>>((url: string) => {
+      if (url.endsWith('/users/me')) return Promise.resolve(adminUser())
+      if (url.includes('/admin/audit-logs')) {
+        auditCalls++
+        return Promise.resolve(jsonResponse({ audit_logs: auditCalls === 1 ? Array.from({ length: 50 }, (_, index) => ({ id: `audit-${index}`, admin_id: 'admin-1', action: 'user.disabled', target_type: 'user', metadata: {}, created_at: '2026-01-02T03:04:05Z' })) : [] }))
+      }
+      return Promise.resolve(platformResponse(url))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(<App />)
+    await screen.findByRole('button', { name: '审计' })
+    fireEvent.click(screen.getByRole('button', { name: '审计' }))
+    await screen.findAllByText('user.disabled')
+    fireEvent.click(screen.getByRole('button', { name: '下一页' }))
+
+    await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/admin/audit-logs?limit=50&offset=50'))).toBe(true))
+    await waitFor(() => expect(screen.getAllByText('user.disabled')).toHaveLength(50))
+    expect(screen.getByRole('button', { name: '上一页' })).toBeDisabled()
   })
 })

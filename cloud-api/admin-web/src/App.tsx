@@ -152,7 +152,7 @@ export function App(): ReactElement {
 
   const logout = async (): Promise<void> => {
     try {
-      if (session !== null) await new CloudApiClient(baseUrl).logout(session.refreshToken)
+      if (session !== null) await authenticatedClient.logout(session.refreshToken)
     } finally {
       endSession(null)
     }
@@ -163,8 +163,8 @@ export function App(): ReactElement {
     saveSessionValue(sessionBaseUrlKey, nextBaseUrl)
   }
 
-  const loadUsers = useCallback(() => authenticatedClient.listUsers(), [authenticatedClient])
-  const loadAuditLogs = useCallback(() => authenticatedClient.listAuditLogs(), [authenticatedClient])
+  const loadUsers = useCallback((query: { readonly limit: number; readonly offset: number; readonly q?: string }) => authenticatedClient.listUsers(query), [authenticatedClient])
+  const loadAuditLogs = useCallback((query: { readonly limit: number; readonly offset: number }) => authenticatedClient.listAuditLogs(query), [authenticatedClient])
 
   const renderPage = (): ReactElement => {
     if (page === 'settings') return <ConnectionSettings baseUrl={baseUrl} onSave={saveConnection} />
@@ -176,7 +176,7 @@ export function App(): ReactElement {
         <section className="panel health-panel" aria-busy={loading} aria-labelledby="health-heading"><div className="panel-heading"><div><p className="eyebrow">平台探针</p><h2 id="health-heading">健康与版本</h2></div>{loading ? <span className="loading-label" role="status">正在请求…</span> : null}</div>{platform === null ? <p className="empty-state">尚未获得可验证的平台响应。请检查 API Base URL、网络及 CORS 配置。</p> : <><ul className="status-list"><StatusRow result={platform.health} /><StatusRow result={platform.ready} /></ul><dl className="metadata"><div><dt>服务</dt><dd>{platform.config.service}</dd></div><div><dt>版本</dt><dd>{platform.config.version}</dd></div><div><dt>环境</dt><dd>{platform.config.environment}</dd></div><div><dt>请求地址</dt><dd>{baseUrl}</dd></div></dl></>}</section>
       </>
     }
-    if (page === 'users') return <AdminListPanel<AdminUser> description="仅在服务已实现管理员用户列表且返回契约匹配时显示实时用户；不会回退为模拟记录。" emptyMessage="接口已返回，但当前没有可显示的用户。" endpoint="GET /api/v1/admin/users" eyebrow="管理员资源" headers={['用户 ID', '邮箱', '角色', '创建时间']} load={loadUsers} renderRow={(user) => <UserRow key={user.id} user={user} />} title="用户" />
+    if (page === 'users') return <AdminListPanel<AdminUser> description="仅在服务已实现管理员用户列表且返回契约匹配时显示实时用户；不会回退为模拟记录。" emptyMessage="接口已返回，但当前没有可显示的用户。" endpoint="GET /api/v1/admin/users" eyebrow="管理员资源" headers={['用户 ID', '邮箱', '角色', '创建时间']} load={loadUsers} renderRow={(user) => <UserRow key={user.id} user={user} />} searchLabel="按邮箱搜索用户" title="用户" />
     if (page === 'audit') return <AdminListPanel<AuditLog> description="仅在服务已实现审计读取端点且返回契约匹配时显示实时日志；元数据不会在此页面展开。" emptyMessage="接口已返回，但当前没有可显示的审计日志。" endpoint="GET /api/v1/admin/audit-logs" eyebrow="管理员资源" headers={['操作', '对象类型', '对象 ID', '管理员 ID', '时间']} load={loadAuditLogs} renderRow={(audit) => <AuditRow audit={audit} key={audit.id} />} title="审计日志" />
 
     const unavailable: Record<Exclude<Page, 'overview' | 'settings' | 'users' | 'audit'>, { readonly title: string; readonly description: string; readonly endpoint?: string }> = {

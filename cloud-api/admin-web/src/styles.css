@@ -107,6 +107,11 @@ dt { color: var(--muted); font-size: .72rem; font-weight: 750; } dd { overflow-w
 .unavailable-panel code, .endpoint-label { display: inline-block; margin-top: .8rem; padding: .35rem .5rem; border: 1px solid #d8e2de; color: #36544d; background: #f6faf8; font-size: .78rem; }
 .admin-list-panel { max-width: 100%; }
 .admin-list-panel .panel-heading > div > p:last-child { max-width: 700px; margin-bottom: 0; color: var(--muted); line-height: 1.65; }
+.admin-list-search { display: grid; gap: .45rem; margin-top: 1rem; }
+.admin-list-search label { color: var(--ink); font-size: .84rem; font-weight: 800; }
+.admin-list-search > div, .admin-list-pagination { display: flex; align-items: center; flex-wrap: wrap; gap: .65rem; }
+.admin-list-search input { min-height: 42px; flex: 1 1 280px; padding: .55rem .65rem; border: 1px solid #aabeb7; border-radius: 6px; color: var(--ink); background: #fff; }
+.admin-list-pagination { justify-content: flex-end; margin-top: 1rem; color: var(--muted); font-size: .82rem; font-weight: 750; }
 .table-wrap { overflow-x: auto; margin-top: 1rem; border: 1px solid #dfe9e4; border-radius: 7px; }
 table { width: 100%; min-width: 720px; border-collapse: collapse; text-align: left; font-size: .84rem; }
 th { padding: .72rem .85rem; color: var(--muted); background: #f4f8f6; font-size: .71rem; letter-spacing: .04em; text-transform: uppercase; }

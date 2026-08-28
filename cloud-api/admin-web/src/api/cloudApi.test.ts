@@ -18,7 +18,7 @@ describe('CloudApiClient', () => {
 
     expect(result).toEqual({ kind: 'success', data: [{ id: 'u-1', email: 'admin@example.com', role: 'admin', created_at: '2026-01-02T03:04:05Z' }], requestId: 'request-1' })
     const call = fetchMock.mock.calls[0]
-    expect(call?.[0]).toBe('http://api.example.test/api/v1/admin/users')
+    expect(call?.[0]).toBe('http://api.example.test/api/v1/admin/users?limit=50&offset=0')
     expect(((call?.[1] as RequestInit).headers as Headers).get('Authorization')).toBe('Bearer access-value')
   })
 
@@ -32,6 +32,32 @@ describe('CloudApiClient', () => {
     const call = fetchMock.mock.calls[0]
     expect(call?.[0]).toBe('http://api.example.test/api/v1/auth/login')
     expect(call?.[1]).toMatchObject({ method: 'POST', body: JSON.stringify({ email: 'admin@example.com', password: 'password-value' }) })
+  })
+
+  it('sends the authenticated access credential and refresh token body when logging out', async () => {
+    const fetchMock = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(() => Promise.resolve(jsonResponse({})))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(new CloudApiClient('http://api.example.test', 'access-value').logout('refresh-value')).resolves.toMatchObject({ kind: 'success' })
+
+    const call = fetchMock.mock.calls[0]
+    expect(call?.[0]).toBe('http://api.example.test/api/v1/auth/logout')
+    expect(call?.[1]).toMatchObject({ method: 'POST', body: JSON.stringify({ refresh_token: 'refresh-value' }) })
+    expect(((call?.[1] as RequestInit).headers as Headers).get('Authorization')).toBe('Bearer access-value')
+  })
+
+  it('encodes only documented user and audit list query parameters', async () => {
+    const fetchMock = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>()
+      .mockResolvedValueOnce(jsonResponse({ users: [] }))
+      .mockResolvedValueOnce(jsonResponse({ audit_logs: [] }))
+    vi.stubGlobal('fetch', fetchMock)
+    const client = new CloudApiClient('http://api.example.test', 'access-value')
+
+    await client.listUsers({ q: 'admin+test@example.com & team', limit: 50, offset: 100 })
+    await client.listAuditLogs({ limit: 50, offset: 150 })
+
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('http://api.example.test/api/v1/admin/users?q=admin%2Btest%40example.com+%26+team&limit=50&offset=100')
+    expect(fetchMock.mock.calls[1]?.[0]).toBe('http://api.example.test/api/v1/admin/audit-logs?limit=50&offset=150')
   })
 
   it('refreshes once after an expired access credential and retries the original request with the replacement', async () => {
