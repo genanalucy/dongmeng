@@ -57,6 +57,7 @@ class FaceToFaceCoordinator<S> {
         val stopCapture: Boolean = false,
         val timer: TimerIntent? = null,
         val cancelTimer: Boolean = false,
+        val closeCloudSession: Boolean = false,
     )
 
     sealed interface PlaybackWork {
@@ -132,6 +133,7 @@ class FaceToFaceCoordinator<S> {
             cancelSessions = if (discard) listOf(session) else emptyList(),
             stopCapture = true,
             cancelTimer = true,
+            closeCloudSession = discard,
         )
     }
 
@@ -198,12 +200,14 @@ class FaceToFaceCoordinator<S> {
             captureLevel = 0f,
             turns = if (discard) current.turns.filterNot { it.id == turnId } else current.turns,
         )
+        settleIfDrainedLocked()
         return Transition(
             accepted = true,
             finishSessions = if (discard) emptyList() else listOfNotNull(session),
             cancelSessions = if (discard) listOfNotNull(session) else emptyList(),
             stopCapture = true,
             cancelTimer = true,
+            closeCloudSession = discard,
         )
     }
 
@@ -212,6 +216,11 @@ class FaceToFaceCoordinator<S> {
         val session = activeTurnId?.let { entries[it]?.session } ?: return false
         return send(session)
     }
+
+    /** True only when a requested automatic stop has reached terminal turn and playback drain. */
+    @Synchronized
+    fun canCloseCloudSession(): Boolean =
+        current.phase == FaceToFacePhase.IDLE && entries.isEmpty() && !playbackInProgress
 
     @Synchronized
     fun containsTurn(turnId: Long): Boolean = entries.containsKey(turnId)

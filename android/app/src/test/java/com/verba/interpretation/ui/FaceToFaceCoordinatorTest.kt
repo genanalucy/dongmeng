@@ -157,6 +157,39 @@ class FaceToFaceCoordinatorTest {
         assertEquals(FaceToFacePhase.IDLE, coordinator.state().phase)
     }
 
+    @Test fun automaticStopBecomesEligibleForCloudCloseOnlyAfterEveryTurnAndPlaybackDrain() {
+        val coordinator = FaceToFaceCoordinator<String>()
+        coordinator.setMode(FaceToFaceMode.AUTO)
+        coordinator.startAuto(1, "left")
+        coordinator.updateSubtitle(1, SubtitleKind.SOURCE_PARTIAL, "左侧")
+        coordinator.switchAuto(2, FaceToFaceSide.RIGHT, "right")
+        coordinator.updateSubtitle(2, SubtitleKind.SOURCE_PARTIAL, "right")
+
+        coordinator.stopAuto()
+        assertFalse(coordinator.canCloseCloudSession())
+        coordinator.sessionFinished(2)
+        assertFalse(coordinator.canCloseCloudSession())
+        val firstDrain = coordinator.sessionFinished(1) as FaceToFaceCoordinator.PlaybackWork.Drain
+        val secondDrain = coordinator.playbackWorkFinished(firstDrain.turnId, drained = true) as FaceToFaceCoordinator.PlaybackWork.Drain
+        assertFalse(coordinator.canCloseCloudSession())
+        coordinator.playbackWorkFinished(secondDrain.turnId, drained = true)
+
+        assertTrue(coordinator.canCloseCloudSession())
+        assertEquals(FaceToFacePhase.IDLE, coordinator.state().phase)
+    }
+
+    @Test fun automaticStopWithEmptyInputCanCloseCloudSessionImmediately() {
+        val coordinator = FaceToFaceCoordinator<String>()
+        coordinator.setMode(FaceToFaceMode.AUTO)
+        coordinator.startAuto(1, "left")
+
+        val stop = coordinator.stopAuto()
+
+        assertTrue(stop.cancelSessions == listOf("left"))
+        assertTrue(coordinator.canCloseCloudSession())
+        assertEquals(FaceToFacePhase.IDLE, coordinator.state().phase)
+    }
+
     @Test fun emptyManualInputIsDiscardedWithoutLeavingATranscript() {
         val coordinator = FaceToFaceCoordinator<String>()
         coordinator.manualPress(1, FaceToFaceSide.LEFT, "left")

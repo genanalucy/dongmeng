@@ -9,6 +9,7 @@ import com.verba.interpretation.cloud.CloudEndpointSettings
 import com.verba.interpretation.cloud.KeystoreTokenStore
 import com.verba.interpretation.cloud.SharedPreferencesInstallationIdStore
 import com.verba.interpretation.cloud.TranslationSessionCoordinator
+import com.verba.interpretation.cloud.TranslationSessionCoordinator.OpenHandle
 import com.verba.interpretation.cloud.TranslationSessionGrant
 import com.verba.interpretation.audio.MicrophoneCapture
 import com.verba.interpretation.audio.PlaybackRoute
@@ -33,7 +34,10 @@ class InterpretationViewModel(application: Application) : AndroidViewModel(appli
         viewModelScope,
     )
     private val sessions = TurnSessionCoordinator<AgentSocket>()
+    private val actionLock = Any()
     private var cloudGrant: TranslationSessionGrant? = null
+    private var pendingGrantOpen: OpenHandle? = null
+    private var operationGeneration = 0L
     private var nextTurnId = 1L
 
     fun setLanguages(sourceLanguage: String, targetLanguage: String) {
@@ -48,7 +52,7 @@ class InterpretationViewModel(application: Application) : AndroidViewModel(appli
 
     fun setRoute(route: PlaybackRoute) { mutableState.update { it.copy(route = route) } }
 
-    fun start() {
+    fun start() = synchronized(actionLock) {
         if (mutableState.value.phase != SessionPhase.IDLE) return
         mutableState.update { it.copy(phase = SessionPhase.STARTING, turns = emptyList(), error = null) }
         openTurn(isResume = false)
@@ -84,7 +88,8 @@ class InterpretationViewModel(application: Application) : AndroidViewModel(appli
         cancel()
     }
 
-    fun cancel() {
+    fun cancel() = synchronized(actionLock) {
+        invalidatePendingGrantOpen()
         microphone.stop()
         cancelAllSessions()
         endCloudSession()
@@ -119,16 +124,31 @@ class InterpretationViewModel(application: Application) : AndroidViewModel(appli
             startTurn(isResume, existing)
             return
         }
-        cloudSessions.open(
-            onGranted = { created ->
+        if (pendingGrantOpen != null) return
+        val generation = operationGeneration
+        pendingGrantOpen = cloudSessions.open(
+            onGranted = { created -> synchronized(actionLock) {
+                pendingGrantOpen = null
+                if (generation != operationGeneration || mutableState.value.phase != SessionPhase.STARTING) {
+                    cloudSessions.end(created.sessionId)
+                    return@synchronized
+                }
                 cloudGrant = created
                 startTurn(isResume, created)
-            },
-            onFailure = ::fail,
+            } },
+            onFailure = { message -> synchronized(actionLock) {
+                pendingGrantOpen = null
+                if (generation == operationGeneration) fail(message)
+            } },
         )
     }
 
     private fun startTurn(isResume: Boolean, grant: TranslationSessionGrant) {
+        if (mutableState.value.phase != SessionPhase.STARTING) {
+            cloudSessions.end(grant.sessionId)
+            if (cloudGrant?.sessionId == grant.sessionId) cloudGrant = null
+            return
+        }
         val snapshot = mutableState.value
         val turn = SubtitleTurn(nextTurnId++, snapshot.sourceLanguage, snapshot.targetLanguage)
         lateinit var socket: AgentSocket
@@ -215,7 +235,8 @@ class InterpretationViewModel(application: Application) : AndroidViewModel(appli
         endCloudSession()
     }
 
-    private fun fail(message: String) {
+    private fun fail(message: String) = synchronized(actionLock) {
+        invalidatePendingGrantOpen()
         microphone.stop()
         cancelAllSessions()
         endCloudSession()
@@ -227,6 +248,12 @@ class InterpretationViewModel(application: Application) : AndroidViewModel(appli
         sessions.cancelAll().forEach { it.cancel() }
     }
 
+    private fun invalidatePendingGrantOpen() {
+        operationGeneration += 1
+        pendingGrantOpen?.cancel()
+        pendingGrantOpen = null
+    }
+
     private fun endCloudSession() {
         val sessionId = cloudGrant?.sessionId
         cloudGrant = null
@@ -234,10 +261,7 @@ class InterpretationViewModel(application: Application) : AndroidViewModel(appli
     }
 
     override fun onCleared() {
-        microphone.stop()
-        cancelAllSessions()
-        endCloudSession()
-        player.stop()
+        cancel()
         super.onCleared()
     }
 }

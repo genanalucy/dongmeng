@@ -9,6 +9,7 @@ import com.verba.interpretation.cloud.CloudEndpointSettings
 import com.verba.interpretation.cloud.KeystoreTokenStore
 import com.verba.interpretation.cloud.SharedPreferencesInstallationIdStore
 import com.verba.interpretation.cloud.TranslationSessionCoordinator
+import com.verba.interpretation.cloud.TranslationSessionCoordinator.OpenHandle
 import com.verba.interpretation.cloud.TranslationSessionGrant
 import com.verba.interpretation.audio.MicrophoneCapture
 import com.verba.interpretation.audio.TtsPlayer
@@ -42,6 +43,8 @@ class FaceToFaceViewModel(application: Application) : AndroidViewModel(applicati
     private val playbackGeneration = AtomicLong()
     private var timerJob: Job? = null
     private var cloudGrant: TranslationSessionGrant? = null
+    private var pendingGrantOpen: OpenHandle? = null
+    private var operationGeneration = 0L
     private var nextTurnId = 1L
 
     fun setMode(mode: FaceToFaceMode) = synchronized(actionLock) {
@@ -52,25 +55,22 @@ class FaceToFaceViewModel(application: Application) : AndroidViewModel(applicati
         if (coordinator.setLanguages(leftLanguage, rightLanguage)) publishState()
     }
 
-    fun manualPress(side: FaceToFaceSide) = startWithCloudGrant(side) { created ->
-        if (coordinator.state().mode != FaceToFaceMode.MANUAL || coordinator.state().phase != FaceToFacePhase.IDLE) {
-            created.socket.cancel()
-            return@startWithCloudGrant
-        }
-        applyTransition(coordinator.manualPress(created.turnId, side, created.socket))
-    }
+    fun manualPress(side: FaceToFaceSide) = startWithCloudGrant(
+        side = side,
+        canStart = { coordinator.state().mode == FaceToFaceMode.MANUAL && coordinator.state().phase == FaceToFacePhase.IDLE },
+    ) { created -> applyTransition(coordinator.manualPress(created.turnId, side, created.socket)) }
 
     fun manualRelease() = synchronized(actionLock) {
-        applyTransition(coordinator.endManualInput())
+        invalidatePendingGrantOpen()
+        val transition = coordinator.endManualInput()
+        applyTransition(transition)
+        if (transition.accepted && transition.cancelSessions.isNotEmpty()) endCloudSession()
     }
 
-    fun startAuto() = startWithCloudGrant(FaceToFaceSide.LEFT) { created ->
-        if (coordinator.state().mode != FaceToFaceMode.AUTO || coordinator.state().phase != FaceToFacePhase.IDLE) {
-            created.socket.cancel()
-            return@startWithCloudGrant
-        }
-        applyTransition(coordinator.startAuto(created.turnId, created.socket))
-    }
+    fun startAuto() = startWithCloudGrant(
+        side = FaceToFaceSide.LEFT,
+        canStart = { coordinator.state().mode == FaceToFaceMode.AUTO && coordinator.state().phase == FaceToFacePhase.IDLE },
+    ) { created -> applyTransition(coordinator.startAuto(created.turnId, created.socket)) }
 
     fun pressRightAuto() = switchAuto(FaceToFaceSide.RIGHT)
 
@@ -80,17 +80,15 @@ class FaceToFaceViewModel(application: Application) : AndroidViewModel(applicati
         applyTransition(coordinator.pauseAuto())
     }
 
-    fun resumeAuto() = startWithCloudGrant(FaceToFaceSide.LEFT) { created ->
-        if (coordinator.state().mode != FaceToFaceMode.AUTO || coordinator.state().phase != FaceToFacePhase.PAUSED) {
-            created.socket.cancel()
-            return@startWithCloudGrant
-        }
-        applyTransition(coordinator.resumeAuto(created.turnId, created.socket))
-    }
+    fun resumeAuto() = startWithCloudGrant(
+        side = FaceToFaceSide.LEFT,
+        canStart = { coordinator.state().mode == FaceToFaceMode.AUTO && coordinator.state().phase == FaceToFacePhase.PAUSED },
+    ) { created -> applyTransition(coordinator.resumeAuto(created.turnId, created.socket)) }
 
     fun stopAuto() = synchronized(actionLock) {
+        invalidatePendingGrantOpen()
         applyTransition(coordinator.stopAuto())
-        endCloudSession()
+        closeCloudSessionIfDrained()
     }
 
     fun microphonePermissionDenied() = fail("未授予麦克风权限。")
@@ -102,39 +100,54 @@ class FaceToFaceViewModel(application: Application) : AndroidViewModel(applicati
 
     /** Navigation, ON_STOP and fatal errors discard all background work instead of draining it. */
     fun cancel() = synchronized(actionLock) {
+        invalidatePendingGrantOpen()
         playbackGeneration.incrementAndGet()
         applyTransition(coordinator.cancelAll())
         endCloudSession()
         player.stop()
     }
 
-    private fun switchAuto(side: FaceToFaceSide) = startWithCloudGrant(side) { created ->
-        val snapshot = coordinator.state()
-        if (snapshot.mode != FaceToFaceMode.AUTO || snapshot.phase != FaceToFacePhase.LISTENING || !snapshot.captureActive || snapshot.activeSide == side) {
-            created.socket.cancel()
-            return@startWithCloudGrant
-        }
-        applyTransition(coordinator.switchAuto(created.turnId, side, created.socket))
-    }
+    private fun switchAuto(side: FaceToFaceSide) = startWithCloudGrant(
+        side = side,
+        canStart = {
+            val snapshot = coordinator.state()
+            snapshot.mode == FaceToFaceMode.AUTO && snapshot.phase == FaceToFacePhase.LISTENING &&
+                snapshot.captureActive && snapshot.activeSide != side
+        },
+    ) { created -> applyTransition(coordinator.switchAuto(created.turnId, side, created.socket)) }
 
     private data class CreatedSession(val turnId: Long, val side: FaceToFaceSide, val socket: AgentSocket)
 
-    private fun startWithCloudGrant(side: FaceToFaceSide, onCreated: (CreatedSession) -> Unit) {
+    private fun startWithCloudGrant(
+        side: FaceToFaceSide,
+        canStart: () -> Boolean,
+        onCreated: (CreatedSession) -> Unit,
+    ) = synchronized(actionLock) {
         val existing = cloudGrant
         if (existing != null) {
-            createAndStart(side, existing, onCreated)
+            if (canStart()) createAndStart(side, existing, onCreated)
             return
         }
-        cloudSessions.open(
-            onGranted = { grant ->
+        if (pendingGrantOpen != null) return
+        val generation = operationGeneration
+        pendingGrantOpen = cloudSessions.open(
+            onGranted = { grant -> synchronized(actionLock) {
+                pendingGrantOpen = null
+                if (generation != operationGeneration || !canStart()) {
+                    cloudSessions.end(grant.sessionId)
+                    return@synchronized
+                }
                 cloudGrant = grant
                 createAndStart(side, grant, onCreated)
-            },
-            onFailure = ::fail,
+            } },
+            onFailure = { message -> synchronized(actionLock) {
+                pendingGrantOpen = null
+                if (generation == operationGeneration) fail(message)
+            } },
         )
     }
 
-    private fun createAndStart(side: FaceToFaceSide, grant: TranslationSessionGrant, onCreated: (CreatedSession) -> Unit) = synchronized(actionLock) {
+    private fun createAndStart(side: FaceToFaceSide, grant: TranslationSessionGrant, onCreated: (CreatedSession) -> Unit) {
         val created = createSession(side)
         if (startSocket(created, grant)) onCreated(created) else created.socket.cancel()
     }
@@ -169,6 +182,7 @@ class FaceToFaceViewModel(application: Application) : AndroidViewModel(applicati
         if (transition.stopCapture) microphone.stop()
         if (transition.startCapture) startCapture()
         transition.timer?.let(::scheduleTimer)
+        if (transition.closeCloudSession) endCloudSession()
         publishState()
     }
 
@@ -205,7 +219,7 @@ class FaceToFaceViewModel(application: Application) : AndroidViewModel(applicati
             AgentEvent.Ready -> Unit
             AgentEvent.Finished -> {
                 queuePlayback(coordinator.sessionFinished(turnId))
-                if (coordinator.state().mode == FaceToFaceMode.MANUAL) endCloudSession()
+                closeCloudSessionIfDrained()
                 publishState()
             }
             is AgentEvent.Subtitle -> {
@@ -222,6 +236,7 @@ class FaceToFaceViewModel(application: Application) : AndroidViewModel(applicati
             return
         }
         queuePlayback(coordinator.sessionFinished(turnId))
+        closeCloudSessionIfDrained()
         publishState()
     }
 
@@ -242,16 +257,28 @@ class FaceToFaceViewModel(application: Application) : AndroidViewModel(applicati
                 }
                 val drained = current is FaceToFaceCoordinator.PlaybackWork.Drain
                 work = coordinator.playbackWorkFinished(current.turnId, drained)
+                closeCloudSessionIfDrained()
                 publishState()
             }
         }
     }
 
     private fun fail(message: String) = synchronized(actionLock) {
+        invalidatePendingGrantOpen()
         playbackGeneration.incrementAndGet()
         applyTransition(coordinator.cancelAll(message))
         endCloudSession()
         player.stop()
+    }
+
+    private fun closeCloudSessionIfDrained() {
+        if (coordinator.canCloseCloudSession()) endCloudSession()
+    }
+
+    private fun invalidatePendingGrantOpen() {
+        operationGeneration += 1
+        pendingGrantOpen?.cancel()
+        pendingGrantOpen = null
     }
 
     private fun endCloudSession() {

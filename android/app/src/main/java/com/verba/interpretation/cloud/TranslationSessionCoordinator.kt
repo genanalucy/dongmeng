@@ -2,6 +2,9 @@ package com.verba.interpretation.cloud
 
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.math.max
@@ -27,35 +30,87 @@ class TranslationSessionCoordinator(
     private val scope: CoroutineScope,
     private val elapsedRealtimeMillis: () -> Long = { android.os.SystemClock.elapsedRealtime() },
 ) {
-    private val lock = Any()
-    private val startedAtMillis = mutableMapOf<String, Long>()
+    private data class SessionState(
+        val startedAtMillis: Long,
+        var usage: UsageRecordPayload? = null,
+        var usageStarted: Boolean = false,
+        var endInFlight: Boolean = false,
+    )
 
-    fun open(onGranted: (TranslationSessionGrant) -> Unit, onFailure: (String) -> Unit) {
-        scope.launch {
+    interface OpenHandle {
+        fun cancel()
+    }
+
+    private val lock = Any()
+    private val operationScope = CoroutineScope(scope.coroutineContext.minusKey(Job) + SupervisorJob())
+    private val sessions = mutableMapOf<String, SessionState>()
+
+    /**
+     * Starts an acquisition that may be cancelled independently from the owner scope. A grant that
+     * arrives after cancellation is registered only long enough to use the normal end path.
+     */
+    fun open(onGranted: (TranslationSessionGrant) -> Unit, onFailure: (String) -> Unit): OpenHandle {
+        val handle = object : OpenHandle {
+            private var cancelled = false
+
+            override fun cancel() = synchronized(lock) { cancelled = true }
+
+            fun isCancelled(): Boolean = synchronized(lock) { cancelled }
+        }
+        operationScope.launch {
             try {
-                val grant = withContext(Dispatchers.IO) { cloud.createTranslationSession() }
-                synchronized(lock) { startedAtMillis.putIfAbsent(grant.sessionId, elapsedRealtimeMillis()) }
-                onGranted(grant)
+                val grant = withContext(NonCancellable + Dispatchers.IO) { cloud.createTranslationSession() }
+                val cancelled = handle.isCancelled()
+                register(grant.sessionId)
+                if (cancelled) {
+                    end(grant.sessionId)
+                } else {
+                    onGranted(grant)
+                }
             } catch (error: Exception) {
-                onFailure(error.message ?: "无法创建云端翻译会话。")
+                if (!handle.isCancelled()) onFailure(error.message ?: "无法创建云端翻译会话。")
+            }
+        }
+        return handle
+    }
+
+    /**
+     * Reports usage once and attempts one serialized remote end. A failed transport attempt retains
+     * eligibility, so a later explicit call retries it; concurrent calls never overlap.
+     */
+    fun end(sessionId: String?) {
+        if (sessionId == null) return
+        val session = synchronized(lock) {
+            val current = sessions[sessionId] ?: return
+            if (current.endInFlight) return
+            current.endInFlight = true
+            if (current.usage == null) {
+                current.usage = UsageRecordPayload(
+                    sessionId = sessionId,
+                    audioSeconds = max(0L, (elapsedRealtimeMillis() - current.startedAtMillis) / 1_000L)
+                        .coerceAtMost(Int.MAX_VALUE.toLong()).toInt(),
+                )
+            }
+            current
+        }
+        operationScope.launch {
+            val usage = synchronized(lock) {
+                if (session.usageStarted) null else {
+                    session.usageStarted = true
+                    checkNotNull(session.usage)
+                }
+            }
+            if (usage != null) launch { runCatching { cloud.createUsageRecord(usage) } }
+
+            val ended = runCatching { cloud.endTranslationSession(sessionId) }.isSuccess
+            synchronized(lock) {
+                if (ended) sessions.remove(sessionId) else session.endInFlight = false
             }
         }
     }
 
-    /** Reports aggregate wall-clock audio duration and ends the session without blocking the caller. */
-    fun end(sessionId: String?) {
-        if (sessionId == null) return
-        val usage = synchronized(lock) {
-            val startedAt = startedAtMillis.remove(sessionId) ?: return
-            UsageRecordPayload(
-                sessionId = sessionId,
-                audioSeconds = max(0L, (elapsedRealtimeMillis() - startedAt) / 1_000L).coerceAtMost(Int.MAX_VALUE.toLong()).toInt(),
-            )
-        }
-        scope.launch {
-            // Each operation is isolated: telemetry cannot delay or prevent remote session termination.
-            launch { runCatching { withContext(Dispatchers.IO) { cloud.createUsageRecord(usage) } } }
-            runCatching { withContext(Dispatchers.IO) { cloud.endTranslationSession(sessionId) } }
-        }
+    private fun register(sessionId: String) = synchronized(lock) {
+        sessions.putIfAbsent(sessionId, SessionState(startedAtMillis = elapsedRealtimeMillis()))
     }
+
 }
