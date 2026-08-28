@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -81,19 +82,8 @@ func TestCloudAgentSessionAuthorization(t *testing.T) {
 		Issuer: e2eIssuer, Audience: "cloud-api-clients", SessionAudience: e2eAudience,
 		AccessSecret: e2eAccessKey, SessionSecret: e2eSessionKey,
 	}
-	cloud := newE2ECloud(t, db, issuer, now)
+	cloud := newE2ECloud(t, db, raw, issuer, now)
 	grant := cloud.createGrant(t)
-	userID, err := uuid.Parse(grant.UserID)
-	if err != nil || userID == uuid.Nil {
-		t.Fatal("Cloud E2E grant contained an invalid user identifier")
-	}
-	t.Cleanup(func() {
-		cleanupContext, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		if _, err := raw.Exec(cleanupContext, `DELETE FROM users WHERE id=$1`, userID); err != nil {
-			t.Error("cleanup Cloud E2E fixture user")
-		}
-	})
 
 	t.Run("accepts Cloud-issued grant exactly once", func(t *testing.T) {
 		harness := startAgentSessionHarness(t)
@@ -131,7 +121,11 @@ func TestCloudAgentSessionAuthorization(t *testing.T) {
 			return signCloudShapedToken(t, issuer, grant, now, nil, []byte("different-e2e-signing-key-at-least-32-bytes"))
 		}},
 		{name: "expired", mutate: func(t *testing.T, _ string) string {
-			return signCloudShapedToken(t, issuer, grant, now, claimPatch{"exp": now.Add(-time.Minute).Unix()}, e2eSessionKey)
+			return signCloudShapedToken(t, issuer, grant, now, claimPatch{
+				"iat": now.Add(-2 * time.Minute).Unix(),
+				"nbf": now.Add(-2 * time.Minute).Unix(),
+				"exp": now.Add(-time.Minute).Unix(),
+			}, e2eSessionKey)
 		}},
 		{name: "wrong user binding", startPatch: map[string]string{"userId": uuid.NewString()}},
 		{name: "wrong session binding", startPatch: map[string]string{"sessionId": uuid.NewString()}},
@@ -163,34 +157,43 @@ func TestCloudAgentSessionAuthorization(t *testing.T) {
 			assertE2EUpgradeRejected(t, harness, protocols, nil, "")
 		})
 	}
-	for _, headers := range []http.Header{
-		{"Authorization": {"Bearer " + grant.Token}},
-		{"Cookie": {"translation_token=" + grant.Token}},
-	} {
-		t.Run("rejects credential outside subprotocol", func(t *testing.T) {
+	credentialTransportCases := []struct {
+		name     string
+		headers  http.Header
+		rawQuery string
+	}{
+		{name: "Authorization", headers: http.Header{"Authorization": {"Bearer " + grant.Token}}},
+		{name: "Cookie", headers: http.Header{"Cookie": {"translation_token=" + grant.Token}}},
+		{name: "URL", rawQuery: "?session_token=" + url.QueryEscape(grant.Token)},
+	}
+	for _, testCase := range credentialTransportCases {
+		t.Run("rejects credential in "+testCase.name, func(t *testing.T) {
 			harness := startAgentSessionHarness(t)
-			assertE2EUpgradeRejected(t, harness, nil, headers, "")
+			assertE2EUpgradeRejected(t, harness, []string{"translation.v1"}, testCase.headers, testCase.rawQuery)
 		})
 	}
-	t.Run("rejects credential in URL", func(t *testing.T) {
-		harness := startAgentSessionHarness(t)
-		assertE2EUpgradeRejected(t, harness, nil, nil, "?session_token="+url.QueryEscape(grant.Token))
-	})
 }
 
 type e2eHarness struct {
 	baseURL string
 	client  *http.Client
-	cancel  context.CancelFunc
-	done    <-chan error
 }
 
 func startAgentSessionHarness(t *testing.T) e2eHarness {
 	t.Helper()
-	ctx, cancel := context.WithCancel(context.Background())
 	root := repositoryRoot(t)
-	command := exec.CommandContext(ctx, "go", "run", "-tags", "integrationtest", "./cmd/session-test-harness")
-	command.Dir = filepath.Join(root, "agent")
+	binary := filepath.Join(t.TempDir(), "session-test-harness")
+	buildContext, cancelBuild := context.WithTimeout(context.Background(), 30*time.Second)
+	build := exec.CommandContext(buildContext, "go", "build", "-tags", "integrationtest", "-o", binary, "./cmd/session-test-harness")
+	build.Dir = filepath.Join(root, "agent")
+	if err := build.Run(); err != nil {
+		cancelBuild()
+		t.Fatal("build Agent test-only harness")
+	}
+	cancelBuild()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	command := exec.CommandContext(ctx, binary)
 	command.Env = append(os.Environ(),
 		"E2E_AGENT_SESSION_KEY="+string(e2eSessionKey),
 		"E2E_AGENT_SESSION_ISSUER="+e2eIssuer,
@@ -208,23 +211,63 @@ func startAgentSessionHarness(t *testing.T) e2eHarness {
 	}
 	done := make(chan error, 1)
 	go func() { done <- command.Wait() }()
-	reader := bufio.NewReader(stdout)
-	line, err := readHarnessAddress(reader)
-	if err != nil {
-		cancel()
-		<-done
+
+	addressResult := make(chan struct {
+		address string
+		err     error
+	}, 1)
+	go func() {
+		address, readErr := readHarnessAddress(bufio.NewReader(stdout))
+		addressResult <- struct {
+			address string
+			err     error
+		}{address: address, err: readErr}
+	}()
+	select {
+	case result := <-addressResult:
+		if result.err != nil {
+			stopAgentSessionHarness(t, command, cancel, done, "")
+			t.Fatal("Agent test-only harness did not report a loopback address")
+		}
+		baseURL := "http://" + result.address
+		t.Cleanup(func() { stopAgentSessionHarness(t, command, cancel, done, result.address) })
+		return e2eHarness{baseURL: baseURL, client: &http.Client{Timeout: time.Second}}
+	case <-time.After(3 * time.Second):
+		stopAgentSessionHarness(t, command, cancel, done, "")
 		t.Fatal("Agent test-only harness did not report a loopback address")
 	}
-	baseURL := "http://" + line
-	t.Cleanup(func() {
-		cancel()
+	return e2eHarness{}
+}
+
+func stopAgentSessionHarness(t *testing.T, command *exec.Cmd, cancel context.CancelFunc, done <-chan error, address string) {
+	t.Helper()
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		if command.Process != nil {
+			if err := command.Process.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
+				t.Error("kill Agent test-only harness")
+			}
+		}
 		select {
 		case <-done:
 		case <-time.After(3 * time.Second):
-			t.Error("Agent test-only harness did not exit promptly")
+			t.Error("Agent test-only harness did not exit after kill")
+			return
 		}
-	})
-	return e2eHarness{baseURL: baseURL, client: &http.Client{Timeout: time.Second}, cancel: cancel, done: done}
+	}
+	if address == "" {
+		return
+	}
+	listener, err := net.Listen("tcp", address)
+	if err != nil {
+		t.Error("Agent test-only harness listener was not released")
+		return
+	}
+	if err := listener.Close(); err != nil {
+		t.Error("close released Agent test-only harness listener")
+	}
 }
 
 func readHarnessAddress(reader *bufio.Reader) (string, error) {
@@ -257,10 +300,11 @@ func (h e2eHarness) providerStarts(t *testing.T) int {
 }
 
 type e2eCloud struct {
-	server *httptest.Server
-	client *http.Client
-	email  string
-	pass   string
+	server   *httptest.Server
+	client   *http.Client
+	fixtures *pgxpool.Pool
+	email    string
+	pass     string
 }
 
 type e2eGrant struct {
@@ -270,7 +314,7 @@ type e2eGrant struct {
 	Token     string `json:"token"`
 }
 
-func newE2ECloud(t *testing.T, db *store.Postgres, issuer auth.TokenIssuer, now time.Time) e2eCloud {
+func newE2ECloud(t *testing.T, db *store.Postgres, fixtures *pgxpool.Pool, issuer auth.TokenIssuer, now time.Time) e2eCloud {
 	t.Helper()
 	router := httpapi.NewRouter(httpapi.RouterOptions{
 		Config:   config.Config{Environment: "test", AllowedOrigins: []string{e2eOrigin}, DatabaseTimeout: time.Second, RateLimitRPS: 100, RateLimitBurst: 100},
@@ -278,7 +322,7 @@ func newE2ECloud(t *testing.T, db *store.Postgres, issuer auth.TokenIssuer, now 
 	})
 	server := httptest.NewServer(router)
 	t.Cleanup(server.Close)
-	return e2eCloud{server: server, client: server.Client(), email: integrationEmail(), pass: "integration-password"}
+	return e2eCloud{server: server, client: server.Client(), fixtures: fixtures, email: integrationEmail(), pass: "integration-password"}
 }
 
 func (c e2eCloud) createGrant(t *testing.T) e2eGrant {
@@ -287,6 +331,15 @@ func (c e2eCloud) createGrant(t *testing.T) e2eGrant {
 	if status != http.StatusCreated || register == nil {
 		t.Fatal("create Cloud E2E user")
 	}
+	userID := registeredE2EUserID(t, register)
+	t.Cleanup(func() {
+		cleanupContext, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if _, err := c.fixtures.Exec(cleanupContext, `DELETE FROM users WHERE id=$1`, userID); err != nil {
+			t.Error("cleanup Cloud E2E fixture user")
+		}
+	})
+
 	status, login := c.json(t, http.MethodPost, "/api/v1/auth/login", nil, map[string]string{"email": c.email, "password": c.pass})
 	if status != http.StatusOK {
 		t.Fatal("Cloud E2E login")
@@ -304,7 +357,24 @@ func (c e2eCloud) createGrant(t *testing.T) e2eGrant {
 	if err != nil || json.Unmarshal(encoded, &grant) != nil || grant.SessionID == "" || grant.UserID == "" || grant.InstallID == "" || grant.Token == "" {
 		t.Fatal("Cloud translation session response omitted required grant fields")
 	}
+	if grant.UserID != userID.String() {
+		t.Fatal("Cloud translation session response did not retain registered user")
+	}
 	return grant
+}
+
+func registeredE2EUserID(t *testing.T, response map[string]any) uuid.UUID {
+	t.Helper()
+	user, ok := response["user"].(map[string]any)
+	if !ok {
+		t.Fatal("Cloud E2E register response omitted user")
+	}
+	value, ok := user["id"].(string)
+	userID, err := uuid.Parse(value)
+	if !ok || err != nil || userID == uuid.Nil {
+		t.Fatal("Cloud E2E register response contained an invalid user identifier")
+	}
+	return userID
 }
 
 func (c e2eCloud) json(t *testing.T, method, path string, headers http.Header, body any) (int, map[string]any) {
