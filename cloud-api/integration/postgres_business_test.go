@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -24,6 +25,9 @@ func TestPostgresBusinessLifecycle(t *testing.T) {
 	url := isolatedPostgresTestDSN(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
+	if err := migrate.Run(ctx, migrate.Config{DatabaseURL: url, Directory: repositoryMigrationDirectory(t), Schema: "public"}); err != nil {
+		t.Fatal("apply lifecycle test migrations")
+	}
 	db, err := store.Open(ctx, url)
 	if err != nil {
 		t.Fatal("open isolated test database")
@@ -217,6 +221,18 @@ func integrationSession(userID, entitlementID uuid.UUID, installID string, expir
 		JTI:           uuid.New(),
 		ExpiresAt:     expiresAt,
 	}
+}
+
+func repositoryMigrationDirectory(t *testing.T) string {
+	t.Helper()
+	directory, err := filepath.Abs(filepath.Join("..", "..", "migrations"))
+	if err != nil {
+		t.Fatal("resolve lifecycle migration directory")
+	}
+	if _, err := os.Stat(directory); err != nil {
+		t.Fatal("inspect lifecycle migration directory")
+	}
+	return directory
 }
 
 func integrationEmail() string {
