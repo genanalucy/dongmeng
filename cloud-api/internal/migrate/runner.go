@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"net"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -27,7 +28,8 @@ const (
 var (
 	upMigrationName          = regexp.MustCompile(`^(\d+)_[-a-zA-Z0-9_]+\.up\.sql$`)
 	transactionEnvelope      = regexp.MustCompile(`(?is)^\s*(?:(?:--[^\n]*(?:\n|$))|(?:/\*.*?\*/\s*))*BEGIN(?:\s+(?:WORK|TRANSACTION))?\s*;\s*(.*?)\s*COMMIT(?:\s+(?:WORK|TRANSACTION))?\s*;\s*(?:(?:--[^\n]*(?:\n|$))|(?:/\*.*?\*/\s*))*$`)
-	concurrentIndexStatement = regexp.MustCompile(`(?is)^\s*CREATE\s+(?:(UNIQUE)\s+)?INDEX\s+CONCURRENTLY\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:(` + identifierPattern + `)\.)?(` + identifierPattern + `)\s+ON\s+(?:(` + identifierPattern + `)\.)?(` + identifierPattern + `)(?:\s+USING\s+(` + identifierPattern + `))?\s*\(\s*(` + identifierPattern + `(?:\s*,\s*` + identifierPattern + `)*)\s*\)\s*;\s*$`)
+	concurrentIndexStatement = regexp.MustCompile(`(?is)^\s*CREATE\s+(?:(UNIQUE)\s+)?INDEX\s+CONCURRENTLY\s+(?:IF\s+NOT\s+EXISTS\s+)?(` + identifierPattern + `)\s+ON\s+(?:(` + identifierPattern + `)\.)?(` + identifierPattern + `)(?:\s+USING\s+(` + identifierPattern + `))?\s*\(\s*(` + identifierPattern + `(?:\s*,\s*` + identifierPattern + `)*)\s*\)\s*;\s*$`)
+	sqlStatePattern          = regexp.MustCompile(`^[0-9A-Z]{5}$`)
 )
 
 const (
@@ -40,6 +42,57 @@ const (
 var ErrUnsafeDatabaseTarget = errors.New("migration database target is not approved")
 
 var errUnsupportedSQLQuoting = errors.New("migration contains unsupported SQL quoting")
+
+type databaseFailure struct {
+	Context   string
+	Migration string
+	Category  string
+	SQLState  string
+}
+
+func (failure *databaseFailure) Error() string {
+	if failure.Migration != "" {
+		return fmt.Sprintf("context=%s migration=%s category=%s sqlstate=%s", failure.Context, failure.Migration, failure.Category, failure.SQLState)
+	}
+	return fmt.Sprintf("context=%s category=%s sqlstate=%s", failure.Context, failure.Category, failure.SQLState)
+}
+
+func databaseFailureFor(operation string, err error) *databaseFailure {
+	failure := &databaseFailure{Context: operation, Category: "driver", SQLState: "none"}
+	switch {
+	case errors.Is(err, context.Canceled):
+		failure.Category = "context-canceled"
+	case errors.Is(err, context.DeadlineExceeded):
+		failure.Category = "context-deadline"
+	case pgconn.Timeout(err):
+		failure.Category = "timeout"
+	default:
+		var postgresError *pgconn.PgError
+		var scanError pgx.ScanArgError
+		var connectError *pgconn.ConnectError
+		var networkError net.Error
+		switch {
+		case errors.As(err, &postgresError):
+			failure.Category = "postgres-server"
+			if sqlStatePattern.MatchString(postgresError.Code) {
+				failure.SQLState = postgresError.Code
+			}
+		case errors.As(err, &scanError):
+			failure.Category = "result-decode"
+		case errors.As(err, &connectError):
+			failure.Category = "connect"
+		case errors.As(err, &networkError):
+			failure.Category = "network"
+		case errors.Is(err, pgx.ErrNoRows):
+			failure.Category = "no-rows"
+		}
+	}
+	return failure
+}
+
+func unsupportedServerVersionFailure() *databaseFailure {
+	return &databaseFailure{Context: "runner.check-server-version", Category: "unsupported-server-version", SQLState: "none"}
+}
 
 // Config identifies an explicit database and a directory containing only the
 // repository's migration files. Run applies up migrations only.
@@ -146,36 +199,43 @@ func Run(ctx context.Context, config Config) error {
 	poolConfig.ConnConfig.RuntimeParams["search_path"] = quoteIdentifier(config.Schema)
 	pool, err := pgxpool.NewWithConfig(ctx, poolConfig)
 	if err != nil {
-		return errors.New("open migration database")
+		return databaseFailureFor("runner.open-database", err)
 	}
 	defer pool.Close()
 	connection, err := pool.Acquire(ctx)
 	if err != nil {
-		return errors.New("acquire migration database connection")
+		return databaseFailureFor("runner.acquire-connection", err)
 	}
 	defer connection.Release()
+	var serverVersion int
+	if err := connection.QueryRow(ctx, "SELECT current_setting('server_version_num')::integer").Scan(&serverVersion); err != nil {
+		return databaseFailureFor("runner.read-server-version", err)
+	}
+	if serverVersion < 150000 {
+		return unsupportedServerVersionFailure()
+	}
 	if _, err := connection.Exec(ctx, "SELECT pg_advisory_lock($1)", migrationAdvisoryLock); err != nil {
-		return errors.New("acquire migration advisory lock")
+		return databaseFailureFor("runner.acquire-advisory-lock", err)
 	}
 	defer func() {
 		_, _ = connection.Exec(context.Background(), "SELECT pg_advisory_unlock($1)", migrationAdvisoryLock)
 	}()
 
 	if _, err := connection.Exec(ctx, "CREATE SCHEMA IF NOT EXISTS "+quoteIdentifier(config.Schema)); err != nil {
-		return errors.New("create migration schema")
+		return databaseFailureFor("runner.create-schema", err)
 	}
 	ledger := quoteIdentifier(config.Schema) + "." + ledgerTable
 	if _, err := connection.Exec(ctx, "CREATE TABLE IF NOT EXISTS "+ledger+" (version text PRIMARY KEY, checksum text NOT NULL, applied_at timestamptz NOT NULL DEFAULT now())"); err != nil {
-		return errors.New("create migration ledger")
+		return databaseFailureFor("runner.create-ledger", err)
 	}
 	applied, err := loadApplied(ctx, connection, ledger)
 	if err != nil {
-		return errors.New("read migration ledger")
+		return databaseFailureFor("runner.read-ledger", err)
 	}
 	if len(applied) == 0 {
 		existing, err := hasExistingCloudSchema(ctx, connection, config.Schema)
 		if err != nil {
-			return errors.New("inspect existing cloud schema")
+			return databaseFailureFor("runner.inspect-existing-schema", err)
 		}
 		if existing {
 			return errors.New("existing Cloud schema has an empty migration ledger; do not replay 000001: restore the matching ledger from backup or rebuild the dedicated development volume")
@@ -189,6 +249,11 @@ func Run(ctx context.Context, config Config) error {
 			continue
 		}
 		if err := apply(ctx, connection, ledger, config.Schema, candidate); err != nil {
+			var failure *databaseFailure
+			if errors.As(err, &failure) {
+				failure.Migration = candidate.Version
+				return failure
+			}
 			return fmt.Errorf("apply migration %s", candidate.Version)
 		}
 	}
@@ -255,7 +320,7 @@ SELECT EXISTS (
 func apply(ctx context.Context, connection *pgxpool.Conn, ledger, schema string, candidate migration) error {
 	if candidate.OutsideTransaction {
 		if _, err := connection.Exec(ctx, candidate.SQL); err != nil {
-			return err
+			return databaseFailureFor("runner.execute-concurrent-index", err)
 		}
 		expected := candidate.ConcurrentIndex
 		if expected.Schema == "" {
@@ -263,13 +328,15 @@ func apply(ctx context.Context, connection *pgxpool.Conn, ledger, schema string,
 		}
 		valid, err := concurrentIndexMatches(ctx, connection, expected, schema)
 		if err != nil {
-			return err
+			return databaseFailureFor("runner.verify-concurrent-index", err)
 		}
 		if !valid {
-			return errors.New("concurrent migration target index is absent or invalid")
+			return &databaseFailure{Context: "runner.verify-concurrent-index", Category: "invalid-concurrent-index", SQLState: "none"}
 		}
-		_, err = connection.Exec(ctx, "INSERT INTO "+ledger+" (version, checksum) VALUES ($1, $2)", candidate.Version, candidate.Checksum)
-		return err
+		if _, err := connection.Exec(ctx, "INSERT INTO "+ledger+" (version, checksum) VALUES ($1, $2)", candidate.Version, candidate.Checksum); err != nil {
+			return databaseFailureFor("runner.insert-concurrent-ledger", err)
+		}
+		return nil
 	}
 	sql, err := transactionalSQL(candidate.SQL)
 	if err != nil {
@@ -277,16 +344,19 @@ func apply(ctx context.Context, connection *pgxpool.Conn, ledger, schema string,
 	}
 	transaction, err := connection.Begin(ctx)
 	if err != nil {
-		return err
+		return databaseFailureFor("runner.begin-transactional-migration", err)
 	}
 	defer func() { _ = transaction.Rollback(ctx) }()
 	if _, err := transaction.Exec(ctx, sql); err != nil {
-		return err
+		return databaseFailureFor("runner.execute-transactional-migration", err)
 	}
 	if _, err := transaction.Exec(ctx, "INSERT INTO "+ledger+" (version, checksum) VALUES ($1, $2)", candidate.Version, candidate.Checksum); err != nil {
-		return err
+		return databaseFailureFor("runner.insert-transactional-ledger", err)
 	}
-	return transaction.Commit(ctx)
+	if err := transaction.Commit(ctx); err != nil {
+		return databaseFailureFor("runner.commit-transactional-migration", err)
+	}
+	return nil
 }
 
 func concurrentIndexMatches(ctx context.Context, connection *pgxpool.Conn, expected concurrentIndexDefinition, defaultSchema string) (bool, error) {
@@ -318,7 +388,7 @@ LEFT JOIN LATERAL unnest(i.indkey::smallint[], i.indclass::oid[], i.indcollation
 LEFT JOIN pg_catalog.pg_attribute attribute ON attribute.attrelid = table_class.oid AND attribute.attnum = key_column.attnum
 LEFT JOIN pg_catalog.pg_opclass opclass ON opclass.oid = key_column.opclass_oid
 WHERE index_namespace.nspname = $1 AND index_class.relname = $2
-GROUP BY i.indisvalid, table_namespace.nspname, table_class.relname, access_method.amname, i.indisunique, i.indnullsnotdistinct, i.indimmediate, i.indnkeyatts, i.indnatts, i.indpred`
+GROUP BY i.indisvalid, table_namespace.nspname, table_class.relname, access_method.amname, i.indisunique, i.indnullsnotdistinct, i.indimmediate, i.indnkeyatts, i.indnatts, (i.indpred IS NULL)`
 	var actual concurrentIndexDefinition
 	if err := connection.QueryRow(ctx, indexDefinition, expected.Schema, expected.Name).Scan(
 		&actual.Valid, &actual.Schema, &actual.Table, &actual.Method, &actual.Unique, &actual.NullsNotDistinct, &actual.Immediate, &actual.KeyCount, &actual.IncludeCount, &actual.Columns,
@@ -470,28 +540,20 @@ func concurrentIndexTarget(sql string) (concurrentIndexDefinition, bool, error) 
 	if match == nil {
 		return concurrentIndexDefinition{}, true, errors.New("concurrent migration must contain exactly one supported unquoted CREATE INDEX CONCURRENTLY statement")
 	}
-	method := strings.ToLower(match[6])
+	method := strings.ToLower(match[5])
 	if method == "" {
 		method = "btree"
 	}
 	if method != "btree" {
 		return concurrentIndexDefinition{}, true, errors.New("concurrent migration must use btree with default index options")
 	}
-	indexSchema := strings.ToLower(match[2])
-	tableSchema := strings.ToLower(match[4])
-	if indexSchema != "" && tableSchema != "" && indexSchema != tableSchema {
-		return concurrentIndexDefinition{}, true, errors.New("concurrent index schema must match its table schema")
-	}
-	if indexSchema == "" {
-		indexSchema = tableSchema
-	}
 	return concurrentIndexDefinition{
-		Schema:           indexSchema,
-		Name:             strings.ToLower(match[3]),
-		Table:            strings.ToLower(match[5]),
+		Schema:           strings.ToLower(match[3]),
+		Name:             strings.ToLower(match[2]),
+		Table:            strings.ToLower(match[4]),
 		Method:           method,
 		Unique:           match[1] != "",
-		Columns:          strings.FieldsFunc(strings.ToLower(match[7]), func(r rune) bool { return r == ',' || unicode.IsSpace(r) }),
+		Columns:          strings.FieldsFunc(strings.ToLower(match[6]), func(r rune) bool { return r == ',' || unicode.IsSpace(r) }),
 		NullsNotDistinct: false,
 		Immediate:        true,
 	}, true, nil

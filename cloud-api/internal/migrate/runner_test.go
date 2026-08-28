@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 func TestValidateDatabaseURLFailsClosed(t *testing.T) {
@@ -209,6 +210,73 @@ func TestConcurrentIndexTargetParsesOnlyVerifiableDefinitions(t *testing.T) {
 		if _, _, err := concurrentIndexTarget(sql); err == nil {
 			t.Fatalf("unsupported concurrent definition was accepted: %q", sql)
 		}
+	}
+}
+
+func TestConcurrentIndexTargetRejectsSchemaQualifiedIndexName(t *testing.T) {
+	_, found, err := concurrentIndexTarget("CREATE UNIQUE INDEX CONCURRENTLY app.events_email_idx ON app.events (email);")
+	if !found {
+		t.Fatal("schema-qualified concurrent index was not detected")
+	}
+	if err == nil {
+		t.Fatal("schema-qualified concurrent index name was accepted")
+	}
+}
+
+func TestDatabaseFailureOnlyReturnsWhitelistedDiagnostics(t *testing.T) {
+	const secret = "postgres://cloud:top-secret@127.0.0.1:15432/cloud"
+	tests := []struct {
+		name         string
+		err          error
+		wantCategory string
+		wantSQLState string
+	}{
+		{
+			name: "PostgreSQL server error",
+			err: &pgconn.PgError{
+				Code:    "42883",
+				Message: secret,
+				Detail:  secret,
+				Hint:    secret,
+			},
+			wantCategory: "postgres-server",
+			wantSQLState: "42883",
+		},
+		{
+			name:         "result decode error",
+			err:          pgx.ScanArgError{Err: errors.New(secret)},
+			wantCategory: "result-decode",
+			wantSQLState: "none",
+		},
+		{
+			name:         "generic driver error",
+			err:          errors.New(secret),
+			wantCategory: "driver",
+			wantSQLState: "none",
+		},
+		{
+			name:         "malformed PostgreSQL state",
+			err:          &pgconn.PgError{Code: "secret", Message: secret},
+			wantCategory: "postgres-server",
+			wantSQLState: "none",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			failure := databaseFailureFor("runner.verify-concurrent-index", test.err)
+			if failure.Context != "runner.verify-concurrent-index" || failure.Category != test.wantCategory || failure.SQLState != test.wantSQLState {
+				t.Fatalf("database failure = %#v, want fixed context/%s/%s", failure, test.wantCategory, test.wantSQLState)
+			}
+			if strings.Contains(failure.Error(), secret) {
+				t.Fatal("database failure exposed an underlying database error")
+			}
+		})
+	}
+}
+
+func TestServerVersionSupportGate(t *testing.T) {
+	if unsupportedServerVersionFailure().Category != "unsupported-server-version" || unsupportedServerVersionFailure().SQLState != "none" {
+		t.Fatal("unsupported server version failure is not safely categorized")
 	}
 }
 
@@ -461,8 +529,8 @@ func TestRunRejectsMismatchedOrInvalidConcurrentIndexBeforeLedgerAndRecovers(t *
 	})
 	config := Config{DatabaseURL: dsn, Directory: directory, Schema: schema}
 
-	if _, err := conn.Exec(ctx, "CREATE UNIQUE INDEX "+quoteIdentifier(schema)+".events_email_id_idx ON "+quoteIdentifier(schema)+".events(email) INCLUDE (id)"); err != nil {
-		t.Fatal("create same-attribute INCLUDE boundary mismatch index")
+	if _, err := conn.Exec(ctx, "CREATE UNIQUE INDEX events_email_id_idx ON "+quoteIdentifier(schema)+".events(email) INCLUDE (id)"); err != nil {
+		fatalDatabase(t, "fixture.create-include-boundary-index", err)
 	}
 	assertConcurrentMigrationNotLedgered(t, ctx, conn, config, schema)
 	if _, err := conn.Exec(ctx, "DROP INDEX "+quoteIdentifier(schema)+".events_email_id_idx"); err != nil {
@@ -471,9 +539,12 @@ func TestRunRejectsMismatchedOrInvalidConcurrentIndexBeforeLedgerAndRecovers(t *
 	if _, err := conn.Exec(ctx, "INSERT INTO "+quoteIdentifier(schema)+".events(id,email) VALUES(1,'duplicate'),(2,'duplicate')"); err != nil {
 		t.Fatal("seed duplicate values")
 	}
-	if _, err := conn.Exec(ctx, "CREATE UNIQUE INDEX CONCURRENTLY "+quoteIdentifier(schema)+".events_email_id_idx ON "+quoteIdentifier(schema)+".events(email)"); err == nil {
+	_, err := conn.Exec(ctx, "CREATE UNIQUE INDEX CONCURRENTLY events_email_id_idx ON "+quoteIdentifier(schema)+".events(email)")
+	if err == nil {
 		t.Fatal("failed concurrent unique index fixture unexpectedly succeeded")
 	}
+	assertPostgresSQLState(t, "fixture.create-invalid-concurrent-index", err, "23505")
+	assertConcurrentIndexValidity(t, ctx, conn, schema, "events_email_id_idx", false)
 	assertConcurrentMigrationNotLedgered(t, ctx, conn, config, schema)
 	if _, err := conn.Exec(ctx, "DROP INDEX "+quoteIdentifier(schema)+".events_email_id_idx"); err != nil {
 		t.Fatal("drop invalid same-name index")
@@ -495,10 +566,7 @@ func TestRunRejectsNullsNotDistinctConcurrentIndexBeforeLedger(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	conn, schema := openMigrationTestSchema(t, ctx, dsn)
-	var serverVersion int
-	if err := conn.QueryRow(ctx, "SHOW server_version_num").Scan(&serverVersion); err != nil {
-		t.Fatal("read PostgreSQL server version")
-	}
+	serverVersion := readPostgresServerVersion(t, ctx, conn)
 	if serverVersion < 150000 {
 		t.Skipf("PostgreSQL %d does not support NULLS NOT DISTINCT indexes; skipping capability-specific case", serverVersion)
 	}
@@ -509,10 +577,49 @@ func TestRunRejectsNullsNotDistinctConcurrentIndexBeforeLedger(t *testing.T) {
 		"000001_concurrent.up.sql": "CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS events_email_idx ON events (email);\n",
 	})
 	config := Config{DatabaseURL: dsn, Directory: directory, Schema: schema}
-	if _, err := conn.Exec(ctx, "CREATE UNIQUE INDEX "+quoteIdentifier(schema)+".events_email_idx ON "+quoteIdentifier(schema)+".events(email) NULLS NOT DISTINCT"); err != nil {
-		t.Fatal("create same-name NULLS NOT DISTINCT index")
+	if _, err := conn.Exec(ctx, "CREATE UNIQUE NULLS NOT DISTINCT INDEX events_email_idx ON "+quoteIdentifier(schema)+".events(email)"); err != nil {
+		fatalDatabase(t, "fixture.create-nulls-not-distinct-index", err)
 	}
 	assertConcurrentMigrationNotLedgered(t, ctx, conn, config, schema)
+}
+
+func readPostgresServerVersion(t *testing.T, ctx context.Context, conn *pgx.Conn) int {
+	t.Helper()
+	var serverVersion int
+	if err := conn.QueryRow(ctx, "SELECT current_setting('server_version_num')::integer").Scan(&serverVersion); err != nil {
+		fatalDatabase(t, "fixture.read-server-version", err)
+	}
+	return serverVersion
+}
+
+func assertPostgresSQLState(t *testing.T, operation string, err error, wantSQLState string) {
+	t.Helper()
+	failure := databaseFailureFor(operation, err)
+	if failure.Category != "postgres-server" || failure.SQLState != wantSQLState {
+		t.Fatalf("%s: got %s, want category=postgres-server sqlstate=%s", operation, failure, wantSQLState)
+	}
+}
+
+func assertConcurrentIndexValidity(t *testing.T, ctx context.Context, conn *pgx.Conn, schema, indexName string, want bool) {
+	t.Helper()
+	var valid bool
+	err := conn.QueryRow(ctx, `
+SELECT i.indisvalid
+FROM pg_catalog.pg_index i
+JOIN pg_catalog.pg_class c ON c.oid = i.indexrelid
+JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+WHERE n.nspname = $1 AND c.relname = $2`, schema, indexName).Scan(&valid)
+	if err != nil {
+		fatalDatabase(t, "fixture.read-concurrent-index-validity", err)
+	}
+	if valid != want {
+		t.Fatalf("fixture.read-concurrent-index-validity: got %t, want %t", valid, want)
+	}
+}
+
+func fatalDatabase(t *testing.T, operation string, err error) {
+	t.Helper()
+	t.Fatal(databaseFailureFor(operation, err))
 }
 
 func assertConcurrentMigrationNotLedgered(t *testing.T, ctx context.Context, conn *pgx.Conn, config Config, schema string) {
