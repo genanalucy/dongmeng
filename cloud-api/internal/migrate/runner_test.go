@@ -152,6 +152,7 @@ func TestTransactionalSQLAcceptsOnlyOneOuterEnvelope(t *testing.T) {
 		"CREATE TABLE events(id integer); RELEASE SAVEPOINT nested;",
 		"CREATE TABLE events(id integer); PREPARE TRANSACTION 'prepared';",
 		"CREATE TABLE events(id integer); SET TRANSACTION ISOLATION LEVEL SERIALIZABLE;",
+		"CREATE TABLE events(id integer); SET SESSION CHARACTERISTICS AS TRANSACTION ISOLATION LEVEL SERIALIZABLE;",
 		"BEGIN; CREATE TABLE first_table(id integer); COMMIT; CREATE TABLE second_table(id integer); COMMIT;",
 		"BEGIN; BEGIN; CREATE TABLE events(id integer); COMMIT; COMMIT;",
 		"BEGIN; CREATE TABLE events(id integer); END; COMMIT;",
@@ -167,6 +168,7 @@ func TestTransactionalSQLAcceptsOnlyOneOuterEnvelope(t *testing.T) {
 	for _, sql := range []string{
 		"CREATE TABLE e_identifier(id integer);",
 		"CREATE TABLE users(e text);",
+		"UPDATE installations SET install_id = 'install-123' WHERE id = 1;",
 		"SELECT identifierE'ordinary string';",
 		"SELECT identifier$tag$not a dollar quote$tag$;",
 	} {

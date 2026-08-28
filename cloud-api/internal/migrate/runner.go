@@ -485,10 +485,17 @@ func transactionalSQL(sql string) (string, error) {
 }
 
 func hasTransactionControl(words []string) bool {
-	for _, word := range words {
+	for index, word := range words {
 		switch word {
-		case "BEGIN", "COMMIT", "END", "ROLLBACK", "ABORT", "START", "SAVEPOINT", "RELEASE", "PREPARE", "SET":
+		case "BEGIN", "COMMIT", "END", "ROLLBACK", "ABORT", "START", "SAVEPOINT", "RELEASE", "PREPARE":
 			return true
+		case "SET":
+			if index+1 < len(words) && words[index+1] == "TRANSACTION" {
+				return true
+			}
+			if index+4 < len(words) && words[index+1] == "SESSION" && words[index+2] == "CHARACTERISTICS" && words[index+3] == "AS" && words[index+4] == "TRANSACTION" {
+				return true
+			}
 		}
 	}
 	return false
