@@ -1,10 +1,15 @@
 package com.verba.interpretation.cloud
 
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.math.max
@@ -27,9 +32,18 @@ data class UsageRecordPayload(
 
 class TranslationSessionCoordinator(
     private val cloud: CloudTranslationSessionService,
-    private val scope: CoroutineScope,
+    scope: CoroutineScope,
     private val elapsedRealtimeMillis: () -> Long = { android.os.SystemClock.elapsedRealtime() },
+    private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
+    private val maxEndAttempts: Int = 3,
+    private val retryDelayMillis: (attempt: Int) -> Long = { attempt -> 250L * attempt },
 ) {
+    init {
+        require(maxEndAttempts > 0)
+    }
+
+    data class EndFailure(val sessionId: String, val attempts: Int, val willRetry: Boolean)
+
     private data class SessionState(
         val startedAtMillis: Long,
         var usage: UsageRecordPayload? = null,
@@ -44,6 +58,8 @@ class TranslationSessionCoordinator(
     private val lock = Any()
     private val operationScope = CoroutineScope(scope.coroutineContext.minusKey(Job) + SupervisorJob())
     private val sessions = mutableMapOf<String, SessionState>()
+    private val mutableEndFailures = MutableSharedFlow<EndFailure>(replay = 1, extraBufferCapacity = 1)
+    val endFailures: SharedFlow<EndFailure> = mutableEndFailures.asSharedFlow()
 
     /**
      * Starts an acquisition that may be cancelled independently from the owner scope. A grant that
@@ -59,7 +75,7 @@ class TranslationSessionCoordinator(
         }
         operationScope.launch {
             try {
-                val grant = withContext(NonCancellable + Dispatchers.IO) { cloud.createTranslationSession() }
+                val grant = withContext(NonCancellable + ioDispatcher) { cloud.createTranslationSession() }
                 val cancelled = handle.isCancelled()
                 register(grant.sessionId)
                 if (cancelled) {
@@ -75,8 +91,8 @@ class TranslationSessionCoordinator(
     }
 
     /**
-     * Reports usage once and attempts one serialized remote end. A failed transport attempt retains
-     * eligibility, so a later explicit call retries it; concurrent calls never overlap.
+     * Reports usage once and owns a bounded, serialized remote end retry. State survives until a
+     * successful end so ViewModels may discard their grant immediately without losing cleanup.
      */
     fun end(sessionId: String?) {
         if (sessionId == null) return
@@ -94,19 +110,31 @@ class TranslationSessionCoordinator(
             current
         }
         operationScope.launch {
-            val usage = synchronized(lock) {
-                if (session.usageStarted) null else {
-                    session.usageStarted = true
-                    checkNotNull(session.usage)
+            reportUsageOnce(session)
+            for (attempt in 1..maxEndAttempts) {
+                val ended = runCatching {
+                    withContext(NonCancellable + ioDispatcher) { cloud.endTranslationSession(sessionId) }
+                }.isSuccess
+                if (ended) {
+                    synchronized(lock) { sessions.remove(sessionId) }
+                    return@launch
                 }
+                val willRetry = attempt < maxEndAttempts
+                mutableEndFailures.tryEmit(EndFailure(sessionId, attempt, willRetry))
+                if (willRetry) delay(retryDelayMillis(attempt).coerceAtLeast(0L))
             }
-            if (usage != null) launch { runCatching { cloud.createUsageRecord(usage) } }
-
-            val ended = runCatching { cloud.endTranslationSession(sessionId) }.isSuccess
-            synchronized(lock) {
-                if (ended) sessions.remove(sessionId) else session.endInFlight = false
-            }
+            synchronized(lock) { session.endInFlight = false }
         }
+    }
+
+    private suspend fun reportUsageOnce(session: SessionState) {
+        val usage = synchronized(lock) {
+            if (session.usageStarted) null else {
+                session.usageStarted = true
+                checkNotNull(session.usage)
+            }
+        } ?: return
+        runCatching { withContext(NonCancellable + ioDispatcher) { cloud.createUsageRecord(usage) } }
     }
 
     private fun register(sessionId: String) = synchronized(lock) {
