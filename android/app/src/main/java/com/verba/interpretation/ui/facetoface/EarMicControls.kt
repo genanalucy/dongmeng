@@ -7,15 +7,16 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Mic
@@ -30,16 +31,13 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
@@ -65,75 +63,37 @@ internal fun EarMicControls(
     onStopAuto: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Row(
-        modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
+    val manualMode = state.mode == FaceToFaceMode.MANUAL
+    Row(modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
         EarMicButton(
-            modifier = Modifier.weight(1f),
-            side = FaceToFaceSide.LEFT,
-            language = state.leftLanguage,
+            modifier = Modifier.weight(1f), side = FaceToFaceSide.LEFT, language = state.leftLanguage,
             active = presentation.activeMic == FaceToFaceSide.LEFT,
-            enabled = state.mode == FaceToFaceMode.MANUAL && state.phase == FaceToFacePhase.IDLE,
-            stateLabel = when {
-                state.mode == FaceToFaceMode.AUTO && state.phase == FaceToFacePhase.LISTENING -> "连续收音"
-                state.mode == FaceToFaceMode.AUTO && state.phase == FaceToFacePhase.PAUSED -> "已暂停"
-                else -> "按住说话"
-            },
-            onPress = { requestMicrophone { onManualPress(FaceToFaceSide.LEFT) } },
-            onRelease = onManualRelease,
+            pointerEnabled = manualMode && state.phase == FaceToFacePhase.IDLE,
+            actionEnabled = manualMode && state.phase == FaceToFacePhase.IDLE,
+            stateLabel = if (!manualMode && state.phase == FaceToFacePhase.LISTENING) "连续收音" else "按住说话",
+            onPress = { requestMicrophone { onManualPress(FaceToFaceSide.LEFT) } }, onRelease = onManualRelease,
         )
-        AutoControls(
-            state = state,
-            requestMicrophone = requestMicrophone,
-            onStart = onStartAuto,
-            onPause = onPauseAuto,
-            onResume = onResumeAuto,
-            onStop = onStopAuto,
-        )
+        AutoControls(state, requestMicrophone, onStartAuto, onPauseAuto, onResumeAuto, onStopAuto)
         EarMicButton(
-            modifier = Modifier.weight(1f),
-            side = FaceToFaceSide.RIGHT,
-            language = state.rightLanguage,
+            modifier = Modifier.weight(1f), side = FaceToFaceSide.RIGHT, language = state.rightLanguage,
             active = presentation.activeMic == FaceToFaceSide.RIGHT,
-            enabled = when (state.mode) {
-                FaceToFaceMode.MANUAL -> state.phase == FaceToFacePhase.IDLE
-                FaceToFaceMode.AUTO -> state.phase == FaceToFacePhase.LISTENING
-            },
-            stateLabel = if (state.mode == FaceToFaceMode.AUTO) "按住临时切换" else "按住说话",
-            onPress = {
-                if (state.mode == FaceToFaceMode.AUTO) onPressRightAuto()
-                else requestMicrophone { onManualPress(FaceToFaceSide.RIGHT) }
-            },
-            onRelease = if (state.mode == FaceToFaceMode.AUTO) onReleaseRightAuto else onManualRelease,
+            pointerEnabled = if (manualMode) state.phase == FaceToFacePhase.IDLE else state.phase == FaceToFacePhase.LISTENING,
+            actionEnabled = if (manualMode) state.phase == FaceToFacePhase.IDLE else state.phase == FaceToFacePhase.LISTENING,
+            stateLabel = if (manualMode) "按住说话" else "按住临时切换",
+            onPress = { if (manualMode) requestMicrophone { onManualPress(FaceToFaceSide.RIGHT) } else onPressRightAuto() },
+            onRelease = if (manualMode) onManualRelease else onReleaseRightAuto,
         )
     }
 }
 
 @Composable
-private fun AutoControls(
-    state: FaceToFaceState,
-    requestMicrophone: (() -> Unit) -> Unit,
-    onStart: () -> Unit,
-    onPause: () -> Unit,
-    onResume: () -> Unit,
-    onStop: () -> Unit,
-) {
+private fun AutoControls(state: FaceToFaceState, requestMicrophone: (() -> Unit) -> Unit, onStart: () -> Unit, onPause: () -> Unit, onResume: () -> Unit, onStop: () -> Unit) {
     if (state.mode != FaceToFaceMode.AUTO) return
     when (state.phase) {
-        FaceToFacePhase.IDLE -> Button(onClick = { requestMicrophone(onStart) }, modifier = Modifier.heightIn(min = 48.dp)) {
-            Icon(Icons.Filled.Mic, contentDescription = "开始连续翻译")
-        }
-        FaceToFacePhase.LISTENING -> OutlinedButton(onClick = onPause, modifier = Modifier.heightIn(min = 48.dp)) {
-            Icon(Icons.Filled.Pause, contentDescription = "暂停连续翻译")
-        }
-        FaceToFacePhase.PAUSED -> Button(onClick = onResume, modifier = Modifier.heightIn(min = 48.dp)) {
-            Icon(Icons.Filled.PlayArrow, contentDescription = "继续连续翻译")
-        }
-        else -> OutlinedButton(onClick = onStop, enabled = false, modifier = Modifier.heightIn(min = 48.dp)) {
-            Icon(Icons.Filled.Stop, contentDescription = "停止连续翻译")
-        }
+        FaceToFacePhase.IDLE -> Button(onClick = { requestMicrophone(onStart) }, modifier = Modifier.heightIn(min = 48.dp)) { Icon(Icons.Filled.Mic, contentDescription = "开始连续翻译") }
+        FaceToFacePhase.LISTENING -> OutlinedButton(onClick = onPause, modifier = Modifier.heightIn(min = 48.dp)) { Icon(Icons.Filled.Pause, contentDescription = "暂停连续翻译") }
+        FaceToFacePhase.PAUSED -> Button(onClick = onResume, modifier = Modifier.heightIn(min = 48.dp)) { Icon(Icons.Filled.PlayArrow, contentDescription = "继续连续翻译") }
+        else -> OutlinedButton(onClick = onStop, enabled = false, modifier = Modifier.heightIn(min = 48.dp)) { Icon(Icons.Filled.Stop, contentDescription = "停止连续翻译") }
     }
 }
 
@@ -143,33 +103,26 @@ private fun EarMicButton(
     side: FaceToFaceSide,
     language: String,
     active: Boolean,
-    enabled: Boolean,
+    pointerEnabled: Boolean,
+    actionEnabled: Boolean,
     stateLabel: String,
     onPress: () -> Unit,
     onRelease: () -> Unit,
 ) {
-    val animationScale = Settings.Global.getFloat(LocalContext.current.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f)
-    val infiniteTransition = rememberInfiniteTransition(label = "micRipple")
-    val animatedRadius by infiniteTransition.animateFloat(
-        initialValue = 0.8f,
-        targetValue = 1.35f,
-        animationSpec = infiniteRepeatable(tween(900, easing = LinearEasing)),
-        label = "micRippleRadius",
-    )
-    val rippleScale = if (animationScale == 0f) 1.15f else animatedRadius
+    val currentPress by rememberUpdatedState(onPress)
+    val currentRelease by rememberUpdatedState(onRelease)
+    val currentPointerEnabled by rememberUpdatedState(pointerEnabled)
+    val animatorScale = Settings.Global.getFloat(LocalContext.current.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f)
     val color = MaterialTheme.colorScheme.primary
     Surface(
-        modifier = modifier
-            .heightIn(min = 72.dp)
-            .semantics {
-                role = Role.Button
-                contentDescription = "${TranslationLanguage.displayName(language)}麦克风"
-                stateDescription = stateLabel
-            }
-            .pointerInput(enabled, side) {
-                if (enabled) detectTapGestures(onPress = {
-                    onPress()
-                    try { awaitRelease() } finally { onRelease() }
+        modifier = modifier.heightIn(min = 72.dp)
+            .semantics { contentDescription = "${TranslationLanguage.displayName(language)}麦克风"; stateDescription = stateLabel }
+            .clickable(enabled = actionEnabled) { currentPress(); currentRelease() }
+            .pointerInput(side) {
+                detectTapGestures(onPress = {
+                    if (!currentPointerEnabled) return@detectTapGestures
+                    currentPress()
+                    try { awaitRelease() } finally { currentRelease() }
                 })
             },
         shape = CircleShape,
@@ -177,16 +130,34 @@ private fun EarMicButton(
         tonalElevation = 2.dp,
     ) {
         Box(contentAlignment = Alignment.Center) {
-            if (active) {
-                Canvas(Modifier.size(68.dp)) {
-                    drawCircle(color = color.copy(alpha = 0.22f), radius = size.minDimension * rippleScale / 2f, style = Stroke(2.dp.toPx()))
-                    drawCircle(color = color.copy(alpha = 0.12f), radius = size.minDimension * (rippleScale + 0.2f) / 2f, style = Stroke(1.dp.toPx()))
-                }
-            }
-            androidx.compose.foundation.layout.Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            if (active) MicRipple(animatorScale, color)
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Icon(Icons.Filled.Mic, contentDescription = null, tint = color, modifier = Modifier.size(24.dp))
                 Text(TranslationLanguage.displayName(language), style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
             }
         }
+    }
+}
+
+@Composable
+private fun MicRipple(animatorScale: Float, color: androidx.compose.ui.graphics.Color) {
+    if (animatorScale == 0f) StaticMicRipple(color) else AnimatedMicRipple(color)
+}
+
+@Composable
+private fun StaticMicRipple(color: androidx.compose.ui.graphics.Color) = DrawMicRipple(color, 1.15f)
+
+@Composable
+private fun AnimatedMicRipple(color: androidx.compose.ui.graphics.Color) {
+    val transition = rememberInfiniteTransition(label = "micRipple")
+    val radius by transition.animateFloat(0.8f, 1.35f, infiniteRepeatable(tween(900, easing = LinearEasing)), label = "micRippleRadius")
+    DrawMicRipple(color, radius)
+}
+
+@Composable
+private fun DrawMicRipple(color: androidx.compose.ui.graphics.Color, radius: Float) {
+    Canvas(Modifier.size(68.dp)) {
+        drawCircle(color.copy(alpha = 0.22f), size.minDimension * radius / 2f, style = Stroke(2.dp.toPx()))
+        drawCircle(color.copy(alpha = 0.12f), size.minDimension * (radius + 0.2f) / 2f, style = Stroke(1.dp.toPx()))
     }
 }

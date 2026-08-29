@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.DropdownMenu
@@ -16,6 +17,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -131,16 +133,23 @@ private fun LanguageChip(
     onSelect: (String) -> Unit,
 ) {
     var expanded by remember { mutableStateOf(false) }
+    LaunchedEffect(enabled) {
+        if (!enabled) expanded = false
+    }
     Box(modifier) {
         androidx.compose.material3.AssistChip(
             onClick = { if (enabled) expanded = true },
             enabled = enabled,
             label = { Text(TranslationLanguage.displayName(language)) },
-            modifier = Modifier.fillMaxWidth().semantics { contentDescription = "选择${TranslationLanguage.displayName(language)}语言" },
+            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).semantics { contentDescription = "选择${TranslationLanguage.displayName(language)}语言" },
         )
-        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+        DropdownMenu(expanded = expanded && enabled, onDismissRequest = { expanded = false }) {
             TranslationLanguage.entries.filter { it.code != otherLanguage }.forEach { choice ->
-                DropdownMenuItem(text = { Text(choice.displayName) }, onClick = { onSelect(choice.code); expanded = false })
+                DropdownMenuItem(
+                    text = { Text(choice.displayName) },
+                    enabled = enabled,
+                    onClick = { if (enabled) onSelect(choice.code); expanded = false },
+                )
             }
         }
     }

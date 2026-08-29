@@ -13,19 +13,17 @@ import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.contentDescription
@@ -38,7 +36,20 @@ import com.verba.interpretation.ui.ChatFollowState
 import com.verba.interpretation.ui.FaceToFaceSide
 import com.verba.interpretation.ui.FaceToFaceTurn
 import com.verba.interpretation.ui.TranslationLanguage
-import kotlinx.coroutines.flow.distinctUntilChanged
+
+internal fun conversationTimelineLatestIndex(turnCount: Int, hasListeningPlaceholder: Boolean): Int =
+    (turnCount + if (hasListeningPlaceholder) 1 else 0).coerceAtLeast(1) - 1
+
+internal fun conversationTimelineUpdateCount(
+    previousTurnToken: List<String>,
+    currentTurnToken: List<String>,
+    previousHasListeningPlaceholder: Boolean,
+    hasListeningPlaceholder: Boolean,
+): Int = when {
+    currentTurnToken != previousTurnToken -> (currentTurnToken.size - previousTurnToken.size).coerceAtLeast(1)
+    hasListeningPlaceholder != previousHasListeningPlaceholder -> 1
+    else -> 0
+}
 
 @Composable
 internal fun ConversationTimeline(
@@ -48,22 +59,37 @@ internal fun ConversationTimeline(
     modifier: Modifier = Modifier,
     listState: LazyListState = rememberLazyListState(),
 ) {
-    val token = remember(turns) { turns.map { listOf(it.id, it.sourceText, it.translatedText, it.finished) } }
-    val atLatest by remember(listState) {
-        androidx.compose.runtime.derivedStateOf {
-            listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index == turns.lastIndex
+    val hasListeningPlaceholder = activeMic != null
+    val turnToken = remember(turns) { turns.map { "${it.id}:${it.sourceText}:${it.translatedText}:${it.finished}" } }
+    var previousToken by remember { mutableStateOf<List<String>?>(null) }
+    var previousHasPlaceholder by remember { mutableStateOf(hasListeningPlaceholder) }
+    val latestIndex = conversationTimelineLatestIndex(turns.size, hasListeningPlaceholder)
+    val atLatest by remember(listState, latestIndex) {
+        derivedStateOf {
+            listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index?.let { it >= latestIndex } ?: true
         }
     }
-    val follow = remember { androidx.compose.runtime.mutableStateOf(ChatFollowState()) }
+    val follow = remember { mutableStateOf(ChatFollowState()) }
     LaunchedEffect(atLatest) {
         follow.value = ChatFollowPolicy.reduce(
             follow.value,
             if (atLatest) ChatFollowEvent.UserReachedLatest else ChatFollowEvent.UserLeftLatest,
         )
     }
-    LaunchedEffect(token) {
-        follow.value = ChatFollowPolicy.reduce(follow.value, ChatFollowEvent.TranscriptChanged(1))
-        if (follow.value.followsLatest && turns.isNotEmpty()) listState.animateScrollToItem(turns.lastIndex)
+    LaunchedEffect(turnToken, hasListeningPlaceholder) {
+        val before = previousToken
+        val updates = if (before == null) 0 else conversationTimelineUpdateCount(
+            before,
+            turnToken,
+            previousHasPlaceholder,
+            hasListeningPlaceholder,
+        )
+        if (updates > 0) {
+            follow.value = ChatFollowPolicy.reduce(follow.value, ChatFollowEvent.TranscriptChanged(updates))
+            if (follow.value.followsLatest) listState.animateScrollToItem(latestIndex)
+        }
+        previousToken = turnToken
+        previousHasPlaceholder = hasListeningPlaceholder
     }
     LazyColumn(
         state = listState,
@@ -81,21 +107,15 @@ internal fun ConversationTimeline(
             }
         }
         items(turns, key = { it.id }) { turn -> ConversationBubble(turn) }
-        if (activeMic != null) {
-            item(key = "listening") { ListeningPlaceholder(activeMic, listeningPlaceholder) }
-        }
+        if (hasListeningPlaceholder) item(key = "listening") { ListeningPlaceholder(activeMic, listeningPlaceholder) }
     }
 }
 
 @Composable
 private fun ConversationBubble(turn: FaceToFaceTurn) {
-    val alignment = faceToFaceTurnAlignment(turn)
-    val isRight = alignment == FaceToFaceTurnAlignment.END
+    val isRight = faceToFaceTurnAlignment(turn) == FaceToFaceTurnAlignment.END
     val sourceName = TranslationLanguage.displayName(turn.sourceLanguage)
-    Column(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalAlignment = if (isRight) Alignment.End else Alignment.Start,
-    ) {
+    Column(Modifier.fillMaxWidth(), horizontalAlignment = if (isRight) Alignment.End else Alignment.Start) {
         Surface(
             modifier = Modifier.widthIn(max = 320.dp).semantics {
                 contentDescription = "$sourceName 对话。原文${turn.sourceText.ifBlank { "等待识别" }}。译文${turn.translatedText.ifBlank { "等待翻译" }}"
@@ -108,18 +128,7 @@ private fun ConversationBubble(turn: FaceToFaceTurn) {
                 Text(sourceName, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
                 Text(turn.sourceText.ifBlank { "…" }, style = MaterialTheme.typography.bodyLarge)
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                Text(
-                    turn.translatedText.ifBlank { "…" },
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = MaterialTheme.colorScheme.primary,
-                    fontWeight = FontWeight.Medium,
-                )
-                if (turn.translatedText.isNotBlank()) {
-                    IconButton(
-                        onClick = {},
-                        modifier = Modifier.align(Alignment.End).semantics { contentDescription = "播放译文" },
-                    ) { Icon(Icons.Filled.PlayArrow, contentDescription = null) }
-                }
+                Text(turn.translatedText.ifBlank { "…" }, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Medium)
             }
         }
     }
@@ -127,13 +136,7 @@ private fun ConversationBubble(turn: FaceToFaceTurn) {
 
 @Composable
 private fun ListeningPlaceholder(side: FaceToFaceSide, label: String) {
-    val alignment = if (side == FaceToFaceSide.LEFT) Alignment.CenterStart else Alignment.CenterEnd
-    Box(Modifier.fillMaxWidth(), contentAlignment = alignment) {
-        Text(
-            label,
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.primary,
-            modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
-        )
+    Box(Modifier.fillMaxWidth(), contentAlignment = if (side == FaceToFaceSide.LEFT) Alignment.CenterStart else Alignment.CenterEnd) {
+        Text(label, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp))
     }
 }

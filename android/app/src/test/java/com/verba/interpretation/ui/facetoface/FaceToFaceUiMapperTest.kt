@@ -60,6 +60,15 @@ class FaceToFaceUiMapperTest {
     }
 
     @Test
+    fun timelineTracksListeningItemAndDistinguishesNewTurnsFromStreamingUpdates() {
+        assertEquals(0, conversationTimelineLatestIndex(turnCount = 0, hasListeningPlaceholder = false))
+        assertEquals(1, conversationTimelineLatestIndex(turnCount = 1, hasListeningPlaceholder = true))
+        assertEquals(1, conversationTimelineUpdateCount(previousTurnToken = listOf("one"), currentTurnToken = listOf("one", "two"), previousHasListeningPlaceholder = false, hasListeningPlaceholder = true))
+        assertEquals(1, conversationTimelineUpdateCount(previousTurnToken = listOf("partial"), currentTurnToken = listOf("final"), previousHasListeningPlaceholder = true, hasListeningPlaceholder = true))
+        assertEquals(0, conversationTimelineUpdateCount(previousTurnToken = listOf("same"), currentTurnToken = listOf("same"), previousHasListeningPlaceholder = true, hasListeningPlaceholder = true))
+    }
+
+    @Test
     fun continuousRightPressAndReleaseMapToExpectedActiveMic() {
         val base = FaceToFaceState(
             mode = FaceToFaceMode.AUTO,
