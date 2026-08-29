@@ -41,6 +41,26 @@ class EndpointSettingsTest {
         assertEquals("ws://114.132.83.144:18765/ws/translate", result.getOrThrow().webSocketUrl)
     }
 
+    @Test fun migratesExactLegacyTranslationWebSocketPath() {
+        assertEquals(
+            "ws://114.132.83.144:18765/ws/translate",
+            EndpointSettings.migrateLegacyWebSocketUrl(
+                "ws://114.132.83.144:18765/v1/translation",
+                "ws://114.132.83.144:18765/ws/translate",
+            ),
+        )
+    }
+
+    @Test fun preservesCustomWebSocketUrlDuringLegacyMigration() {
+        assertEquals(
+            "ws://agent.example.test/custom-path",
+            EndpointSettings.migrateLegacyWebSocketUrl(
+                "ws://agent.example.test/custom-path",
+                "ws://114.132.83.144:18765/ws/translate",
+            ),
+        )
+    }
+
     @Test fun appendsDocumentedHealthPathToBaseUrl() {
         val healthUrl = EndpointConfig("https://agent.example.com/base", "wss://agent.example.com/ws/translate").healthUrl()
 

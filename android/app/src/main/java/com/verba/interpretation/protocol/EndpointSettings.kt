@@ -20,10 +20,17 @@ class EndpointSettings(
 ) {
     private val preferences = context.applicationContext.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
 
-    fun current(): EndpointConfig = EndpointConfig(
-        httpUrl = preferences.getString(HTTP_URL_KEY, defaults.httpUrl) ?: defaults.httpUrl,
-        webSocketUrl = preferences.getString(WEBSOCKET_URL_KEY, defaults.webSocketUrl) ?: defaults.webSocketUrl,
-    )
+    fun current(): EndpointConfig {
+        val storedWebSocketUrl = preferences.getString(WEBSOCKET_URL_KEY, defaults.webSocketUrl) ?: defaults.webSocketUrl
+        val webSocketUrl = migrateLegacyWebSocketUrl(storedWebSocketUrl, defaults.webSocketUrl)
+        if (webSocketUrl != storedWebSocketUrl) {
+            preferences.edit().putString(WEBSOCKET_URL_KEY, webSocketUrl).apply()
+        }
+        return EndpointConfig(
+            httpUrl = preferences.getString(HTTP_URL_KEY, defaults.httpUrl) ?: defaults.httpUrl,
+            webSocketUrl = webSocketUrl,
+        )
+    }
 
     fun save(httpUrl: String, webSocketUrl: String): Result<EndpointConfig> {
         val validated = policy.validate(httpUrl, webSocketUrl).getOrElse { return Result.failure(it) }
@@ -77,6 +84,10 @@ class EndpointSettings(
             false
         }
 
+        internal fun migrateLegacyWebSocketUrl(storedUrl: String, defaultUrl: String): String =
+            if (storedUrl == LEGACY_TRANSLATION_WS_URL) defaultUrl else storedUrl
+
+        private const val LEGACY_TRANSLATION_WS_URL = "ws://114.132.83.144:18765/v1/translation"
         private const val PREFERENCES_NAME = "endpoint_settings"
         private const val HTTP_URL_KEY = "http_url"
         private const val WEBSOCKET_URL_KEY = "websocket_url"
