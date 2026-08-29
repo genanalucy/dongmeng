@@ -27,17 +27,15 @@ enum class ProductScreen {
 object ProductNavigationPolicy {
     fun initialScreen(mode: ProductNavigationMode): ProductScreen = when (mode) {
         ProductNavigationMode.AUTHENTICATION -> ProductScreen.ACCOUNT
-        ProductNavigationMode.USER -> ProductScreen.TRANSLATE
+        ProductNavigationMode.USER -> ProductScreen.FACE_TO_FACE_WORKBENCH
         ProductNavigationMode.ADMIN_TEST -> ProductScreen.ADMIN_TEST
     }
 
     fun destinationsFor(mode: ProductNavigationMode): List<ProductDestination> = when (mode) {
         ProductNavigationMode.AUTHENTICATION -> emptyList()
         ProductNavigationMode.USER -> listOf(
-            ProductDestination.TRANSLATE,
-            ProductDestination.INTERPRETATION,
             ProductDestination.FACE_TO_FACE,
-            ProductDestination.HISTORY,
+            ProductDestination.INTERPRETATION,
             ProductDestination.PROFILE,
         )
         ProductNavigationMode.ADMIN_TEST -> listOf(ProductDestination.ADMIN_TEST, ProductDestination.PROFILE)
@@ -83,7 +81,7 @@ object ProductNavigationPolicy {
         ProductScreen.ADMIN_TEST -> ProductScreen.ADMIN_TEST
         ProductScreen.INTERPRETATION_WORKBENCH,
         ProductScreen.FACE_TO_FACE_WORKBENCH,
-        -> ProductScreen.TRANSLATE
+        -> ProductScreen.FACE_TO_FACE_WORKBENCH
         else -> screen
     }
 }

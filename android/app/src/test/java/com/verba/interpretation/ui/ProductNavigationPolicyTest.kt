@@ -9,12 +9,24 @@ class ProductNavigationPolicyTest {
     @Test
     fun roleDrivenNavigationSelectsAuthenticationUserAndAdminExperiences() {
         assertEquals(ProductScreen.ACCOUNT, ProductNavigationPolicy.initialScreen(ProductNavigationMode.AUTHENTICATION))
-        assertEquals(ProductScreen.TRANSLATE, ProductNavigationPolicy.initialScreen(ProductNavigationMode.USER))
         assertEquals(ProductScreen.ADMIN_TEST, ProductNavigationPolicy.initialScreen(ProductNavigationMode.ADMIN_TEST))
         assertTrue(ProductNavigationPolicy.destinationsFor(ProductNavigationMode.AUTHENTICATION).isEmpty())
         assertEquals(
             listOf(ProductDestination.ADMIN_TEST, ProductDestination.PROFILE),
             ProductNavigationPolicy.destinationsFor(ProductNavigationMode.ADMIN_TEST),
+        )
+    }
+
+    @Test
+    fun userNavigationDefaultsToFaceToFaceWithThreeDestinations() {
+        assertEquals(ProductScreen.FACE_TO_FACE_WORKBENCH, ProductNavigationPolicy.initialScreen(ProductNavigationMode.USER))
+        assertEquals(
+            listOf(
+                ProductDestination.FACE_TO_FACE,
+                ProductDestination.INTERPRETATION,
+                ProductDestination.PROFILE,
+            ),
+            ProductNavigationPolicy.destinationsFor(ProductNavigationMode.USER),
         )
     }
 
@@ -45,15 +57,15 @@ class ProductNavigationPolicyTest {
 
     @Test
     fun systemBackExitsSecondLevelScreensWithoutLeavingTheActivity() {
-        assertEquals(ProductScreen.TRANSLATE, ProductNavigationPolicy.exitTarget(ProductScreen.INTERPRETATION_WORKBENCH))
-        assertEquals(ProductScreen.TRANSLATE, ProductNavigationPolicy.exitTarget(ProductScreen.FACE_TO_FACE_WORKBENCH))
+        assertEquals(ProductScreen.FACE_TO_FACE_WORKBENCH, ProductNavigationPolicy.exitTarget(ProductScreen.INTERPRETATION_WORKBENCH))
+        assertEquals(ProductScreen.FACE_TO_FACE_WORKBENCH, ProductNavigationPolicy.exitTarget(ProductScreen.FACE_TO_FACE_WORKBENCH))
         assertEquals(ProductScreen.PROFILE, ProductNavigationPolicy.exitTarget(ProductScreen.ENDPOINT_SETTINGS))
     }
 
     @Test
     fun immersiveWorkbenchExitsHomeWhileSettingsReturnsToProfile() {
-        assertEquals(ProductScreen.TRANSLATE, ProductNavigationPolicy.exitTarget(ProductScreen.INTERPRETATION_WORKBENCH))
-        assertEquals(ProductScreen.TRANSLATE, ProductNavigationPolicy.exitTarget(ProductScreen.FACE_TO_FACE_WORKBENCH))
+        assertEquals(ProductScreen.FACE_TO_FACE_WORKBENCH, ProductNavigationPolicy.exitTarget(ProductScreen.INTERPRETATION_WORKBENCH))
+        assertEquals(ProductScreen.FACE_TO_FACE_WORKBENCH, ProductNavigationPolicy.exitTarget(ProductScreen.FACE_TO_FACE_WORKBENCH))
         assertEquals(ProductScreen.PROFILE, ProductNavigationPolicy.exitTarget(ProductScreen.ENDPOINT_SETTINGS))
     }
 
