@@ -11,6 +11,7 @@ internal enum class FaceToFaceTurnAlignment { START, END }
 internal data class FaceToFacePresentation(
     val activeMic: FaceToFaceSide?,
     val listeningLabel: String,
+    val timelinePlaceholder: String,
     val canChangeLanguages: Boolean,
     val isContinuous: Boolean,
 )
@@ -20,6 +21,7 @@ internal fun faceToFacePresentation(state: FaceToFaceState): FaceToFacePresentat
         state.phase == FaceToFacePhase.LISTENING && state.captureActive
     },
     listeningLabel = if (state.activeSourceLanguage() == "zh") "听取中…" else "Listening…",
+    timelinePlaceholder = if (state.activeSourceLanguage() == "zh") "听取中…" else "Listening…",
     canChangeLanguages = state.phase == FaceToFacePhase.IDLE && !state.captureActive,
     isContinuous = state.mode == FaceToFaceMode.AUTO,
 )

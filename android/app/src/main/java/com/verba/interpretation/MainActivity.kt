@@ -131,6 +131,7 @@ import com.verba.interpretation.brand.BrandTheme
 import com.verba.interpretation.cloud.CloudEndpointSettings
 import com.verba.interpretation.protocol.EndpointSettings
 import com.verba.interpretation.ui.AccountUiState
+import com.verba.interpretation.ui.facetoface.FaceToFaceScreen
 import com.verba.interpretation.ui.AccountViewModel
 import com.verba.interpretation.ui.ChatFollowEvent
 import com.verba.interpretation.ui.ChatFollowPolicy
@@ -704,66 +705,13 @@ private fun FaceToFaceWorkbench(
         if (hasPermission()) action() else permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
     }
 
-    var menuOpen by remember { mutableStateOf(false) }
-    var wavePanelOpen by remember { mutableStateOf(false) }
-    var waveTuning by remember { mutableStateOf(WaveTuning()) }
-    Column(modifier.fillMaxSize()) {
-        Box {
-            WorkbenchHeader("面对面翻译", state.statusLabel(), onExit, onMore = { menuOpen = true })
-            DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }, modifier = Modifier.align(Alignment.TopEnd)) {
-                DropdownMenuItem(
-                    text = { Text("按住说话") },
-                    leadingIcon = { if (state.mode == FaceToFaceMode.MANUAL) Icon(Icons.Filled.Mic, null) },
-                    onClick = { faceViewModel.setMode(FaceToFaceMode.MANUAL); menuOpen = false },
-                    enabled = state.phase == FaceToFacePhase.IDLE,
-                )
-                if (com.verba.interpretation.BuildConfig.DEBUG) DropdownMenuItem(text = { Text("波浪调试") }, onClick = { wavePanelOpen = true; menuOpen = false })
-                DropdownMenuItem(
-                    text = { Text("连续翻译") },
-                    leadingIcon = { if (state.mode == FaceToFaceMode.AUTO) Icon(Icons.Outlined.GraphicEq, null) },
-                    onClick = { faceViewModel.setMode(FaceToFaceMode.AUTO); menuOpen = false },
-                    enabled = state.phase == FaceToFacePhase.IDLE,
-                )
-            }
-        }
-        if (wavePanelOpen && com.verba.interpretation.BuildConfig.DEBUG) WaveTuningDialog(waveTuning, onChange = { waveTuning = it }, onDismiss = { wavePanelOpen = false })
-        Surface(
-            modifier = Modifier.fillMaxSize(),
-            color = MaterialTheme.colorScheme.surface,
-            shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
-        ) {
-            BoxWithConstraints(Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 12.dp)) {
-                val landscapeWorkbench = maxWidth >= 700.dp
-                if (landscapeWorkbench) {
-                    Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(18.dp)) {
-                        Column(Modifier.weight(1f).fillMaxHeight()) {
-                            if (state.phase == FaceToFacePhase.IDLE) FaceLanguageBubbles(state, faceViewModel)
-                            state.error?.let { ErrorSurface(it, Modifier.padding(top = 12.dp)) }
-                            Spacer(Modifier.weight(1f))
-                            WorkbenchActionDock { FaceActionControls(state, requestOrRun, faceViewModel) }
-                        }
-                        Column(Modifier.weight(1f).fillMaxHeight()) {
-                            TranscriptTitle("双方字幕", state.turns.size)
-                            FaceTranscriptFeed(turns = state.turns, activeSide = state.activeSide, captureLevel = state.captureLevel, waveTuning = waveTuning, modifier = Modifier.fillMaxSize())
-                        }
-                    }
-                } else {
-                    Column(Modifier.fillMaxSize()) {
-                        if (state.phase == FaceToFacePhase.IDLE) FaceLanguageBubbles(state, faceViewModel)
-                        state.error?.let { ErrorSurface(it, Modifier.padding(top = 12.dp)) }
-                        FaceTranscriptFeed(
-                            turns = state.turns,
-                            activeSide = state.activeSide,
-                            captureLevel = state.captureLevel,
-                            waveTuning = waveTuning,
-                            modifier = Modifier.fillMaxWidth().weight(1f).padding(top = 12.dp),
-                        )
-                        WorkbenchActionDock { FaceActionControls(state, requestOrRun, faceViewModel) }
-                    }
-                }
-            }
-        }
-    }
+    FaceToFaceScreen(
+        state = state,
+        viewModel = faceViewModel,
+        requestMicrophone = requestOrRun,
+        onExit = onExit,
+        modifier = modifier,
+    )
 }
 
 @Composable

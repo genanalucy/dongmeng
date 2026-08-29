@@ -14,6 +14,52 @@ import org.junit.Test
 
 class FaceToFaceUiMapperTest {
     @Test
+    fun leftTurnsMapToStartAndRightTurnsMapToEnd() {
+        val coordinator = FaceToFaceCoordinator<String>()
+        coordinator.manualPress(1L, FaceToFaceSide.LEFT, "left")
+        val leftTurn = coordinator.state().turns.single()
+        coordinator.cancelAll()
+        coordinator.manualPress(2L, FaceToFaceSide.RIGHT, "right")
+        val rightTurn = coordinator.state().turns.last()
+
+        assertEquals(FaceToFaceTurnAlignment.START, faceToFaceTurnAlignment(leftTurn))
+        assertEquals(FaceToFaceTurnAlignment.END, faceToFaceTurnAlignment(rightTurn))
+    }
+
+    @Test
+    fun manualListeningShowsOnlyActiveSideRippleAndLocalizedPlaceholder() {
+        val base = FaceToFaceState(
+            mode = FaceToFaceMode.MANUAL,
+            phase = FaceToFacePhase.LISTENING,
+            captureActive = true,
+            leftLanguage = "zh",
+            rightLanguage = "en",
+        )
+
+        val left = faceToFacePresentation(base.copy(activeSide = FaceToFaceSide.LEFT))
+        val right = faceToFacePresentation(base.copy(activeSide = FaceToFaceSide.RIGHT))
+
+        assertEquals(FaceToFaceSide.LEFT, left.activeMic)
+        assertEquals("听取中…", left.timelinePlaceholder)
+        assertEquals(FaceToFaceSide.RIGHT, right.activeMic)
+        assertEquals("Listening…", right.timelinePlaceholder)
+    }
+
+    @Test
+    fun autoRightPressMapsRippleRightAndReleaseMapsItBackLeft() {
+        val base = FaceToFaceState(
+            mode = FaceToFaceMode.AUTO,
+            phase = FaceToFacePhase.LISTENING,
+            captureActive = true,
+            leftLanguage = "zh",
+            rightLanguage = "en",
+        )
+
+        assertEquals(FaceToFaceSide.RIGHT, faceToFacePresentation(base.copy(activeSide = FaceToFaceSide.RIGHT)).activeMic)
+        assertEquals(FaceToFaceSide.LEFT, faceToFacePresentation(base.copy(activeSide = FaceToFaceSide.LEFT)).activeMic)
+    }
+
+    @Test
     fun continuousRightPressAndReleaseMapToExpectedActiveMic() {
         val base = FaceToFaceState(
             mode = FaceToFaceMode.AUTO,
