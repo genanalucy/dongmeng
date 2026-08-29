@@ -62,10 +62,36 @@ class FaceToFaceUiMapperTest {
     @Test
     fun timelineTracksListeningItemAndDistinguishesNewTurnsFromStreamingUpdates() {
         assertEquals(0, conversationTimelineLatestIndex(turnCount = 0, hasListeningPlaceholder = false))
+        assertEquals(0, conversationTimelineLatestIndex(turnCount = 0, hasListeningPlaceholder = true))
         assertEquals(1, conversationTimelineLatestIndex(turnCount = 1, hasListeningPlaceholder = true))
         assertEquals(1, conversationTimelineUpdateCount(previousTurnToken = listOf("one"), currentTurnToken = listOf("one", "two"), previousHasListeningPlaceholder = false, hasListeningPlaceholder = true))
         assertEquals(1, conversationTimelineUpdateCount(previousTurnToken = listOf("partial"), currentTurnToken = listOf("final"), previousHasListeningPlaceholder = true, hasListeningPlaceholder = true))
         assertEquals(0, conversationTimelineUpdateCount(previousTurnToken = listOf("same"), currentTurnToken = listOf("same"), previousHasListeningPlaceholder = true, hasListeningPlaceholder = true))
+    }
+
+    @Test
+    fun micPressGateReleasesOnlyOnceAfterPressAndIgnoresRepeatedRelease() {
+        val events = mutableListOf<String>()
+        val gate = MicPressGate(onPress = { events += "press" }, onRelease = { events += "release" })
+
+        gate.press()
+        assertEquals(listOf("press"), events)
+        gate.release()
+        gate.release()
+
+        assertEquals(listOf("press", "release"), events)
+    }
+
+    @Test
+    fun micPressGateCancelsOnlyOnceAfterPress() {
+        val events = mutableListOf<String>()
+        val gate = MicPressGate(onPress = { events += "press" }, onRelease = { events += "release" })
+
+        gate.press()
+        gate.cancel()
+        gate.cancel()
+
+        assertEquals(listOf("press", "release"), events)
     }
 
     @Test

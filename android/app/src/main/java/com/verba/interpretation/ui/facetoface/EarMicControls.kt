@@ -7,7 +7,6 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -31,6 +30,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -38,6 +38,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
@@ -47,6 +48,27 @@ import com.verba.interpretation.ui.FaceToFacePhase
 import com.verba.interpretation.ui.FaceToFaceSide
 import com.verba.interpretation.ui.FaceToFaceState
 import com.verba.interpretation.ui.TranslationLanguage
+
+internal class MicPressGate(
+    private val onPress: () -> Unit,
+    private val onRelease: () -> Unit,
+) {
+    private var pressed = false
+
+    fun press() {
+        if (pressed) return
+        pressed = true
+        onPress()
+    }
+
+    fun release() {
+        if (!pressed) return
+        pressed = false
+        onRelease()
+    }
+
+    fun cancel() = release()
+}
 
 @Composable
 internal fun EarMicControls(
@@ -112,17 +134,27 @@ private fun EarMicButton(
     val currentPress by rememberUpdatedState(onPress)
     val currentRelease by rememberUpdatedState(onRelease)
     val currentPointerEnabled by rememberUpdatedState(pointerEnabled)
+    val gate = remember(side) { MicPressGate(onPress = { currentPress() }, onRelease = { currentRelease() }) }
     val animatorScale = Settings.Global.getFloat(LocalContext.current.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f)
     val color = MaterialTheme.colorScheme.primary
     Surface(
         modifier = modifier.heightIn(min = 72.dp)
-            .semantics { contentDescription = "${TranslationLanguage.displayName(language)}麦克风"; stateDescription = stateLabel }
-            .clickable(enabled = actionEnabled) { currentPress(); currentRelease() }
+            .semantics {
+                contentDescription = "${TranslationLanguage.displayName(language)}麦克风"
+                stateDescription = stateLabel
+                if (actionEnabled) {
+                    onClick(label = "开始${TranslationLanguage.displayName(language)}收音") {
+                        gate.press()
+                        gate.release()
+                        true
+                    }
+                }
+            }
             .pointerInput(side) {
                 detectTapGestures(onPress = {
                     if (!currentPointerEnabled) return@detectTapGestures
-                    currentPress()
-                    try { awaitRelease() } finally { currentRelease() }
+                    gate.press()
+                    try { awaitRelease() } finally { gate.cancel() }
                 })
             },
         shape = CircleShape,

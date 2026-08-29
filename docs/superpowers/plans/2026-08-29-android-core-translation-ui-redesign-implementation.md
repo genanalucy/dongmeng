@@ -191,7 +191,7 @@ Expected: FAIL for missing timeline/placeholder mapper data.
 - [ ] **Step 3: Implement the Compose surface**
 
 - Use `LazyColumn` for the timeline; left turns align start on white bubbles, right turns align end on `BrandSoft` bubbles.
-- Each bubble renders source language, source text, a divider, indigo translation, and an accessible play action only when translated text is non-empty.
+- Each bubble renders source language, source text, a divider, and indigo translation. Per-turn replay is explicitly deferred: the current behavior authority exposes no controlled replay API, so render no play action and do not alter ViewModel, Coordinator or the audio pipeline.
 - Set `contentPadding.bottom` to cover both the fixed microphone control lane and bottom navigation; use `LazyListState` plus existing `ChatFollowPolicy` to follow active/new turns without forcing scroll while the user reads history.
 - Render compact left/right language chips. Open selection only if `presentation.canChangeLanguages`; use existing supported language lists and `viewModel.setLanguages`.
 - `EarMicControls` uses `pointerInput`/press lifecycle so manual mode calls `manualPress(left/right)` on press and `manualRelease()` on release/cancel. In auto mode: left control displays the continuous active state; right calls `pressRightAuto()` on press and `releaseRightAuto()` on release/cancel.
@@ -334,7 +334,7 @@ git commit -m "feat(android): complete core translation ui redesign"
 
 ## Plan Self-Review
 
-- **Spec coverage:** Tasks 1–2 implement the three-tab IA and visual language. Task 3 covers the approved chat-flow, safe zone, manual and continuous semantics/ripples. Task 4 covers simultaneous and account surfaces. Task 5 covers host cleanup, accessibility-oriented manual checks, build and artifact hygiene.
+- **Spec coverage:** Tasks 1–2 implement the three-tab IA and visual language. Task 3 covers the approved chat-flow, safe zone, manual and continuous semantics/ripples; per-turn replay is explicitly deferred because the behavior authority has no controlled replay API. Task 4 covers simultaneous and account surfaces. Task 5 covers host cleanup, accessibility-oriented manual checks, build and artifact hygiene.
 - **No hidden behavior change:** Continuous mode uses existing `pressRightAuto()` / `releaseRightAuto()` and route behavior; no Cloud/Agent/audio layer task exists.
 - **Testability:** Presentation decisions are pure JVM mapper tests; existing coordinators retain behavioral tests. Device-only visual, TalkBack, rotation and audio checks are explicit manual acceptance requirements.
 - **Consistency:** All task references use the declared file structure and names; no placeholders remain.

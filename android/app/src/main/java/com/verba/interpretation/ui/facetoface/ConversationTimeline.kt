@@ -97,7 +97,7 @@ internal fun ConversationTimeline(
         contentPadding = PaddingValues(start = 16.dp, top = 12.dp, end = 16.dp, bottom = 184.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        if (turns.isEmpty()) {
+        if (turns.isEmpty() && !hasListeningPlaceholder) {
             item {
                 Text(
                     "对话会按双方方向显示在这里",
