@@ -55,12 +55,14 @@ fun InterpretationScreen(
     onReset: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val callbacks = InterpretationCallbacks(onExit, onStart, onPause, onResume, onFinish, onReset)
+    val layout = InterpretationLayoutPolicy.forViewport(viewportHeightDp = Int.MAX_VALUE, actionCount = model.actions.size)
     Column(modifier = modifier.fillMaxSize()) {
         Row(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            IconButton(onClick = onExit, modifier = Modifier.semantics { contentDescription = "退出实时同传" }) {
+            IconButton(onClick = { InterpretationActionDispatcher.exit(callbacks) }, modifier = Modifier.semantics { contentDescription = "退出实时同传" }) {
                 Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null)
             }
             Column(Modifier.weight(1f)) {
@@ -88,16 +90,16 @@ fun InterpretationScreen(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            model.actions.forEach { action ->
+            if (layout.actionsPinned) model.actions.forEach { action ->
                 when (action) {
-                    InterpretationAction.START -> PrimaryAction("开始同传", Icons.Filled.Mic, onStart)
-                    InterpretationAction.PAUSE -> PrimaryAction("暂停", Icons.Filled.Pause, onPause)
-                    InterpretationAction.RESUME -> PrimaryAction("继续", Icons.Filled.PlayArrow, onResume)
-                    InterpretationAction.FINISH -> OutlinedButton(onClick = onFinish, modifier = Modifier.fillMaxWidth().height(48.dp).semantics { contentDescription = "结束同传" }) {
+                    InterpretationAction.START -> PrimaryAction("开始同传", Icons.Filled.Mic) { InterpretationActionDispatcher.dispatch(action, callbacks) }
+                    InterpretationAction.PAUSE -> PrimaryAction("暂停", Icons.Filled.Pause) { InterpretationActionDispatcher.dispatch(action, callbacks) }
+                    InterpretationAction.RESUME -> PrimaryAction("继续", Icons.Filled.PlayArrow) { InterpretationActionDispatcher.dispatch(action, callbacks) }
+                    InterpretationAction.FINISH -> OutlinedButton(onClick = { InterpretationActionDispatcher.dispatch(action, callbacks) }, modifier = Modifier.fillMaxWidth().height(48.dp).semantics { contentDescription = "结束同传" }) {
                         Icon(Icons.Filled.Stop, contentDescription = null)
                         Text("结束同传", modifier = Modifier.padding(start = 8.dp))
                     }
-                    InterpretationAction.RESET -> PrimaryAction("重新开始", Icons.Filled.Refresh, onReset)
+                    InterpretationAction.RESET -> PrimaryAction("重新开始", Icons.Filled.Refresh) { InterpretationActionDispatcher.dispatch(action, callbacks) }
                 }
             }
         }

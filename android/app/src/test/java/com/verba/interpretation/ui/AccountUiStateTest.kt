@@ -3,6 +3,9 @@ package com.verba.interpretation.ui
 import com.verba.interpretation.cloud.CloudEntitlement
 import com.verba.interpretation.cloud.CloudRole
 import com.verba.interpretation.cloud.CloudUser
+import com.verba.interpretation.ui.account.AccountAction
+import com.verba.interpretation.ui.account.AccountActionDispatcher
+import com.verba.interpretation.ui.account.AccountCallbacks
 import com.verba.interpretation.ui.account.AccountSummaryMapper
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -24,6 +27,25 @@ class AccountUiStateTest {
 
         assertEquals(ProductNavigationMode.ADMIN_TEST, AccountUiState(user = admin).navigationMode)
         assertEquals(ProductNavigationMode.USER, AccountUiState(user = admin, previewingUserExperience = true).navigationMode)
+    }
+
+    @Test fun accountActionDispatcherRoutesEverySecondaryActionAndLogout() {
+        val calls = mutableListOf<String>()
+        val callbacks = AccountCallbacks(
+            onBack = { calls += "back" },
+            onHistory = { calls += "history" },
+            onServiceSettings = { calls += "settings" },
+            onHelp = { calls += "help" },
+            onLogout = { calls += "logout" },
+        )
+
+        AccountActionDispatcher.dispatch(AccountAction.HISTORY, callbacks)
+        AccountActionDispatcher.dispatch(AccountAction.SERVICE_SETTINGS, callbacks)
+        AccountActionDispatcher.dispatch(AccountAction.HELP, callbacks)
+        AccountActionDispatcher.dispatch(AccountAction.LOGOUT, callbacks)
+        AccountActionDispatcher.back(callbacks)
+
+        assertEquals(listOf("history", "settings", "help", "logout", "back"), calls)
     }
 
     @Test fun accountSummaryDoesNotContainSensitiveTransportTerms() {

@@ -37,6 +37,27 @@ import androidx.compose.ui.unit.dp
 import com.verba.interpretation.cloud.CloudRole
 import com.verba.interpretation.ui.AccountUiState
 
+enum class AccountAction { HISTORY, SERVICE_SETTINGS, HELP, LOGOUT }
+
+data class AccountCallbacks(
+    val onBack: () -> Unit,
+    val onHistory: () -> Unit,
+    val onServiceSettings: () -> Unit,
+    val onHelp: () -> Unit,
+    val onLogout: () -> Unit,
+)
+
+object AccountActionDispatcher {
+    fun back(callbacks: AccountCallbacks) = callbacks.onBack()
+
+    fun dispatch(action: AccountAction, callbacks: AccountCallbacks) = when (action) {
+        AccountAction.HISTORY -> callbacks.onHistory()
+        AccountAction.SERVICE_SETTINGS -> callbacks.onServiceSettings()
+        AccountAction.HELP -> callbacks.onHelp()
+        AccountAction.LOGOUT -> callbacks.onLogout()
+    }
+}
+
 data class AccountSummary(
     val title: String,
     val role: String,
@@ -75,11 +96,12 @@ fun AccountScreen(
     modifier: Modifier = Modifier,
 ) {
     val summary = AccountSummaryMapper.map(state)
+    val callbacks = AccountCallbacks(onBack, onHistory, onServiceSettings, onHelp, onLogout)
     Column(modifier.fillMaxSize()) {
         TopAppBar(
             title = { Text("账户", fontWeight = FontWeight.SemiBold) },
             navigationIcon = {
-                IconButton(onClick = onBack, modifier = Modifier.semantics { contentDescription = "返回" }) {
+                IconButton(onClick = { AccountActionDispatcher.back(callbacks) }, modifier = Modifier.semantics { contentDescription = "返回" }) {
                     Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null)
                 }
             },
@@ -104,13 +126,13 @@ fun AccountScreen(
                     }
                 }
             }
-            item { AccountRow("历史记录", "查看本机保存的翻译记录", Icons.Outlined.History, onHistory) }
-            item { AccountRow("服务设置", "管理语言与播放偏好", Icons.Outlined.Settings, onServiceSettings) }
-            item { AccountRow("帮助与反馈", "查看使用说明", Icons.AutoMirrored.Outlined.HelpOutline, onHelp) }
+            item { AccountRow("历史记录", "查看本机保存的翻译记录", Icons.Outlined.History) { AccountActionDispatcher.dispatch(AccountAction.HISTORY, callbacks) } }
+            item { AccountRow("服务设置", "管理语言与播放偏好", Icons.Outlined.Settings) { AccountActionDispatcher.dispatch(AccountAction.SERVICE_SETTINGS, callbacks) } }
+            item { AccountRow("帮助与反馈", "查看使用说明", Icons.AutoMirrored.Outlined.HelpOutline) { AccountActionDispatcher.dispatch(AccountAction.HELP, callbacks) } }
             if (state.signedIn) {
                 item {
                     OutlinedButton(
-                        onClick = onLogout,
+                        onClick = { AccountActionDispatcher.dispatch(AccountAction.LOGOUT, callbacks) },
                         enabled = !state.loading,
                         modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).semantics { contentDescription = "退出登录" },
                     ) {

@@ -20,3 +20,6 @@ Using the explicit requested environment:
 
 ## Scope
 No coordinator, ViewModel, Cloud, Agent, audio, or token-store code was modified. No secrets or raw exception messages are rendered by the Task 4 surfaces.
+
+## Remaining device verification
+Before release, verify the final screens on a physical device or emulator with long transcript text, large font scaling, Android animation removal enabled, and TalkBack. This task intentionally adds no Compose instrumentation dependencies; JVM tests cover pure callback dispatch and layout policy only.

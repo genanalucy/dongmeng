@@ -48,6 +48,33 @@ class InterpretationUiMapperTest {
         }
     }
 
+    @Test fun actionDispatcherInvokesOnlyTheExactPermittedCallback() {
+        val calls = mutableListOf<String>()
+        val callbacks = InterpretationCallbacks(
+            onExit = { calls += "exit" },
+            onStart = { calls += "start" },
+            onPause = { calls += "pause" },
+            onResume = { calls += "resume" },
+            onFinish = { calls += "finish" },
+            onReset = { calls += "reset" },
+        )
+
+        InterpretationAction.entries.forEach { action ->
+            InterpretationActionDispatcher.dispatch(action, callbacks)
+        }
+        InterpretationActionDispatcher.exit(callbacks)
+
+        assertEquals(listOf("start", "pause", "resume", "finish", "reset", "exit"), calls)
+    }
+
+    @Test fun constrainedViewportLayoutKeepsActionsPinnedAndTranscriptScrollable() {
+        val layout = InterpretationLayoutPolicy.forViewport(viewportHeightDp = 320, actionCount = 2)
+
+        assertTrue(layout.transcriptScrolls)
+        assertTrue(layout.actionsPinned)
+        assertTrue(layout.actionsFitViewport)
+    }
+
     @Test fun simultaneousErrorExposesSafeMessageOnly() {
         val model = InterpretationUiMapper.map(
             InterpretationUiState(phase = SessionPhase.ERROR, error = "token=secret dsn://backend password=hidden"),
