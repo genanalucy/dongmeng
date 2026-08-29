@@ -8,6 +8,14 @@ import org.junit.Test
 
 class ProductNavigationPolicyTest {
     @Test
+    fun userPrimaryDestinationsDoNotExposeCameraOrHistory() {
+        val destinations = ProductNavigationPolicy.destinationsFor(ProductNavigationMode.USER)
+
+        assertFalse(ProductDestination.TRANSLATE in destinations)
+        assertFalse(ProductDestination.HISTORY in destinations)
+    }
+
+    @Test
     fun roleDrivenNavigationSelectsAuthenticationUserAndAdminExperiences() {
         assertEquals(ProductScreen.ACCOUNT, ProductNavigationPolicy.initialScreen(ProductNavigationMode.AUTHENTICATION))
         assertEquals(ProductScreen.ADMIN_TEST, ProductNavigationPolicy.initialScreen(ProductNavigationMode.ADMIN_TEST))
