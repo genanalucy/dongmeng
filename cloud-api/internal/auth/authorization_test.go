@@ -103,7 +103,7 @@ func (s *authorizationStoreStub) RevokeTranslationSession(_ context.Context, use
 
 func TestAuthorizationServiceRegisterPersistsThreeDayTrial(t *testing.T) {
 	now := time.Date(2026, 11, 1, 2, 3, 4, 5, time.FixedZone("UTC+8", 8*60*60))
-	storedAt := now.UTC()
+	storedAt := now.UTC().Truncate(time.Microsecond)
 	userID := uuid.New()
 	trial, err := domain.NewTrialEntitlement(uuid.New(), userID, storedAt)
 	if err != nil {
@@ -139,6 +139,28 @@ func TestAuthorizationServiceRegisterPersistsThreeDayTrial(t *testing.T) {
 	}
 	if result.Trial.ExpiresAt.Sub(result.Trial.StartsAt) != 72*time.Hour {
 		t.Fatalf("trial duration = %s", result.Trial.ExpiresAt.Sub(result.Trial.StartsAt))
+	}
+}
+
+func TestAuthorizationServiceRegisterAcceptsPostgresMicrosecondTrialTimestamps(t *testing.T) {
+	now := time.Date(2026, 11, 1, 2, 3, 4, 123456789, time.UTC)
+	storedAt := now.Truncate(time.Microsecond)
+	userID := uuid.New()
+	trial, err := domain.NewTrialEntitlement(uuid.New(), userID, storedAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := &authorizationStoreStub{
+		registerUser:  domain.User{ID: userID, Email: "user@example.com", Role: string(domain.RoleUser), CreatedAt: storedAt},
+		registerTrial: trial,
+	}
+	service := AuthorizationService{
+		Store:             store,
+		HashPasswordValue: func(string) (string, error) { return "encoded-password-hash", nil },
+	}
+
+	if _, err := service.Register(context.Background(), "user@example.com", "correct horse battery", now); err != nil {
+		t.Fatalf("registration rejected PostgreSQL microsecond timestamp: %v", err)
 	}
 }
 

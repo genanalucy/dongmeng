@@ -125,7 +125,7 @@ func (s AuthorizationService) Register(ctx context.Context, email, password stri
 	if hash == "" {
 		return RegistrationResult{}, errors.New("password hasher returned an empty value")
 	}
-	now = now.UTC()
+	now = postgresTimestamp(now)
 	user, trial, err := s.Store.Register(ctx, domain.RegisterParams{
 		Email:        credentials.Email.String(),
 		PasswordHash: hash,
@@ -317,6 +317,12 @@ func validateRegistrationResult(user domain.User, trial domain.Entitlement, expe
 		return errors.New("registration store did not return the required three-day trial")
 	}
 	return nil
+}
+
+// PostgreSQL timestamptz preserves microseconds, so business timestamps written
+// to and read from the store must use that same precision for strict comparisons.
+func postgresTimestamp(value time.Time) time.Time {
+	return value.UTC().Truncate(time.Microsecond)
 }
 
 func (s AuthorizationService) translationTTL() (time.Duration, error) {
