@@ -73,7 +73,7 @@ class ProductNavigationPolicyTest {
             destinations.map(ProductNavigationPolicy::screenFor),
         )
         destinations.map(ProductNavigationPolicy::screenFor).forEach { screen ->
-            assertTrue(ProductNavigationPolicy.showsBottomBar(screen))
+            assertTrue(ProductNavigationPolicy.showsProductBottomBar(ProductNavigationMode.USER, screen))
         }
     }
 
@@ -92,31 +92,31 @@ class ProductNavigationPolicyTest {
     }
 
     @Test
-    fun onlyNonPrimaryScreensHideBottomNavigation() {
-        assertFalse(ProductNavigationPolicy.showsBottomBar(ProductScreen.ENDPOINT_SETTINGS))
-        assertTrue(ProductNavigationPolicy.showsBottomBar(ProductScreen.TRANSLATE))
-        assertTrue(ProductNavigationPolicy.showsBottomBar(ProductScreen.HISTORY))
+    fun hostShowsOnlyTheCorrectBottomBarForModeAndScreen() {
+        listOf(
+            ProductScreen.FACE_TO_FACE_WORKBENCH,
+            ProductScreen.INTERPRETATION_WORKBENCH,
+            ProductScreen.PROFILE,
+        ).forEach { screen ->
+            assertTrue(ProductNavigationPolicy.showsProductBottomBar(ProductNavigationMode.USER, screen))
+        }
+        assertTrue(ProductNavigationPolicy.showsProductBottomBar(ProductNavigationMode.ADMIN_TEST, ProductScreen.ADMIN_TEST))
+        assertTrue(ProductNavigationPolicy.showsProductBottomBar(ProductNavigationMode.ADMIN_TEST, ProductScreen.PROFILE))
+
+        assertFalse(ProductNavigationPolicy.showsProductBottomBar(ProductNavigationMode.AUTHENTICATION, ProductScreen.ACCOUNT))
+        assertFalse(ProductNavigationPolicy.showsProductBottomBar(ProductNavigationMode.USER, ProductScreen.ACCOUNT))
+        assertFalse(ProductNavigationPolicy.showsProductBottomBar(ProductNavigationMode.USER, ProductScreen.ENDPOINT_SETTINGS))
+        assertFalse(ProductNavigationPolicy.showsProductBottomBar(ProductNavigationMode.ADMIN_TEST, ProductScreen.ENDPOINT_SETTINGS))
     }
 
     @Test
-    fun primaryWorkbenchesExitToTheFaceToFacePrimaryDestination() {
-        assertEquals(
-            ProductScreen.FACE_TO_FACE_WORKBENCH,
-            ProductNavigationPolicy.exitTarget(ProductScreen.FACE_TO_FACE_WORKBENCH),
-        )
+    fun onlyInterpretationHasAnExplicitExitTarget() {
+        assertFalse(ProductNavigationPolicy.hasExitTarget(ProductScreen.FACE_TO_FACE_WORKBENCH))
+        assertTrue(ProductNavigationPolicy.hasExitTarget(ProductScreen.INTERPRETATION_WORKBENCH))
         assertEquals(
             ProductScreen.FACE_TO_FACE_WORKBENCH,
             ProductNavigationPolicy.exitTarget(ProductScreen.INTERPRETATION_WORKBENCH),
         )
-    }
-
-    @Test
-    fun administratorNavigationKeepsItsTestAndProfileDestinationsVisible() {
-        assertEquals(
-            listOf(ProductDestination.ADMIN_TEST, ProductDestination.PROFILE),
-            ProductNavigationPolicy.destinationsFor(ProductNavigationMode.ADMIN_TEST),
-        )
-        assertTrue(ProductNavigationPolicy.showsBottomBar(ProductScreen.ADMIN_TEST))
     }
 
     @Test

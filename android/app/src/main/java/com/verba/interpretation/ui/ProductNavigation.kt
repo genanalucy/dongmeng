@@ -69,17 +69,17 @@ object ProductNavigationPolicy {
         ProductScreen.ADMIN_TEST -> ProductDestination.ADMIN_TEST
     }
 
-    fun showsBottomBar(screen: ProductScreen): Boolean = when (screen) {
-        ProductScreen.TRANSLATE,
-        ProductScreen.INTERPRETATION_WORKBENCH,
-        ProductScreen.FACE_TO_FACE_WORKBENCH,
-        ProductScreen.HISTORY,
-        ProductScreen.PROFILE,
-        ProductScreen.ADMIN_TEST,
-        -> true
-        ProductScreen.ENDPOINT_SETTINGS,
-        ProductScreen.ACCOUNT,
-        -> false
+    fun showsProductBottomBar(mode: ProductNavigationMode, screen: ProductScreen): Boolean = when (mode) {
+        ProductNavigationMode.USER -> screen in setOf(
+            ProductScreen.FACE_TO_FACE_WORKBENCH,
+            ProductScreen.INTERPRETATION_WORKBENCH,
+            ProductScreen.PROFILE,
+        )
+        ProductNavigationMode.ADMIN_TEST -> screen in setOf(
+            ProductScreen.ADMIN_TEST,
+            ProductScreen.PROFILE,
+        )
+        ProductNavigationMode.AUTHENTICATION -> false
     }
 
     fun hasExitTarget(screen: ProductScreen): Boolean = screen in setOf(

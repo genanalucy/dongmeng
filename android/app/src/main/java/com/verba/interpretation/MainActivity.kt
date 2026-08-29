@@ -181,7 +181,7 @@ private fun InterpretationApp(
     LaunchedEffect(navigationMode) {
         screen = ProductNavigationPolicy.initialScreen(navigationMode)
     }
-    val showBottomBar = navigationMode != ProductNavigationMode.AUTHENTICATION && ProductNavigationPolicy.showsBottomBar(screen)
+    val showBottomBar = ProductNavigationPolicy.showsProductBottomBar(navigationMode, screen)
     BackHandler(enabled = ProductNavigationPolicy.hasExitTarget(screen)) {
         screen = ProductNavigationPolicy.exitTarget(screen)
     }
@@ -222,7 +222,6 @@ private fun InterpretationApp(
             )
             ProductScreen.FACE_TO_FACE_WORKBENCH -> FaceToFaceWorkbench(
                 modifier = Modifier.padding(padding),
-                onExit = { screen = ProductNavigationPolicy.exitTarget(screen) },
             )
             ProductScreen.HISTORY -> HistoryPage(Modifier.padding(padding))
             ProductScreen.PROFILE -> ProfilePage(
@@ -686,7 +685,6 @@ private fun SoloPrimaryAction(phase: SessionPhase, startWithPermission: () -> Un
 @Composable
 private fun FaceToFaceWorkbench(
     modifier: Modifier,
-    onExit: () -> Unit,
     faceViewModel: FaceToFaceViewModel = viewModel(),
 ) {
     val state by faceViewModel.state.collectAsStateWithLifecycle()
@@ -717,7 +715,6 @@ private fun FaceToFaceWorkbench(
         state = state,
         viewModel = faceViewModel,
         requestMicrophone = requestOrRun,
-        onExit = onExit,
         modifier = modifier,
     )
 }

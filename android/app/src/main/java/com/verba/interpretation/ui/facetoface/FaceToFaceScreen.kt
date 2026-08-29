@@ -7,12 +7,9 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -48,18 +45,14 @@ internal fun FaceToFaceScreen(
     state: FaceToFaceState,
     viewModel: FaceToFaceViewModel,
     requestMicrophone: (() -> Unit) -> Unit,
-    onExit: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val presentation = faceToFacePresentation(state)
     Column(modifier.fillMaxSize()) {
         Row(
-            Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp),
+            Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            IconButton(onClick = onExit, modifier = Modifier.semantics { contentDescription = "退出面对面翻译" }) {
-                Icon(Icons.Filled.Close, contentDescription = null)
-            }
             Column(Modifier.weight(1f)) {
                 Text("面对面翻译", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
                 Text(faceStatusLabel(state), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
