@@ -12,6 +12,7 @@ object VerbaColors {
     val Brand = Color(0xFF5B6CFF)
     val BrandSoft = Color(0xFFEEF0FF)
     val Danger = Color(0xFFC95B63)
+    val BottomNavigationLabel = Color(0xFF535664)
 }
 
 object VerbaSpacing {

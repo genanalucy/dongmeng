@@ -2,7 +2,7 @@ package com.verba.interpretation.ui.navigation
 
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Face
+import androidx.compose.material.icons.outlined.Groups
 import androidx.compose.material.icons.outlined.HeadsetMic
 import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material3.Icon
@@ -42,10 +42,10 @@ fun ProductBottomBar(
                 label = { Text(destination.label) },
                 colors = NavigationBarItemDefaults.colors(
                     selectedIconColor = VerbaColors.Brand,
-                    selectedTextColor = VerbaColors.Brand,
+                    selectedTextColor = VerbaColors.BottomNavigationLabel,
                     indicatorColor = VerbaColors.BrandSoft,
                     unselectedIconColor = VerbaColors.Muted,
-                    unselectedTextColor = VerbaColors.Muted,
+                    unselectedTextColor = VerbaColors.BottomNavigationLabel,
                 ),
             )
         }
@@ -58,10 +58,8 @@ private data class ProductNavigationIcon(
 )
 
 private fun ProductDestination.icon(): ProductNavigationIcon = when (this) {
-    ProductDestination.FACE_TO_FACE -> ProductNavigationIcon(Icons.Outlined.Face, "面对面翻译")
+    ProductDestination.FACE_TO_FACE -> ProductNavigationIcon(Icons.Outlined.Groups, "面对面翻译")
     ProductDestination.INTERPRETATION -> ProductNavigationIcon(Icons.Outlined.HeadsetMic, "同声传译")
     ProductDestination.PROFILE -> ProductNavigationIcon(Icons.Outlined.Person, "我的")
-    ProductDestination.TRANSLATE -> ProductNavigationIcon(Icons.Outlined.HeadsetMic, "翻译")
-    ProductDestination.HISTORY -> ProductNavigationIcon(Icons.Outlined.HeadsetMic, "历史")
-    ProductDestination.ADMIN_TEST -> ProductNavigationIcon(Icons.Outlined.Person, "测试")
+    else -> error("ProductBottomBar does not support $this")
 }

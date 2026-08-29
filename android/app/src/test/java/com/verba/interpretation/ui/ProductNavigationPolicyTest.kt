@@ -1,5 +1,10 @@
 package com.verba.interpretation.ui
 
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
+import com.verba.interpretation.ui.design.VerbaColors
+import kotlin.math.max
+import kotlin.math.min
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
@@ -8,11 +13,26 @@ import org.junit.Test
 
 class ProductNavigationPolicyTest {
     @Test
-    fun userPrimaryDestinationsDoNotExposeCameraOrHistory() {
+    fun userPrimaryDestinationsHaveExactSupportedOrder() {
         val destinations = ProductNavigationPolicy.destinationsFor(ProductNavigationMode.USER)
 
+        assertEquals(
+            listOf(
+                ProductDestination.FACE_TO_FACE,
+                ProductDestination.INTERPRETATION,
+                ProductDestination.PROFILE,
+            ),
+            destinations,
+        )
         assertFalse(ProductDestination.TRANSLATE in destinations)
         assertFalse(ProductDestination.HISTORY in destinations)
+    }
+
+    @Test
+    fun bottomNavigationLabelColorMeetsSmallTextContrastRequirement() {
+        assertTrue(
+            contrastRatio(VerbaColors.BottomNavigationLabel, VerbaColors.Background) >= 4.5,
+        )
     }
 
     @Test
@@ -92,4 +112,22 @@ class ProductNavigationPolicyTest {
         assertEquals(ProductDestination.PROFILE, ProductNavigationPolicy.selectedDestination(ProductScreen.ENDPOINT_SETTINGS))
         assertEquals(ProductDestination.ADMIN_TEST, ProductNavigationPolicy.selectedDestination(ProductScreen.ADMIN_TEST))
     }
+}
+
+private fun contrastRatio(foreground: Color, background: Color): Double {
+    val foregroundLuminance = foreground.toArgb().relativeLuminance()
+    val backgroundLuminance = background.toArgb().relativeLuminance()
+    return (max(foregroundLuminance, backgroundLuminance) + 0.05) /
+        (min(foregroundLuminance, backgroundLuminance) + 0.05)
+}
+
+private fun Int.relativeLuminance(): Double {
+    fun linearize(component: Int): Double {
+        val normalized = component / 255.0
+        return if (normalized <= 0.04045) normalized / 12.92 else ((normalized + 0.055) / 1.055).let { it * it * it }
+    }
+
+    return 0.2126 * linearize(this shr 16 and 0xFF) +
+        0.7152 * linearize(this shr 8 and 0xFF) +
+        0.0722 * linearize(this and 0xFF)
 }
