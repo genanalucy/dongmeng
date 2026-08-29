@@ -82,20 +82,14 @@ object ProductNavigationPolicy {
         -> false
     }
 
-    fun hasExitTarget(screen: ProductScreen): Boolean = screen !in setOf(
-        ProductScreen.FACE_TO_FACE_WORKBENCH,
-        ProductScreen.INTERPRETATION_WORKBENCH,
-        ProductScreen.PROFILE,
+    fun hasExitTarget(screen: ProductScreen): Boolean = screen in setOf(
+        ProductScreen.ENDPOINT_SETTINGS,
+        ProductScreen.ACCOUNT,
     )
 
     fun exitTarget(screen: ProductScreen): ProductScreen = when (screen) {
         ProductScreen.ENDPOINT_SETTINGS,
         ProductScreen.ACCOUNT -> ProductScreen.PROFILE
-        ProductScreen.ADMIN_TEST -> ProductScreen.ADMIN_TEST
-        ProductScreen.INTERPRETATION_WORKBENCH,
-        ProductScreen.FACE_TO_FACE_WORKBENCH,
-        ProductScreen.PROFILE,
-        -> ProductScreen.TRANSLATE
         else -> screen
     }
 }

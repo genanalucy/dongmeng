@@ -81,8 +81,6 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -150,6 +148,7 @@ import com.verba.interpretation.ui.HistoryEmptyStatePolicy
 import com.verba.interpretation.ui.HistoryFilter
 import com.verba.interpretation.ui.InterpretationViewModel
 import com.verba.interpretation.ui.ProductDestination
+import com.verba.interpretation.ui.navigation.ProductBottomBar
 import com.verba.interpretation.ui.ProductNavigationMode
 import com.verba.interpretation.ui.ProductNavigationPolicy
 import com.verba.interpretation.ui.ProductScreen
@@ -180,22 +179,16 @@ private fun InterpretationApp(
     LaunchedEffect(navigationMode) {
         screen = ProductNavigationPolicy.initialScreen(navigationMode)
     }
-    val showBottomBar = navigationMode != ProductNavigationMode.AUTHENTICATION && ProductNavigationPolicy.showsBottomBar(screen)
-    BackHandler(enabled = navigationMode == ProductNavigationMode.USER && screen != ProductScreen.TRANSLATE) {
+    val showBottomBar = navigationMode == ProductNavigationMode.USER && ProductNavigationPolicy.showsBottomBar(screen)
+    BackHandler(enabled = ProductNavigationPolicy.hasExitTarget(screen)) {
         screen = ProductNavigationPolicy.exitTarget(screen)
     }
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
-        topBar = {
-            if (showBottomBar) {
-                ProductTopBar(screen)
-            }
-        },
         bottomBar = {
             if (showBottomBar) {
-                ProductNavigationBar(
-                    destinations = ProductNavigationPolicy.destinationsFor(navigationMode),
+                ProductBottomBar(
                     selected = ProductNavigationPolicy.selectedDestination(screen),
                     onSelect = { screen = ProductNavigationPolicy.screenFor(it) },
                 )
@@ -248,67 +241,6 @@ private fun InterpretationApp(
             )
         }
     }
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun ProductTopBar(screen: ProductScreen) {
-    val title = when (screen) {
-        ProductScreen.TRANSLATE -> BrandConfig.appName
-        ProductScreen.HISTORY -> "历史"
-        ProductScreen.PROFILE -> "我的"
-        ProductScreen.ADMIN_TEST -> "测试版"
-        else -> ""
-    }
-    TopAppBar(
-        colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background),
-        title = {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                if (screen == ProductScreen.TRANSLATE) BrandConfig.Logo(Modifier.size(36.dp))
-                Column {
-                    Text(title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
-                    if (screen == ProductScreen.TRANSLATE) {
-                        Text(
-                            BrandConfig.tagline,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                }
-            }
-        },
-    )
-}
-
-@Composable
-private fun ProductNavigationBar(
-    destinations: List<ProductDestination>,
-    selected: ProductDestination,
-    onSelect: (ProductDestination) -> Unit,
-) {
-    NavigationBar(containerColor = MaterialTheme.colorScheme.surface, tonalElevation = 0.dp) {
-        destinations.forEach { destination ->
-            NavigationBarItem(
-                selected = selected == destination,
-                onClick = { onSelect(destination) },
-                icon = { Icon(destination.icon(), contentDescription = null) },
-                label = { Text(destination.label, maxLines = 1) },
-                modifier = Modifier.semantics {
-                    contentDescription = "${destination.label}页"
-                    stateDescription = if (selected == destination) "已选择" else "未选择"
-                },
-            )
-        }
-    }
-}
-
-private fun ProductDestination.icon(): ImageVector = when (this) {
-    ProductDestination.TRANSLATE -> Icons.Outlined.Translate
-    ProductDestination.INTERPRETATION -> Icons.Outlined.GraphicEq
-    ProductDestination.FACE_TO_FACE -> Icons.Outlined.Groups
-    ProductDestination.HISTORY -> Icons.Outlined.History
-    ProductDestination.PROFILE -> Icons.Outlined.PersonOutline
-    ProductDestination.ADMIN_TEST -> Icons.Outlined.Science
 }
 
 @Composable

@@ -9,7 +9,6 @@ import kotlin.math.min
 import kotlin.math.pow
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -109,10 +108,15 @@ class ProductNavigationPolicyTest {
 
         primaryScreens.forEach { screen ->
             assertFalse(ProductNavigationPolicy.hasExitTarget(screen))
-            assertNotEquals(screen, ProductNavigationPolicy.exitTarget(screen))
-            assertEquals(ProductScreen.TRANSLATE, ProductNavigationPolicy.exitTarget(screen))
+            assertEquals(screen, ProductNavigationPolicy.exitTarget(screen))
         }
         assertTrue(ProductNavigationPolicy.hasExitTarget(ProductScreen.ENDPOINT_SETTINGS))
+        assertEquals(ProductScreen.PROFILE, ProductNavigationPolicy.exitTarget(ProductScreen.ENDPOINT_SETTINGS))
+    }
+
+    @Test
+    fun accountSecondaryScreensReturnToProfilePrimaryDestination() {
+        assertEquals(ProductScreen.PROFILE, ProductNavigationPolicy.exitTarget(ProductScreen.ACCOUNT))
         assertEquals(ProductScreen.PROFILE, ProductNavigationPolicy.exitTarget(ProductScreen.ENDPOINT_SETTINGS))
     }
 

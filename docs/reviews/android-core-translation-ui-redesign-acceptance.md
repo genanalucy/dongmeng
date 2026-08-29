@@ -1,13 +1,26 @@
-# Android Core Translation UI Redesign Device Acceptance
+# Android Core Translation UI Redesign — 验收清单
 
-## Task 3 Face-to-Face Required Device Validation
+## 安全记录规则
 
-- 手动模式：按住左、右麦克风时持续收音；按住期间不得提前 release；真实抬手与系统/手势取消各只触发一次 release。
-- 连续模式：启动后左耳持续收音；右耳按住仅临时切换；抬手或取消后恢复左耳。
-- TalkBack、Switch Access 和键盘：左右麦克风的中文 action 可执行；无障碍瞬时 action 不重复触发 press/release。
-- 麦克风权限：首次请求、拒绝、已授权和请求期间抬手的时序不会产生错配的 press/release。
-- 检查聊天最新消息位于底部操作安全区上方，历史阅读时不被强制滚动。
+- 仅记录通过/未通过及可复现的界面行为。
+- 不记录 token、DSN、URL、header、原始日志或会话 ID。
 
-## Replay Deferral
+## 手工验收
 
-当前行为权威层未提供受控 per-turn replay API。Task 3 不显示重播按钮，且不修改 `FaceToFaceViewModel`、`FaceToFaceCoordinator` 或音频管线。待提供受控 API 后单独验收重播和另一耳路由。
+- [ ] 默认进入“面对面翻译”；底部栏有“面对面 / 同传 / 我的”，当前项清晰可辨。
+- [ ] 手动模式：分别长按左、右麦克风；对应方向进入收音状态并显示波纹；松开后完成该轮。
+- [ ] 自动模式：左侧持续收音；长按右侧时收音与波纹转至右侧；松开后回到左侧。
+- [ ] 底部栏未被系统手势区遮挡，点击目标在安全区内可达。
+- [ ] 非 idle 状态时语言选择不可打开；恢复 idle 后可选择，且两侧语言不重复。
+- [ ] 同传页可开始、暂停、继续、结束；退出不会绕过麦克风权限与生命周期取消逻辑。
+- [ ] “我的”可进入账户；认证流程、账户返回、管理员测试页与测试服务设置路由可达，且账户状态不泄露敏感信息。
+- [ ] 最小支持高度、最大字体、横竖屏下内容可滚动，关键操作仍可见可达。
+- [ ] TalkBack 可读出底部栏、退出、语言、麦克风和账户操作的准确标签及状态。
+- [ ] 系统减少动态效果开启时，持续收音状态仍有静态可辨识反馈。
+
+## 自动化与构建验收
+
+- [ ] `testDebugUnitTest` 通过。
+- [ ] `lintDebug` 通过。
+- [ ] `assembleDebug` 通过；Debug APK 仅作为本地构建产物，不纳入版本控制。
+- [ ] `git diff --check` 通过，受跟踪文件不包含缓存、构建目录或 APK。
