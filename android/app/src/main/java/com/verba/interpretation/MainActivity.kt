@@ -132,6 +132,9 @@ import com.verba.interpretation.cloud.CloudEndpointSettings
 import com.verba.interpretation.protocol.EndpointSettings
 import com.verba.interpretation.ui.AccountUiState
 import com.verba.interpretation.ui.facetoface.FaceToFaceScreen
+import com.verba.interpretation.ui.account.AccountScreen
+import com.verba.interpretation.ui.interpretation.InterpretationScreen
+import com.verba.interpretation.ui.interpretation.InterpretationUiMapper
 import com.verba.interpretation.ui.AccountViewModel
 import com.verba.interpretation.ui.ChatFollowEvent
 import com.verba.interpretation.ui.ChatFollowPolicy
@@ -228,6 +231,8 @@ private fun InterpretationApp(
             ProductScreen.ACCOUNT -> AccountPage(
                 modifier = Modifier.padding(padding),
                 onBack = { screen = ProductNavigationPolicy.initialScreen(navigationMode) },
+                onHistory = { screen = ProductScreen.HISTORY },
+                onServiceSettings = { screen = ProductScreen.PROFILE },
                 accountViewModel = accountViewModel,
             )
             ProductScreen.ADMIN_TEST -> AdminTestPage(
@@ -515,6 +520,39 @@ private fun WorkbenchHeader(title: String, status: String, onExit: () -> Unit, o
 
 @Composable
 private fun SoloWorkbench(modifier: Modifier, viewModel: InterpretationViewModel, onExit: () -> Unit) {
+    val state by viewModel.state.collectAsStateWithLifecycle()
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner, viewModel) {
+        val observer = LifecycleEventObserver { _, event -> if (event == Lifecycle.Event.ON_STOP) viewModel.cancel() }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+            viewModel.cancel()
+        }
+    }
+    val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) viewModel.start() else viewModel.microphonePermissionDenied()
+    }
+    val startWithPermission = {
+        if (viewModel.getApplication<android.app.Application>().checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+            viewModel.start()
+        } else {
+            permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+        }
+    }
+    InterpretationScreen(
+        model = InterpretationUiMapper.map(state),
+        onStart = startWithPermission,
+        onPause = viewModel::pause,
+        onResume = viewModel::resume,
+        onFinish = viewModel::finish,
+        onReset = viewModel::clearError,
+        modifier = modifier,
+    )
+}
+
+@Composable
+private fun LegacySoloWorkbench(modifier: Modifier, viewModel: InterpretationViewModel, onExit: () -> Unit) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner, viewModel) {
@@ -1069,12 +1107,26 @@ private fun AdminTestPage(
 private fun AccountPage(
     modifier: Modifier,
     onBack: () -> Unit,
+    onHistory: () -> Unit,
+    onServiceSettings: () -> Unit,
     accountViewModel: AccountViewModel = viewModel(),
 ) {
     val state by accountViewModel.state.collectAsStateWithLifecycle()
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
     var redemptionCode by remember { mutableStateOf("") }
+    if (state.signedIn) {
+        AccountScreen(
+            state = state,
+            onBack = onBack,
+            onHistory = onHistory,
+            onServiceSettings = onServiceSettings,
+            onHelp = {},
+            onLogout = accountViewModel::logout,
+            modifier = modifier,
+        )
+        return
+    }
     val entitlement = state.entitlement
     val entitlementText = when {
         entitlement == null -> "暂无可用权益。注册后可获得 3 天试用，也可兑换权益码。"
@@ -1142,7 +1194,7 @@ private fun AccountPage(
             state.message?.let { message ->
                 item {
                     Surface(shape = RoundedCornerShape(14.dp), color = MaterialTheme.colorScheme.errorContainer) {
-                        Text(message, color = MaterialTheme.colorScheme.onErrorContainer, modifier = Modifier.fillMaxWidth().padding(14.dp))
+                        Text("账户状态暂时无法更新，请稍后重试。", color = MaterialTheme.colorScheme.onErrorContainer, modifier = Modifier.fillMaxWidth().padding(14.dp))
                     }
                 }
             }
