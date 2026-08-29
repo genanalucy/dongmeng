@@ -2,9 +2,11 @@ package com.verba.interpretation.ui
 
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
+import com.verba.interpretation.ui.design.FaceToFaceConversationIcon
 import com.verba.interpretation.ui.design.VerbaColors
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.pow
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
@@ -30,9 +32,16 @@ class ProductNavigationPolicyTest {
 
     @Test
     fun bottomNavigationLabelColorMeetsSmallTextContrastRequirement() {
-        assertTrue(
-            contrastRatio(VerbaColors.BottomNavigationLabel, VerbaColors.Background) >= 4.5,
-        )
+        val ratio = contrastRatio(VerbaColors.BottomNavigationLabel, VerbaColors.Background)
+
+        assertTrue(ratio >= 4.5)
+        assertTrue(ratio in 6.7..6.9)
+    }
+
+    @Test
+    fun faceToFaceNavigationUsesProjectConversationVector() {
+        assertEquals("FaceToFaceConversation", FaceToFaceConversationIcon.Image.name)
+        assertEquals("面对面翻译", FaceToFaceConversationIcon.ContentDescription)
     }
 
     @Test
@@ -124,7 +133,7 @@ private fun contrastRatio(foreground: Color, background: Color): Double {
 private fun Int.relativeLuminance(): Double {
     fun linearize(component: Int): Double {
         val normalized = component / 255.0
-        return if (normalized <= 0.04045) normalized / 12.92 else ((normalized + 0.055) / 1.055).let { it * it * it }
+        return if (normalized <= 0.04045) normalized / 12.92 else ((normalized + 0.055) / 1.055).pow(2.4)
     }
 
     return 0.2126 * linearize(this shr 16 and 0xFF) +

@@ -2,7 +2,6 @@ package com.verba.interpretation.ui.navigation
 
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Groups
 import androidx.compose.material.icons.outlined.HeadsetMic
 import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material3.Icon
@@ -16,6 +15,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import com.verba.interpretation.ui.ProductDestination
 import com.verba.interpretation.ui.ProductNavigationMode
 import com.verba.interpretation.ui.ProductNavigationPolicy
+import com.verba.interpretation.ui.design.FaceToFaceConversationIcon
 import com.verba.interpretation.ui.design.VerbaColors
 import com.verba.interpretation.ui.design.VerbaTouchTargets
 
@@ -58,7 +58,10 @@ private data class ProductNavigationIcon(
 )
 
 private fun ProductDestination.icon(): ProductNavigationIcon = when (this) {
-    ProductDestination.FACE_TO_FACE -> ProductNavigationIcon(Icons.Outlined.Groups, "面对面翻译")
+    ProductDestination.FACE_TO_FACE -> ProductNavigationIcon(
+        FaceToFaceConversationIcon.Image,
+        FaceToFaceConversationIcon.ContentDescription,
+    )
     ProductDestination.INTERPRETATION -> ProductNavigationIcon(Icons.Outlined.HeadsetMic, "同声传译")
     ProductDestination.PROFILE -> ProductNavigationIcon(Icons.Outlined.Person, "我的")
     else -> error("ProductBottomBar does not support $this")
