@@ -130,6 +130,7 @@ import com.verba.interpretation.brand.BrandConfig
 import com.verba.interpretation.brand.BrandTheme
 import com.verba.interpretation.cloud.CloudEndpointSettings
 import com.verba.interpretation.protocol.EndpointSettings
+import com.verba.interpretation.ui.AccountSecondaryDestination
 import com.verba.interpretation.ui.AccountUiState
 import com.verba.interpretation.ui.facetoface.FaceToFaceScreen
 import com.verba.interpretation.ui.account.AccountScreen
@@ -231,8 +232,8 @@ private fun InterpretationApp(
             ProductScreen.ACCOUNT -> AccountPage(
                 modifier = Modifier.padding(padding),
                 onBack = { screen = ProductNavigationPolicy.initialScreen(navigationMode) },
-                onHistory = { screen = ProductScreen.HISTORY },
-                onServiceSettings = { screen = ProductScreen.PROFILE },
+                onHistory = { screen = ProductNavigationPolicy.accountSecondaryScreen(AccountSecondaryDestination.HISTORY) },
+                onServiceSettings = { screen = ProductNavigationPolicy.accountSecondaryScreen(AccountSecondaryDestination.SERVICE_SETTINGS) },
                 accountViewModel = accountViewModel,
             )
             ProductScreen.ADMIN_TEST -> AdminTestPage(
@@ -542,6 +543,7 @@ private fun SoloWorkbench(modifier: Modifier, viewModel: InterpretationViewModel
     }
     InterpretationScreen(
         model = InterpretationUiMapper.map(state),
+        onExit = onExit,
         onStart = startWithPermission,
         onPause = viewModel::pause,
         onResume = viewModel::resume,

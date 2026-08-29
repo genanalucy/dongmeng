@@ -13,6 +13,8 @@ enum class ProductDestination(val label: String) {
 }
 
 /** Screens are intentionally local; workbenches and settings are not fake back-stack destinations. */
+enum class AccountSecondaryDestination { HISTORY, SERVICE_SETTINGS }
+
 enum class ProductScreen {
     TRANSLATE,
     INTERPRETATION_WORKBENCH,
@@ -25,6 +27,11 @@ enum class ProductScreen {
 }
 
 object ProductNavigationPolicy {
+    fun accountSecondaryScreen(destination: AccountSecondaryDestination): ProductScreen = when (destination) {
+        AccountSecondaryDestination.HISTORY -> ProductScreen.HISTORY
+        AccountSecondaryDestination.SERVICE_SETTINGS -> ProductScreen.ENDPOINT_SETTINGS
+    }
+
     fun initialScreen(mode: ProductNavigationMode): ProductScreen = when (mode) {
         ProductNavigationMode.AUTHENTICATION -> ProductScreen.ACCOUNT
         ProductNavigationMode.USER -> ProductScreen.FACE_TO_FACE_WORKBENCH

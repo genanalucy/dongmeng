@@ -39,16 +39,25 @@ import com.verba.interpretation.ui.AccountUiState
 
 data class AccountSummary(
     val title: String,
+    val role: String,
     val detail: String,
     val message: String,
-)
+) {
+    val renderedText: List<String> get() = listOf(title, role, detail, message)
+}
 
 object AccountSummaryMapper {
     fun map(state: AccountUiState): AccountSummary = when {
-        !state.signedIn -> AccountSummary("未登录", "登录后可使用云端翻译服务。", "")
-        state.entitlement?.kind == "trial" -> AccountSummary("已登录", "试用权益有效至 ${state.entitlement.expiresAt}", safeMessage(state.message))
-        state.entitlement != null -> AccountSummary("已登录", "当前权益有效至 ${state.entitlement.expiresAt}", safeMessage(state.message))
-        else -> AccountSummary("已登录", "暂未获得可用权益。", safeMessage(state.message))
+        !state.signedIn -> AccountSummary("未登录", "访客", "登录后可使用云端翻译服务。", "")
+        state.entitlement?.kind == "trial" -> AccountSummary("已登录", roleLabel(state), "试用权益已启用。", safeMessage(state.message))
+        state.entitlement != null -> AccountSummary("已登录", roleLabel(state), "权益已启用。", safeMessage(state.message))
+        else -> AccountSummary("已登录", roleLabel(state), "暂未获得可用权益。", safeMessage(state.message))
+    }
+
+    private fun roleLabel(state: AccountUiState): String = when (state.user?.role) {
+        CloudRole.ADMIN -> "管理员"
+        CloudRole.USER -> "正式用户"
+        null -> "访客"
     }
 
     private fun safeMessage(message: String?): String = if (message.isNullOrBlank()) "" else "账户状态暂时无法更新，请稍后重试。"
@@ -87,6 +96,7 @@ fun AccountScreen(
                 ) {
                     Column(Modifier.padding(20.dp)) {
                         Text(summary.title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+                        Text(summary.role, modifier = Modifier.padding(top = 4.dp), color = MaterialTheme.colorScheme.onPrimaryContainer)
                         Text(summary.detail, modifier = Modifier.padding(top = 6.dp), color = MaterialTheme.colorScheme.onPrimaryContainer)
                         if (summary.message.isNotBlank()) {
                             Text(summary.message, modifier = Modifier.padding(top = 8.dp), color = MaterialTheme.colorScheme.onPrimaryContainer)

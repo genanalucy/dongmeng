@@ -36,9 +36,24 @@ class AccountUiStateTest {
         )
 
         assertEquals("已登录", summary.title)
-        listOf("token", "dsn", "key", "password", "session", "secret", "person@example.com").forEach { term ->
-            assertFalse("摘要不应包含敏感词：$term", summary.message.contains(term, ignoreCase = true))
-            assertFalse("摘要不应包含敏感词：$term", summary.detail.contains(term, ignoreCase = true))
+        assertEquals("正式用户", summary.role)
+        listOf("token", "dsn", "key", "password", "session", "secret", "person@example.com", "email", "http", "backend").forEach { term ->
+            summary.renderedText.forEach { field ->
+                assertFalse("摘要不应包含敏感词：$term", field.contains(term, ignoreCase = true))
+            }
         }
+    }
+
+    @Test fun accountSummaryMapsUntrustedExpiryToSafeFixedCopy() {
+        val summary = AccountSummaryMapper.map(
+            AccountUiState(
+                user = CloudUser("admin-1", "admin@example.com", CloudRole.ADMIN),
+                entitlement = CloudEntitlement("trial", "https://endpoint.example/token=secret"),
+            ),
+        )
+
+        assertEquals("管理员", summary.role)
+        assertEquals("试用权益已启用。", summary.detail)
+        assertFalse(summary.renderedText.any { it.contains("endpoint", ignoreCase = true) })
     }
 }

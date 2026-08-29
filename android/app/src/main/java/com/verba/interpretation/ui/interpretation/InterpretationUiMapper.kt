@@ -31,7 +31,8 @@ object InterpretationUiMapper {
 
     private fun actionsFor(phase: SessionPhase): List<InterpretationAction> = when (phase) {
         SessionPhase.IDLE -> listOf(InterpretationAction.START)
-        SessionPhase.STARTING, SessionPhase.RUNNING -> listOf(InterpretationAction.PAUSE, InterpretationAction.FINISH)
+        SessionPhase.STARTING -> listOf(InterpretationAction.FINISH)
+        SessionPhase.RUNNING -> listOf(InterpretationAction.PAUSE, InterpretationAction.FINISH)
         SessionPhase.PAUSED -> listOf(InterpretationAction.RESUME, InterpretationAction.FINISH)
         SessionPhase.ERROR -> listOf(InterpretationAction.RESET)
         SessionPhase.STOPPING -> emptyList()

@@ -33,6 +33,21 @@ class InterpretationUiMapperTest {
         assertEquals("Hello", model.translationText)
     }
 
+    @Test fun eachSessionPhaseExposesOnlyPermittedActions() {
+        val expected = mapOf(
+            SessionPhase.IDLE to listOf(InterpretationAction.START),
+            SessionPhase.STARTING to listOf(InterpretationAction.FINISH),
+            SessionPhase.RUNNING to listOf(InterpretationAction.PAUSE, InterpretationAction.FINISH),
+            SessionPhase.PAUSED to listOf(InterpretationAction.RESUME, InterpretationAction.FINISH),
+            SessionPhase.STOPPING to emptyList(),
+            SessionPhase.ERROR to listOf(InterpretationAction.RESET),
+        )
+
+        expected.forEach { (phase, actions) ->
+            assertEquals(phase.name, actions, InterpretationUiMapper.map(InterpretationUiState(phase = phase)).actions)
+        }
+    }
+
     @Test fun simultaneousErrorExposesSafeMessageOnly() {
         val model = InterpretationUiMapper.map(
             InterpretationUiState(phase = SessionPhase.ERROR, error = "token=secret dsn://backend password=hidden"),

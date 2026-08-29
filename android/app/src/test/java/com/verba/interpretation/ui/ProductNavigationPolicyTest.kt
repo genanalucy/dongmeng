@@ -117,6 +117,12 @@ class ProductNavigationPolicyTest {
     }
 
     @Test
+    fun accountSecondaryServiceSettingsUsesDedicatedEndpointRoute() {
+        assertEquals(ProductScreen.ENDPOINT_SETTINGS, ProductNavigationPolicy.accountSecondaryScreen(AccountSecondaryDestination.SERVICE_SETTINGS))
+        assertEquals(ProductScreen.HISTORY, ProductNavigationPolicy.accountSecondaryScreen(AccountSecondaryDestination.HISTORY))
+    }
+
+    @Test
     fun endpointSettingsKeepsProfileAsSelectedPrimaryDestination() {
         assertEquals(ProductDestination.PROFILE, ProductNavigationPolicy.selectedDestination(ProductScreen.ENDPOINT_SETTINGS))
         assertEquals(ProductDestination.ADMIN_TEST, ProductNavigationPolicy.selectedDestination(ProductScreen.ADMIN_TEST))
