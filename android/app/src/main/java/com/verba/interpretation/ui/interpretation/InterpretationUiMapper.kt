@@ -26,28 +26,6 @@ object InterpretationActionDispatcher {
     }
 }
 
-data class InterpretationLayoutModel(
-    val transcriptScrolls: Boolean,
-    val actionsPinned: Boolean,
-    val actionsFitViewport: Boolean,
-)
-
-object InterpretationLayoutPolicy {
-    private const val HEADER_HEIGHT_DP = 72
-    private const val ACTION_HEIGHT_DP = 48
-    private const val ACTION_GAP_DP = 8
-    private const val ACTION_PADDING_DP = 24
-
-    fun forViewport(viewportHeightDp: Int, actionCount: Int): InterpretationLayoutModel {
-        val actionAreaHeight = ACTION_PADDING_DP + actionCount * ACTION_HEIGHT_DP + (actionCount - 1).coerceAtLeast(0) * ACTION_GAP_DP
-        return InterpretationLayoutModel(
-            transcriptScrolls = true,
-            actionsPinned = true,
-            actionsFitViewport = viewportHeightDp >= HEADER_HEIGHT_DP + actionAreaHeight,
-        )
-    }
-}
-
 data class InterpretationScreenModel(
     val languageDirection: String,
     val sourceText: String,

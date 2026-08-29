@@ -56,7 +56,6 @@ fun InterpretationScreen(
     modifier: Modifier = Modifier,
 ) {
     val callbacks = InterpretationCallbacks(onExit, onStart, onPause, onResume, onFinish, onReset)
-    val layout = InterpretationLayoutPolicy.forViewport(viewportHeightDp = Int.MAX_VALUE, actionCount = model.actions.size)
     Column(modifier = modifier.fillMaxSize()) {
         Row(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
@@ -70,6 +69,7 @@ fun InterpretationScreen(
                 Text(model.languageDirection, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
+        // Keep long transcript/error content scrollable so the fixed action column remains reachable.
         LazyColumn(
             modifier = Modifier.weight(1f),
             contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 20.dp, vertical = 16.dp),
@@ -90,7 +90,7 @@ fun InterpretationScreen(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            if (layout.actionsPinned) model.actions.forEach { action ->
+            model.actions.forEach { action ->
                 when (action) {
                     InterpretationAction.START -> PrimaryAction("开始同传", Icons.Filled.Mic) { InterpretationActionDispatcher.dispatch(action, callbacks) }
                     InterpretationAction.PAUSE -> PrimaryAction("暂停", Icons.Filled.Pause) { InterpretationActionDispatcher.dispatch(action, callbacks) }
