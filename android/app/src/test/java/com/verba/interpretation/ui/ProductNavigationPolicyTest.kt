@@ -73,7 +73,7 @@ class ProductNavigationPolicyTest {
             destinations.map(ProductNavigationPolicy::screenFor),
         )
         destinations.map(ProductNavigationPolicy::screenFor).forEach { screen ->
-            assertTrue(ProductNavigationPolicy.showsProductBottomBar(ProductNavigationMode.USER, screen))
+            assertTrue(ProductNavigationPolicy.shellFor(ProductNavigationMode.USER, screen).showBottomBar)
         }
     }
 
@@ -92,21 +92,43 @@ class ProductNavigationPolicyTest {
     }
 
     @Test
-    fun hostShowsOnlyTheCorrectBottomBarForModeAndScreen() {
-        listOf(
+    fun productShellProvidesExactUserAndAdministratorBottomBars() {
+        val userShell = ProductNavigationPolicy.shellFor(
+            ProductNavigationMode.USER,
             ProductScreen.FACE_TO_FACE_WORKBENCH,
-            ProductScreen.INTERPRETATION_WORKBENCH,
-            ProductScreen.PROFILE,
-        ).forEach { screen ->
-            assertTrue(ProductNavigationPolicy.showsProductBottomBar(ProductNavigationMode.USER, screen))
-        }
-        assertTrue(ProductNavigationPolicy.showsProductBottomBar(ProductNavigationMode.ADMIN_TEST, ProductScreen.ADMIN_TEST))
-        assertTrue(ProductNavigationPolicy.showsProductBottomBar(ProductNavigationMode.ADMIN_TEST, ProductScreen.PROFILE))
+        )
+        assertTrue(userShell.showBottomBar)
+        assertEquals(
+            listOf(
+                ProductDestination.FACE_TO_FACE,
+                ProductDestination.INTERPRETATION,
+                ProductDestination.PROFILE,
+            ),
+            userShell.destinations,
+        )
 
-        assertFalse(ProductNavigationPolicy.showsProductBottomBar(ProductNavigationMode.AUTHENTICATION, ProductScreen.ACCOUNT))
-        assertFalse(ProductNavigationPolicy.showsProductBottomBar(ProductNavigationMode.USER, ProductScreen.ACCOUNT))
-        assertFalse(ProductNavigationPolicy.showsProductBottomBar(ProductNavigationMode.USER, ProductScreen.ENDPOINT_SETTINGS))
-        assertFalse(ProductNavigationPolicy.showsProductBottomBar(ProductNavigationMode.ADMIN_TEST, ProductScreen.ENDPOINT_SETTINGS))
+        val administratorShell = ProductNavigationPolicy.shellFor(
+            ProductNavigationMode.ADMIN_TEST,
+            ProductScreen.ADMIN_TEST,
+        )
+        assertTrue(administratorShell.showBottomBar)
+        assertEquals(
+            listOf(ProductDestination.ADMIN_TEST, ProductDestination.PROFILE),
+            administratorShell.destinations,
+        )
+    }
+
+    @Test
+    fun productShellHidesBottomBarAndDestinationsForAuthenticationAndSecondaryRoutes() {
+        listOf(
+            ProductNavigationPolicy.shellFor(ProductNavigationMode.AUTHENTICATION, ProductScreen.ACCOUNT),
+            ProductNavigationPolicy.shellFor(ProductNavigationMode.USER, ProductScreen.ACCOUNT),
+            ProductNavigationPolicy.shellFor(ProductNavigationMode.USER, ProductScreen.ENDPOINT_SETTINGS),
+            ProductNavigationPolicy.shellFor(ProductNavigationMode.ADMIN_TEST, ProductScreen.ENDPOINT_SETTINGS),
+        ).forEach { shell ->
+            assertFalse(shell.showBottomBar)
+            assertTrue(shell.destinations.isEmpty())
+        }
     }
 
     @Test

@@ -181,7 +181,7 @@ private fun InterpretationApp(
     LaunchedEffect(navigationMode) {
         screen = ProductNavigationPolicy.initialScreen(navigationMode)
     }
-    val showBottomBar = ProductNavigationPolicy.showsProductBottomBar(navigationMode, screen)
+    val productShell = ProductNavigationPolicy.shellFor(navigationMode, screen)
     BackHandler(enabled = ProductNavigationPolicy.hasExitTarget(screen)) {
         screen = ProductNavigationPolicy.exitTarget(screen)
     }
@@ -189,14 +189,16 @@ private fun InterpretationApp(
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         bottomBar = {
-            if (showBottomBar) {
+            if (productShell.showBottomBar) {
                 if (navigationMode == ProductNavigationMode.USER) {
                     ProductBottomBar(
+                        destinations = productShell.destinations,
                         selected = ProductNavigationPolicy.selectedDestination(screen),
                         onSelect = { screen = ProductNavigationPolicy.screenFor(it) },
                     )
                 } else {
                     AdminBottomBar(
+                        destinations = productShell.destinations,
                         selected = ProductNavigationPolicy.selectedDestination(screen),
                         onSelect = { screen = ProductNavigationPolicy.screenFor(it) },
                     )
@@ -253,11 +255,12 @@ private fun InterpretationApp(
 
 @Composable
 private fun AdminBottomBar(
+    destinations: List<ProductDestination>,
     selected: ProductDestination,
     onSelect: (ProductDestination) -> Unit,
 ) {
     NavigationBar(containerColor = MaterialTheme.colorScheme.surface, tonalElevation = 0.dp) {
-        ProductNavigationPolicy.destinationsFor(ProductNavigationMode.ADMIN_TEST).forEach { destination ->
+        destinations.forEach { destination ->
             NavigationBarItem(
                 selected = selected == destination,
                 onClick = { onSelect(destination) },

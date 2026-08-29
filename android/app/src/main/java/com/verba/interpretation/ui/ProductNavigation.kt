@@ -26,6 +26,11 @@ enum class ProductScreen {
     ADMIN_TEST,
 }
 
+data class ProductShell(
+    val showBottomBar: Boolean,
+    val destinations: List<ProductDestination>,
+)
+
 object ProductNavigationPolicy {
     fun accountSecondaryScreen(destination: AccountSecondaryDestination): ProductScreen = when (destination) {
         AccountSecondaryDestination.HISTORY -> ProductScreen.HISTORY
@@ -69,17 +74,14 @@ object ProductNavigationPolicy {
         ProductScreen.ADMIN_TEST -> ProductDestination.ADMIN_TEST
     }
 
-    fun showsProductBottomBar(mode: ProductNavigationMode, screen: ProductScreen): Boolean = when (mode) {
-        ProductNavigationMode.USER -> screen in setOf(
-            ProductScreen.FACE_TO_FACE_WORKBENCH,
-            ProductScreen.INTERPRETATION_WORKBENCH,
-            ProductScreen.PROFILE,
+    fun shellFor(mode: ProductNavigationMode, screen: ProductScreen): ProductShell {
+        val destinations = destinationsFor(mode)
+        val selected = selectedDestination(screen)
+        val showsBottomBar = selected in destinations && screenFor(selected) == screen
+        return ProductShell(
+            showBottomBar = showsBottomBar,
+            destinations = if (showsBottomBar) destinations else emptyList(),
         )
-        ProductNavigationMode.ADMIN_TEST -> screen in setOf(
-            ProductScreen.ADMIN_TEST,
-            ProductScreen.PROFILE,
-        )
-        ProductNavigationMode.AUTHENTICATION -> false
     }
 
     fun hasExitTarget(screen: ProductScreen): Boolean = screen in setOf(

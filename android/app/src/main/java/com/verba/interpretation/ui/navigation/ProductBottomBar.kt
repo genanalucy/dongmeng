@@ -13,19 +13,16 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import com.verba.interpretation.ui.ProductDestination
-import com.verba.interpretation.ui.ProductNavigationMode
-import com.verba.interpretation.ui.ProductNavigationPolicy
 import com.verba.interpretation.ui.design.FaceToFaceConversationIcon
 import com.verba.interpretation.ui.design.VerbaColors
 import com.verba.interpretation.ui.design.VerbaTouchTargets
 
 @Composable
 fun ProductBottomBar(
+    destinations: List<ProductDestination>,
     selected: ProductDestination,
     onSelect: (ProductDestination) -> Unit,
 ) {
-    val destinations = ProductNavigationPolicy.destinationsFor(ProductNavigationMode.USER)
-
     NavigationBar(containerColor = VerbaColors.Background) {
         destinations.forEach { destination ->
             val icon = destination.icon()
