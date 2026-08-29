@@ -99,19 +99,24 @@ class ProductNavigationPolicyTest {
     }
 
     @Test
-    fun userPrimaryScreensAreRootsWithoutBackTargets() {
-        val primaryScreens = listOf(
+    fun primaryWorkbenchesExitToTheFaceToFacePrimaryDestination() {
+        assertEquals(
             ProductScreen.FACE_TO_FACE_WORKBENCH,
-            ProductScreen.INTERPRETATION_WORKBENCH,
-            ProductScreen.PROFILE,
+            ProductNavigationPolicy.exitTarget(ProductScreen.FACE_TO_FACE_WORKBENCH),
         )
+        assertEquals(
+            ProductScreen.FACE_TO_FACE_WORKBENCH,
+            ProductNavigationPolicy.exitTarget(ProductScreen.INTERPRETATION_WORKBENCH),
+        )
+    }
 
-        primaryScreens.forEach { screen ->
-            assertFalse(ProductNavigationPolicy.hasExitTarget(screen))
-            assertEquals(screen, ProductNavigationPolicy.exitTarget(screen))
-        }
-        assertTrue(ProductNavigationPolicy.hasExitTarget(ProductScreen.ENDPOINT_SETTINGS))
-        assertEquals(ProductScreen.PROFILE, ProductNavigationPolicy.exitTarget(ProductScreen.ENDPOINT_SETTINGS))
+    @Test
+    fun administratorNavigationKeepsItsTestAndProfileDestinationsVisible() {
+        assertEquals(
+            listOf(ProductDestination.ADMIN_TEST, ProductDestination.PROFILE),
+            ProductNavigationPolicy.destinationsFor(ProductNavigationMode.ADMIN_TEST),
+        )
+        assertTrue(ProductNavigationPolicy.showsBottomBar(ProductScreen.ADMIN_TEST))
     }
 
     @Test

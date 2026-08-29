@@ -81,6 +81,8 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -179,7 +181,7 @@ private fun InterpretationApp(
     LaunchedEffect(navigationMode) {
         screen = ProductNavigationPolicy.initialScreen(navigationMode)
     }
-    val showBottomBar = navigationMode == ProductNavigationMode.USER && ProductNavigationPolicy.showsBottomBar(screen)
+    val showBottomBar = navigationMode != ProductNavigationMode.AUTHENTICATION && ProductNavigationPolicy.showsBottomBar(screen)
     BackHandler(enabled = ProductNavigationPolicy.hasExitTarget(screen)) {
         screen = ProductNavigationPolicy.exitTarget(screen)
     }
@@ -188,10 +190,17 @@ private fun InterpretationApp(
         containerColor = MaterialTheme.colorScheme.background,
         bottomBar = {
             if (showBottomBar) {
-                ProductBottomBar(
-                    selected = ProductNavigationPolicy.selectedDestination(screen),
-                    onSelect = { screen = ProductNavigationPolicy.screenFor(it) },
-                )
+                if (navigationMode == ProductNavigationMode.USER) {
+                    ProductBottomBar(
+                        selected = ProductNavigationPolicy.selectedDestination(screen),
+                        onSelect = { screen = ProductNavigationPolicy.screenFor(it) },
+                    )
+                } else {
+                    AdminBottomBar(
+                        selected = ProductNavigationPolicy.selectedDestination(screen),
+                        onSelect = { screen = ProductNavigationPolicy.screenFor(it) },
+                    )
+                }
             }
         },
     ) { padding ->
@@ -224,7 +233,7 @@ private fun InterpretationApp(
             )
             ProductScreen.ACCOUNT -> AccountPage(
                 modifier = Modifier.padding(padding),
-                onBack = { screen = ProductNavigationPolicy.initialScreen(navigationMode) },
+                onBack = { screen = ProductNavigationPolicy.exitTarget(ProductScreen.ACCOUNT) },
                 onHistory = { screen = ProductNavigationPolicy.accountSecondaryScreen(AccountSecondaryDestination.HISTORY) },
                 onServiceSettings = { screen = ProductNavigationPolicy.accountSecondaryScreen(AccountSecondaryDestination.SERVICE_SETTINGS) },
                 accountViewModel = accountViewModel,
@@ -241,6 +250,33 @@ private fun InterpretationApp(
             )
         }
     }
+}
+
+@Composable
+private fun AdminBottomBar(
+    selected: ProductDestination,
+    onSelect: (ProductDestination) -> Unit,
+) {
+    NavigationBar(containerColor = MaterialTheme.colorScheme.surface, tonalElevation = 0.dp) {
+        ProductNavigationPolicy.destinationsFor(ProductNavigationMode.ADMIN_TEST).forEach { destination ->
+            NavigationBarItem(
+                selected = selected == destination,
+                onClick = { onSelect(destination) },
+                icon = { Icon(destination.adminIcon(), contentDescription = null) },
+                label = { Text(destination.label, maxLines = 1) },
+                modifier = Modifier.semantics {
+                    contentDescription = "${destination.label}页"
+                    stateDescription = if (selected == destination) "已选择" else "未选择"
+                },
+            )
+        }
+    }
+}
+
+private fun ProductDestination.adminIcon(): ImageVector = when (this) {
+    ProductDestination.ADMIN_TEST -> Icons.Outlined.Science
+    ProductDestination.PROFILE -> Icons.Outlined.PersonOutline
+    else -> error("AdminBottomBar does not support $this")
 }
 
 @Composable
