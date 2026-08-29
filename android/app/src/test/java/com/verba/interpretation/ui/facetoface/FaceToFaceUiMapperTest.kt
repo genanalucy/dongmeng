@@ -1,11 +1,11 @@
 package com.verba.interpretation.ui.facetoface
 
 import com.verba.interpretation.audio.PlaybackRoute
+import com.verba.interpretation.ui.FaceToFaceCoordinator
 import com.verba.interpretation.ui.FaceToFaceMode
 import com.verba.interpretation.ui.FaceToFacePhase
 import com.verba.interpretation.ui.FaceToFaceSide
 import com.verba.interpretation.ui.FaceToFaceState
-import com.verba.interpretation.ui.FaceToFaceTurn
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -41,12 +41,18 @@ class FaceToFaceUiMapperTest {
     }
 
     @Test
-    fun turnAlignmentAndPlaybackRouteFollowTurnSide() {
-        val left = FaceToFaceTurn(1L, FaceToFaceSide.LEFT, "zh", "en", PlaybackRoute.RIGHT)
-        val right = FaceToFaceTurn(2L, FaceToFaceSide.RIGHT, "en", "zh", PlaybackRoute.LEFT)
+    fun turnAlignmentAndPlaybackRouteFollowTurnsProducedByCoordinator() {
+        val coordinator = FaceToFaceCoordinator<String>()
+        coordinator.manualPress(1L, FaceToFaceSide.LEFT, "left")
+        val left = coordinator.state().turns.single()
+        coordinator.cancelAll()
+        coordinator.manualPress(2L, FaceToFaceSide.RIGHT, "right")
+        val right = coordinator.state().turns.last()
 
-        assertEquals(FaceToFaceTurnAlignment.START, faceToFacePresentation(FaceToFaceState()).turnAlignment(left))
-        assertEquals(FaceToFaceTurnAlignment.END, faceToFacePresentation(FaceToFaceState()).turnAlignment(right))
+        assertEquals(PlaybackRoute.RIGHT, left.route)
+        assertEquals(PlaybackRoute.LEFT, right.route)
+        assertEquals(FaceToFaceTurnAlignment.START, faceToFaceTurnAlignment(left))
+        assertEquals(FaceToFaceTurnAlignment.END, faceToFaceTurnAlignment(right))
     }
 
     @Test
@@ -64,12 +70,36 @@ class FaceToFaceUiMapperTest {
     }
 
     @Test
-    fun idlePresentationAllowsLanguageChangesAndLocalizesListeningLabel() {
-        val chinese = faceToFacePresentation(FaceToFaceState(leftLanguage = "zh"))
-        val english = faceToFacePresentation(FaceToFaceState(leftLanguage = "en"))
+    fun activeManualSideSelectsListeningLabelFromItsSourceLanguage() {
+        val base = FaceToFaceState(
+            mode = FaceToFaceMode.MANUAL,
+            phase = FaceToFacePhase.LISTENING,
+            captureActive = true,
+            leftLanguage = "en",
+            rightLanguage = "zh",
+        )
 
-        assertTrue(chinese.canChangeLanguages)
-        assertEquals("听取中…", chinese.listeningLabel)
-        assertEquals("Listening…", english.listeningLabel)
+        assertEquals("Listening…", faceToFacePresentation(base.copy(activeSide = FaceToFaceSide.LEFT)).listeningLabel)
+        assertEquals("听取中…", faceToFacePresentation(base.copy(activeSide = FaceToFaceSide.RIGHT)).listeningLabel)
+    }
+
+    @Test
+    fun autoRightPressAndReleaseUseRightLanguageAndClearActiveMic() {
+        val listening = FaceToFaceState(
+            mode = FaceToFaceMode.AUTO,
+            phase = FaceToFacePhase.LISTENING,
+            captureActive = true,
+            leftLanguage = "zh",
+            rightLanguage = "en",
+            activeSide = FaceToFaceSide.RIGHT,
+        )
+
+        assertEquals(FaceToFaceSide.RIGHT, faceToFacePresentation(listening).activeMic)
+        assertEquals("Listening…", faceToFacePresentation(listening).listeningLabel)
+        assertNull(
+            faceToFacePresentation(
+                listening.copy(phase = FaceToFacePhase.PAUSED, captureActive = false, activeSide = null),
+            ).activeMic,
+        )
     }
 }

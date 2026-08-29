@@ -2,6 +2,7 @@ package com.verba.interpretation.ui
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -18,16 +19,26 @@ class ProductNavigationPolicyTest {
     }
 
     @Test
-    fun userNavigationDefaultsToFaceToFaceWithThreeDestinations() {
+    fun userNavigationDefaultsToFaceToFaceWithThreeReachableDestinations() {
+        val destinations = listOf(
+            ProductDestination.FACE_TO_FACE,
+            ProductDestination.INTERPRETATION,
+            ProductDestination.PROFILE,
+        )
+
         assertEquals(ProductScreen.FACE_TO_FACE_WORKBENCH, ProductNavigationPolicy.initialScreen(ProductNavigationMode.USER))
+        assertEquals(destinations, ProductNavigationPolicy.destinationsFor(ProductNavigationMode.USER))
         assertEquals(
             listOf(
-                ProductDestination.FACE_TO_FACE,
-                ProductDestination.INTERPRETATION,
-                ProductDestination.PROFILE,
+                ProductScreen.FACE_TO_FACE_WORKBENCH,
+                ProductScreen.INTERPRETATION_WORKBENCH,
+                ProductScreen.PROFILE,
             ),
-            ProductNavigationPolicy.destinationsFor(ProductNavigationMode.USER),
+            destinations.map(ProductNavigationPolicy::screenFor),
         )
+        destinations.map(ProductNavigationPolicy::screenFor).forEach { screen ->
+            assertTrue(ProductNavigationPolicy.showsBottomBar(screen))
+        }
     }
 
     @Test
@@ -45,27 +56,26 @@ class ProductNavigationPolicyTest {
     }
 
     @Test
-    fun immersiveWorkbenchesAndSettingsHideBottomNavigation() {
-        assertFalse(ProductNavigationPolicy.showsBottomBar(ProductScreen.INTERPRETATION_WORKBENCH))
-        assertFalse(ProductNavigationPolicy.showsBottomBar(ProductScreen.FACE_TO_FACE_WORKBENCH))
+    fun onlyNonPrimaryScreensHideBottomNavigation() {
         assertFalse(ProductNavigationPolicy.showsBottomBar(ProductScreen.ENDPOINT_SETTINGS))
-
         assertTrue(ProductNavigationPolicy.showsBottomBar(ProductScreen.TRANSLATE))
         assertTrue(ProductNavigationPolicy.showsBottomBar(ProductScreen.HISTORY))
-        assertTrue(ProductNavigationPolicy.showsBottomBar(ProductScreen.PROFILE))
     }
 
     @Test
-    fun systemBackExitsSecondLevelScreensWithoutLeavingTheActivity() {
-        assertEquals(ProductScreen.FACE_TO_FACE_WORKBENCH, ProductNavigationPolicy.exitTarget(ProductScreen.INTERPRETATION_WORKBENCH))
-        assertEquals(ProductScreen.FACE_TO_FACE_WORKBENCH, ProductNavigationPolicy.exitTarget(ProductScreen.FACE_TO_FACE_WORKBENCH))
-        assertEquals(ProductScreen.PROFILE, ProductNavigationPolicy.exitTarget(ProductScreen.ENDPOINT_SETTINGS))
-    }
+    fun userPrimaryScreensAreRootsWithoutBackTargets() {
+        val primaryScreens = listOf(
+            ProductScreen.FACE_TO_FACE_WORKBENCH,
+            ProductScreen.INTERPRETATION_WORKBENCH,
+            ProductScreen.PROFILE,
+        )
 
-    @Test
-    fun immersiveWorkbenchExitsHomeWhileSettingsReturnsToProfile() {
-        assertEquals(ProductScreen.FACE_TO_FACE_WORKBENCH, ProductNavigationPolicy.exitTarget(ProductScreen.INTERPRETATION_WORKBENCH))
-        assertEquals(ProductScreen.FACE_TO_FACE_WORKBENCH, ProductNavigationPolicy.exitTarget(ProductScreen.FACE_TO_FACE_WORKBENCH))
+        primaryScreens.forEach { screen ->
+            assertFalse(ProductNavigationPolicy.hasExitTarget(screen))
+            assertNotEquals(screen, ProductNavigationPolicy.exitTarget(screen))
+            assertEquals(ProductScreen.TRANSLATE, ProductNavigationPolicy.exitTarget(screen))
+        }
+        assertTrue(ProductNavigationPolicy.hasExitTarget(ProductScreen.ENDPOINT_SETTINGS))
         assertEquals(ProductScreen.PROFILE, ProductNavigationPolicy.exitTarget(ProductScreen.ENDPOINT_SETTINGS))
     }
 

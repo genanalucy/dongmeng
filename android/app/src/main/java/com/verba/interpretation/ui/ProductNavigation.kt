@@ -64,16 +64,22 @@ object ProductNavigationPolicy {
 
     fun showsBottomBar(screen: ProductScreen): Boolean = when (screen) {
         ProductScreen.TRANSLATE,
+        ProductScreen.INTERPRETATION_WORKBENCH,
+        ProductScreen.FACE_TO_FACE_WORKBENCH,
         ProductScreen.HISTORY,
         ProductScreen.PROFILE,
         ProductScreen.ADMIN_TEST,
         -> true
-        ProductScreen.INTERPRETATION_WORKBENCH,
-        ProductScreen.FACE_TO_FACE_WORKBENCH,
         ProductScreen.ENDPOINT_SETTINGS,
         ProductScreen.ACCOUNT,
         -> false
     }
+
+    fun hasExitTarget(screen: ProductScreen): Boolean = screen !in setOf(
+        ProductScreen.FACE_TO_FACE_WORKBENCH,
+        ProductScreen.INTERPRETATION_WORKBENCH,
+        ProductScreen.PROFILE,
+    )
 
     fun exitTarget(screen: ProductScreen): ProductScreen = when (screen) {
         ProductScreen.ENDPOINT_SETTINGS,
@@ -81,7 +87,8 @@ object ProductNavigationPolicy {
         ProductScreen.ADMIN_TEST -> ProductScreen.ADMIN_TEST
         ProductScreen.INTERPRETATION_WORKBENCH,
         ProductScreen.FACE_TO_FACE_WORKBENCH,
-        -> ProductScreen.FACE_TO_FACE_WORKBENCH
+        ProductScreen.PROFILE,
+        -> ProductScreen.TRANSLATE
         else -> screen
     }
 }
