@@ -95,6 +95,30 @@ class FaceToFaceUiMapperTest {
     }
 
     @Test
+    fun micPressGateKeepsManualReleaseWhenCallbacksChangeDuringPress() {
+        val events = mutableListOf<String>()
+        val gate = MicPressGate(onPress = { events += "manualPress" }, onRelease = { events += "manualRelease" })
+
+        gate.press()
+        gate.updateCallbacks(onPress = { events += "autoPress" }, onRelease = { events += "autoRelease" })
+        gate.release()
+
+        assertEquals(listOf("manualPress", "manualRelease"), events)
+    }
+
+    @Test
+    fun micPressGateKeepsAutoCancelWhenCallbacksChangeDuringPress() {
+        val events = mutableListOf<String>()
+        val gate = MicPressGate(onPress = { events += "autoPress" }, onRelease = { events += "autoRelease" })
+
+        gate.press()
+        gate.updateCallbacks(onPress = { events += "manualPress" }, onRelease = { events += "manualRelease" })
+        gate.cancel()
+
+        assertEquals(listOf("autoPress", "autoRelease"), events)
+    }
+
+    @Test
     fun continuousRightPressAndReleaseMapToExpectedActiveMic() {
         val base = FaceToFaceState(
             mode = FaceToFaceMode.AUTO,

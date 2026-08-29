@@ -50,21 +50,28 @@ import com.verba.interpretation.ui.FaceToFaceState
 import com.verba.interpretation.ui.TranslationLanguage
 
 internal class MicPressGate(
-    private val onPress: () -> Unit,
-    private val onRelease: () -> Unit,
+    onPress: () -> Unit,
+    onRelease: () -> Unit,
 ) {
-    private var pressed = false
+    private var currentPress = onPress
+    private var currentRelease = onRelease
+    private var releaseForActivePress: (() -> Unit)? = null
+
+    fun updateCallbacks(onPress: () -> Unit, onRelease: () -> Unit) {
+        currentPress = onPress
+        currentRelease = onRelease
+    }
 
     fun press() {
-        if (pressed) return
-        pressed = true
-        onPress()
+        if (releaseForActivePress != null) return
+        releaseForActivePress = currentRelease
+        currentPress()
     }
 
     fun release() {
-        if (!pressed) return
-        pressed = false
-        onRelease()
+        val release = releaseForActivePress ?: return
+        releaseForActivePress = null
+        release()
     }
 
     fun cancel() = release()
@@ -131,10 +138,9 @@ private fun EarMicButton(
     onPress: () -> Unit,
     onRelease: () -> Unit,
 ) {
-    val currentPress by rememberUpdatedState(onPress)
-    val currentRelease by rememberUpdatedState(onRelease)
     val currentPointerEnabled by rememberUpdatedState(pointerEnabled)
-    val gate = remember(side) { MicPressGate(onPress = { currentPress() }, onRelease = { currentRelease() }) }
+    val gate = remember(side) { MicPressGate(onPress, onRelease) }
+    gate.updateCallbacks(onPress, onRelease)
     val animatorScale = Settings.Global.getFloat(LocalContext.current.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f)
     val color = MaterialTheme.colorScheme.primary
     Surface(
