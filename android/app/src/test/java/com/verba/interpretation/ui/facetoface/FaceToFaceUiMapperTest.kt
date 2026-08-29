@@ -119,6 +119,50 @@ class FaceToFaceUiMapperTest {
     }
 
     @Test
+    fun pointerPressIsNotReleasedByOverlappingSemanticsActivation() {
+        val events = mutableListOf<String>()
+        val gate = MicPressGate(onPress = { events += "pointerPress" }, onRelease = { events += "pointerRelease" })
+
+        val pointer = gate.acquire(MicPressOwner.POINTER)
+        val semantics = gate.acquire(MicPressOwner.SEMANTICS)
+        gate.release(semantics)
+        assertEquals(listOf("pointerPress"), events)
+
+        gate.release(pointer)
+        assertEquals(listOf("pointerPress", "pointerRelease"), events)
+    }
+
+    @Test
+    fun nextGestureUsesUpdatedCallbacksAfterOriginalGestureEnds() {
+        val events = mutableListOf<String>()
+        val gate = MicPressGate(onPress = { events += "oldPress" }, onRelease = { events += "oldRelease" })
+
+        val original = gate.acquire(MicPressOwner.POINTER)
+        gate.updateCallbacks(onPress = { events += "newPress" }, onRelease = { events += "newRelease" })
+        gate.cancel(original)
+        val next = gate.acquire(MicPressOwner.POINTER)
+        gate.release(next)
+
+        assertEquals(listOf("oldPress", "oldRelease", "newPress", "newRelease"), events)
+    }
+
+    @Test
+    fun releaseAndCancelRequireTheAcquiringToken() {
+        val events = mutableListOf<String>()
+        val gate = MicPressGate(onPress = { events += "press" }, onRelease = { events += "release" })
+
+        val token = gate.acquire(MicPressOwner.POINTER)
+        gate.release(token)
+        gate.cancel(token)
+        assertEquals(listOf("press", "release"), events)
+
+        val second = gate.acquire(MicPressOwner.POINTER)
+        gate.cancel(second)
+        gate.release(second)
+        assertEquals(listOf("press", "release", "press", "release"), events)
+    }
+
+    @Test
     fun continuousRightPressAndReleaseMapToExpectedActiveMic() {
         val base = FaceToFaceState(
             mode = FaceToFaceMode.AUTO,

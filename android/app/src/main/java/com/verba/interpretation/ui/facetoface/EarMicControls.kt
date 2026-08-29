@@ -49,32 +49,53 @@ import com.verba.interpretation.ui.FaceToFaceSide
 import com.verba.interpretation.ui.FaceToFaceState
 import com.verba.interpretation.ui.TranslationLanguage
 
+internal enum class MicPressOwner { POINTER, SEMANTICS }
+
+internal class MicPressToken internal constructor(val owner: MicPressOwner, val sequence: Long) {
+    override fun equals(other: Any?): Boolean = other is MicPressToken && owner == other.owner && sequence == other.sequence
+    override fun hashCode(): Int = 31 * owner.hashCode() + sequence.hashCode()
+}
+
 internal class MicPressGate(
     onPress: () -> Unit,
     onRelease: () -> Unit,
 ) {
     private var currentPress = onPress
     private var currentRelease = onRelease
-    private var releaseForActivePress: (() -> Unit)? = null
+    private var active: ActivePress? = null
+    private var nextSequence = 0L
+
+    private data class ActivePress(val token: MicPressToken, val release: () -> Unit)
 
     fun updateCallbacks(onPress: () -> Unit, onRelease: () -> Unit) {
         currentPress = onPress
         currentRelease = onRelease
     }
 
-    fun press() {
-        if (releaseForActivePress != null) return
-        releaseForActivePress = currentRelease
+    fun acquire(owner: MicPressOwner): MicPressToken? {
+        if (active != null) return null
+        val token = MicPressToken(owner, ++nextSequence)
+        active = ActivePress(token, currentRelease)
         currentPress()
+        return token
     }
 
-    fun release() {
-        val release = releaseForActivePress ?: return
-        releaseForActivePress = null
-        release()
+    fun release(token: MicPressToken?) = finish(token)
+
+    fun cancel(token: MicPressToken?) = finish(token)
+
+    private fun finish(token: MicPressToken?) {
+        val acquired = active ?: return
+        if (token != acquired.token) return
+        active = null
+        acquired.release()
     }
 
-    fun cancel() = release()
+    fun press() { acquire(MicPressOwner.POINTER) }
+
+    fun release() { active?.token?.let(::release) }
+
+    fun cancel() { active?.token?.let(::cancel) }
 }
 
 @Composable
@@ -150,17 +171,18 @@ private fun EarMicButton(
                 stateDescription = stateLabel
                 if (actionEnabled) {
                     onClick(label = "开始${TranslationLanguage.displayName(language)}收音") {
-                        gate.press()
-                        gate.release()
-                        true
+                        val token = gate.acquire(MicPressOwner.SEMANTICS)
+                        gate.release(token)
+                        token != null
                     }
                 }
             }
             .pointerInput(side) {
                 detectTapGestures(onPress = {
                     if (!currentPointerEnabled) return@detectTapGestures
-                    gate.press()
-                    try { awaitRelease() } finally { gate.cancel() }
+                    val token = gate.acquire(MicPressOwner.POINTER)
+                    if (token == null) return@detectTapGestures
+                    try { awaitRelease() } finally { gate.cancel(token) }
                 })
             },
         shape = CircleShape,
