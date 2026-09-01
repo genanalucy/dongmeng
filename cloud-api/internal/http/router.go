@@ -78,19 +78,20 @@ func NewRouter(options RouterOptions) http.Handler {
 	router.Get("/api/v1/health", health)
 	router.Get("/api/v1/ready", ready)
 	router.Get("/api/v1/config", publicConfig)
-	if options.Store == nil {
-		return router
-	}
-	service := auth.AuthorizationService{Store: options.Store, EntitlementLifecycle: options.Store, Tokens: options.Tokens, MaxConcurrentSessions: auth.SingleActiveTranslationSessionLimit}
 	verification := options.Verification
 	if verification == nil {
 		verification = disabledPhoneVerificationService{}
 	}
+	verificationAPI := api{verification: verification, now: now}
+	router.Post("/api/v1/auth/phone-verifications", verificationAPI.phoneVerification)
+	router.Post("/api/v1/auth/phone-verifications/confirm", verificationAPI.phoneVerification)
+	if options.Store == nil {
+		return router
+	}
+	service := auth.AuthorizationService{Store: options.Store, EntitlementLifecycle: options.Store, Tokens: options.Tokens, MaxConcurrentSessions: auth.SingleActiveTranslationSessionLimit}
 	api := api{store: options.Store, tokens: options.Tokens, authorizer: service, verification: verification, now: now}
 	router.Post("/api/v1/auth/register", api.register)
 	router.Post("/api/v1/auth/login", api.login)
-	router.Post("/api/v1/auth/phone-verifications", api.phoneVerification)
-	router.Post("/api/v1/auth/phone-verifications/confirm", api.phoneVerification)
 	router.Post("/api/v1/auth/refresh", api.refresh)
 	router.Group(func(r chi.Router) {
 		r.Use(api.require)

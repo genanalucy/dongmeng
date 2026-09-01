@@ -3,8 +3,11 @@
 package integration_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,7 +15,9 @@ import (
 	"time"
 
 	"github.com/dngmeng/cloud-api/internal/auth"
+	"github.com/dngmeng/cloud-api/internal/config"
 	"github.com/dngmeng/cloud-api/internal/domain"
+	httpapi "github.com/dngmeng/cloud-api/internal/http"
 	"github.com/dngmeng/cloud-api/internal/migrate"
 	"github.com/dngmeng/cloud-api/internal/store"
 	"github.com/google/uuid"
@@ -88,8 +93,18 @@ func TestPostgresBusinessLifecycle(t *testing.T) {
 	if err := raw.QueryRow(ctx, `SELECT email FROM users WHERE id=$1`, user.ID).Scan(&storedReservedEmail); err != nil || !strings.HasPrefix(storedReservedEmail, "phone-") || !strings.HasSuffix(storedReservedEmail, "@reserved.invalid") {
 		t.Fatal("phone registration did not retain reserved email")
 	}
-	if _, _, err := db.UserByPhone(ctx, storedReservedEmail); !errors.Is(err, domain.ErrNotFound) {
-		t.Fatal("reserved email was accepted as a phone login identity")
+	issuer := auth.TokenIssuer{Issuer: "integration", Audience: "integration", AccessSecret: bytes.Repeat([]byte("a"), auth.MinimumSecretBytes), SessionSecret: bytes.Repeat([]byte("s"), auth.MinimumSecretBytes)}
+	router := httpapi.NewRouter(httpapi.RouterOptions{Config: config.Config{Environment: "test", DatabaseTimeout: time.Second, RateLimitRPS: 1000, RateLimitBurst: 1000}, Store: db, Tokens: issuer, Now: func() time.Time { return now }})
+	loginRequest := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader(`{"phone":"`+storedReservedEmail+`","password":"integration-password"}`))
+	loginRequest.Header.Set("Content-Type", "application/json")
+	loginResponse := httptest.NewRecorder()
+	router.ServeHTTP(loginResponse, loginRequest)
+	if loginResponse.Code != http.StatusUnauthorized || strings.Contains(loginResponse.Body.String(), "access_token") || strings.Contains(loginResponse.Body.String(), "refresh_token") {
+		t.Fatal("reserved email login was not rejected safely")
+	}
+	var reservedRefreshCount int
+	if err := raw.QueryRow(ctx, `SELECT count(*) FROM refresh_tokens WHERE user_id=$1`, user.ID).Scan(&reservedRefreshCount); err != nil || reservedRefreshCount != 0 {
+		t.Fatal("reserved email login persisted a refresh token")
 	}
 	legacyEmail := integrationEmail()
 	if err := raw.QueryRow(ctx, `INSERT INTO users(email,password_hash) VALUES($1,$2) RETURNING id`, legacyEmail, hash).Scan(&legacyID); err != nil {
@@ -200,6 +215,53 @@ func TestPostgresBusinessLifecycle(t *testing.T) {
 	}
 	if err := db.CreateSession(ctx, integrationSession(user.ID, active.ID, "install-"+uuid.NewString(), now.Add(time.Minute)), now.Add(3*time.Second)); err != nil {
 		t.Fatal("revoked session did not release active-session slot")
+	}
+
+	// These constraints are intentionally added only after the lifecycle cases:
+	// PostgreSQL checks them in the real Register transaction, so each failure
+	// proves the production rollback boundary without a fake transaction.
+	if _, err := raw.Exec(ctx, `ALTER TABLE users DROP CONSTRAINT IF EXISTS phone_auth_force_user_failure`); err != nil {
+		t.Fatal("reset user rollback fixture")
+	}
+	if _, err := raw.Exec(ctx, `ALTER TABLE entitlements DROP CONSTRAINT IF EXISTS phone_auth_force_trial_failure`); err != nil {
+		t.Fatal("reset trial rollback fixture")
+	}
+	t.Cleanup(func() {
+		cleanupContext, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_, _ = raw.Exec(cleanupContext, `ALTER TABLE users DROP CONSTRAINT IF EXISTS phone_auth_force_user_failure`)
+		_, _ = raw.Exec(cleanupContext, `ALTER TABLE entitlements DROP CONSTRAINT IF EXISTS phone_auth_force_trial_failure`)
+	})
+	blockedUsername := "phoneuser_" + uuid.NewString()[:8]
+	if _, err := raw.Exec(ctx, `ALTER TABLE users ADD CONSTRAINT phone_auth_force_user_failure CHECK (username <> '`+blockedUsername+`') NOT VALID`); err != nil {
+		t.Fatal("add user rollback fixture")
+	}
+	if _, _, err := db.Register(ctx, domain.RegisterParams{Username: blockedUsername, Phone: "+8613500138000", PasswordHash: hash, Now: now}); err == nil {
+		t.Fatal("forced user insert failure succeeded")
+	}
+	var failedUserCount, failedUserEntitlements int
+	if err := raw.QueryRow(ctx, `SELECT count(*) FROM users WHERE username=$1`, blockedUsername).Scan(&failedUserCount); err != nil || failedUserCount != 0 {
+		t.Fatal("user insert failure left a user")
+	}
+	if err := raw.QueryRow(ctx, `SELECT count(*) FROM entitlements e JOIN users u ON u.id=e.user_id WHERE u.username=$1`, blockedUsername).Scan(&failedUserEntitlements); err != nil || failedUserEntitlements != 0 {
+		t.Fatal("user insert failure left an entitlement")
+	}
+	if _, err := raw.Exec(ctx, `ALTER TABLE users DROP CONSTRAINT phone_auth_force_user_failure`); err != nil {
+		t.Fatal("remove user rollback fixture")
+	}
+
+	blockedTrialUsername := "phoneuser_" + uuid.NewString()[:8]
+	if _, err := raw.Exec(ctx, `ALTER TABLE entitlements ADD CONSTRAINT phone_auth_force_trial_failure CHECK (kind <> 'trial') NOT VALID`); err != nil {
+		t.Fatal("add trial rollback fixture")
+	}
+	if _, _, err := db.Register(ctx, domain.RegisterParams{Username: blockedTrialUsername, Phone: "+8613400138000", PasswordHash: hash, Now: now}); err == nil {
+		t.Fatal("forced trial insert failure succeeded")
+	}
+	if err := raw.QueryRow(ctx, `SELECT count(*) FROM users WHERE username=$1`, blockedTrialUsername).Scan(&failedUserCount); err != nil || failedUserCount != 0 {
+		t.Fatal("trial insert failure did not roll back user")
+	}
+	if err := raw.QueryRow(ctx, `SELECT count(*) FROM entitlements e JOIN users u ON u.id=e.user_id WHERE u.username=$1`, blockedTrialUsername).Scan(&failedUserEntitlements); err != nil || failedUserEntitlements != 0 {
+		t.Fatal("trial insert failure left an entitlement")
 	}
 }
 

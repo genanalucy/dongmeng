@@ -231,19 +231,19 @@ func (s *verificationSpy) Verify(context.Context, string) error {
 	return errVerificationNotEnabled
 }
 
-func TestPhoneVerificationHasNoStoreSideEffects(t *testing.T) {
-	store := &adminContractStore{enabled: true}
-	spy := &verificationSpy{}
-	router := NewRouter(RouterOptions{Config: config.Config{Environment: "test", DatabaseTimeout: time.Second, RateLimitRPS: 1000, RateLimitBurst: 1000}, Store: store, Verification: spy})
+func TestPhoneVerificationUsesOnlyDisabledBoundary(t *testing.T) {
 	for _, endpoint := range []string{"/api/v1/auth/phone-verifications", "/api/v1/auth/phone-verifications/confirm"} {
-		req := httptest.NewRequest(http.MethodPost, endpoint, strings.NewReader(`{"phone":"13800138000"}`))
-		req.Header.Set("Content-Type", "application/json")
-		req.RemoteAddr = "127.0.0.1:12345"
-		response := httptest.NewRecorder()
-		router.ServeHTTP(response, req)
-		if response.Code != http.StatusServiceUnavailable || spy.calls == 0 || store.phoneCalls != 0 || len(store.refreshes) != 0 || store.register != (domain.RegisterParams{}) {
-			t.Fatal("verification endpoint did not remain dependency-free")
-		}
+		t.Run(endpoint, func(t *testing.T) {
+			spy := &verificationSpy{}
+			router := NewRouter(RouterOptions{Config: config.Config{Environment: "test", DatabaseTimeout: time.Second, RateLimitRPS: 1000, RateLimitBurst: 1000}, Verification: spy})
+			req := httptest.NewRequest(http.MethodPost, endpoint, strings.NewReader(`{"phone":"13800138000"}`))
+			req.Header.Set("Content-Type", "application/json")
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, req)
+			if response.Code != http.StatusServiceUnavailable || spy.calls != 1 {
+				t.Fatal("verification endpoint did not invoke only the disabled boundary once")
+			}
+		})
 	}
 }
 
