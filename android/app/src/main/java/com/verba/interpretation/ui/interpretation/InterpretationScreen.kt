@@ -25,6 +25,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -45,6 +46,12 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -53,6 +60,24 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.verba.interpretation.ui.ChatFollowEvent
+import com.verba.interpretation.ui.ChatFollowPolicy
+import com.verba.interpretation.ui.ChatFollowState
+
+internal fun interpretationTimelineLatestIndex(bubbleCount: Int, hasError: Boolean): Int =
+    (bubbleCount + if (hasError) 1 else 0).coerceAtLeast(1) - 1
+
+internal fun interpretationTimelineUpdateCount(
+    previousToken: List<String>,
+    currentToken: List<String>,
+): Int = when {
+    currentToken != previousToken -> (currentToken.size - previousToken.size).coerceAtLeast(1)
+    else -> 0
+}
+
+private fun InterpretationScreenModel.timelineToken(): List<String> =
+    bubbles.map { "${it.key}:${it.sourceText}:${it.translationText}" } +
+        errorMessage?.let { listOf("error:$it") }.orEmpty()
 
 @Composable
 fun InterpretationScreen(
@@ -69,6 +94,31 @@ fun InterpretationScreen(
     val isSessionActive = model.actions.any {
         it == InterpretationAction.PAUSE || it == InterpretationAction.RESUME || it == InterpretationAction.FINISH
     }
+    val listState = rememberLazyListState()
+    val timelineToken = remember(model) { model.timelineToken() }
+    val latestIndex = interpretationTimelineLatestIndex(model.bubbles.size, model.errorMessage != null)
+    var previousToken by remember { mutableStateOf<List<String>?>(null) }
+    val atLatest by remember(listState, latestIndex) {
+        derivedStateOf {
+            listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index?.let { it >= latestIndex } ?: true
+        }
+    }
+    val follow = remember { mutableStateOf(ChatFollowState()) }
+    LaunchedEffect(atLatest) {
+        follow.value = ChatFollowPolicy.reduce(
+            follow.value,
+            if (atLatest) ChatFollowEvent.UserReachedLatest else ChatFollowEvent.UserLeftLatest,
+        )
+    }
+    LaunchedEffect(timelineToken) {
+        val before = previousToken
+        val updates = if (before == null) 0 else interpretationTimelineUpdateCount(before, timelineToken)
+        if (updates > 0) {
+            follow.value = ChatFollowPolicy.reduce(follow.value, ChatFollowEvent.TranscriptChanged(updates))
+            if (follow.value.followsLatest) listState.animateScrollToItem(latestIndex)
+        }
+        previousToken = timelineToken
+    }
 
     Column(modifier = modifier.fillMaxSize()) {
         CompactHeader(
@@ -79,6 +129,7 @@ fun InterpretationScreen(
         )
         // Keep long transcript/error content scrollable so the pinned controls remain reachable.
         LazyColumn(
+            state = listState,
             modifier = Modifier.weight(1f),
             contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(20.dp),
