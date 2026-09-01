@@ -2,6 +2,7 @@ package domain
 
 import (
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -28,37 +29,112 @@ func TestParseCredentialsCanonicalizesEmail(t *testing.T) {
 func TestParsePhoneCredentialsCanonicalizesPhoneAndEnforcesStrongPassword(t *testing.T) {
 	input, err := ParsePhoneCredentials(" 13800138000 ", "Aa123456")
 	if err != nil {
-		t.Fatal(err)
+		t.Fatal("valid phone credentials were rejected")
 	}
-	if input.Phone.String() != "+8613800138000" || input.Password.String() != "Aa123456" {
-		t.Fatalf("unexpected phone credentials: %+v", input)
+	if input.Phone.String() != "+8613800138000" {
+		t.Fatal("phone canonicalization mismatch")
+	}
+	if input.Password.String() != "Aa123456" {
+		t.Fatal("password preservation mismatch")
 	}
 
-	canonical, err := ParsePhone("+8613800138000")
-	if err != nil || canonical.String() != "+8613800138000" {
-		t.Fatalf("canonical phone = %q, err = %v", canonical, err)
-	}
-	for _, value := range []string{"12800138000", "1380013800", "+8612800138000", "008613800138000", "+8613800138000x"} {
-		if _, err := ParsePhone(value); !errors.Is(err, ErrInvalid) {
-			t.Fatalf("invalid phone %q error = %v", value, err)
-		}
-	}
-	for _, password := range []string{"aa123456", "AA123456", "Aaabcdef"} {
-		if _, err := ParsePhoneCredentials("13800138000", password); !errors.Is(err, ErrInvalid) {
-			t.Fatalf("weak password error = %v", err)
-		}
+	for _, test := range []struct {
+		name     string
+		password string
+	}{
+		{name: "missing_uppercase", password: "aa123456"},
+		{name: "missing_lowercase", password: "AA123456"},
+		{name: "missing_digit", password: "Aaabcdef"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if _, err := ParsePhoneCredentials("13800138000", test.password); !errors.Is(err, ErrInvalid) {
+				t.Fatal("weak password was accepted")
+			}
+		})
 	}
 }
 
-func TestParseUsernameCanonicalizesAndRestrictsCharacters(t *testing.T) {
-	username, err := ParseUsername("  Alice_01 ")
-	if err != nil || username.String() != "alice_01" {
-		t.Fatalf("username = %q, err = %v", username, err)
+func TestParsePhoneBoundaries(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		value       string
+		canonical   string
+		wantInvalid bool
+	}{
+		{name: "second_digit_three", value: "13000138000", canonical: "+8613000138000"},
+		{name: "second_digit_nine", value: "+8613900138000", canonical: "+8613900138000"},
+		{name: "empty", value: "", wantInvalid: true},
+		{name: "second_digit_two", value: "12000138000", wantInvalid: true},
+		{name: "second_digit_ten", value: "1:000138000", wantInvalid: true},
+		{name: "bare_country_code", value: "8613800138000", wantInvalid: true},
+		{name: "double_country_code", value: "+86+8613800138000", wantInvalid: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			phone, err := ParsePhone(test.value)
+			if test.wantInvalid {
+				if !errors.Is(err, ErrInvalid) {
+					t.Fatal("invalid phone was accepted")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal("valid phone was rejected")
+			}
+			if phone.String() != test.canonical {
+				t.Fatal("phone canonicalization mismatch")
+			}
+		})
 	}
-	for _, value := range []string{"ab", "abcdefghijklmnopqrstuvwxyzabcdefg", "alice-name", "alice name", "阿丽斯"} {
-		if _, err := ParseUsername(value); !errors.Is(err, ErrInvalid) {
-			t.Fatalf("invalid username %q error = %v", value, err)
-		}
+}
+
+func TestParseUsernameBoundaries(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		value       string
+		canonical   string
+		wantInvalid bool
+	}{
+		{name: "exact_minimum", value: "Ab1", canonical: "ab1"},
+		{name: "exact_maximum", value: strings.Repeat("a", 32), canonical: strings.Repeat("a", 32)},
+		{name: "all_uppercase", value: "ALICE_01", canonical: "alice_01"},
+		{name: "over_maximum", value: strings.Repeat("a", 33), wantInvalid: true},
+		{name: "too_short", value: "ab", wantInvalid: true},
+		{name: "hyphen", value: "alice-name", wantInvalid: true},
+		{name: "space", value: "alice name", wantInvalid: true},
+		{name: "non_ascii", value: "阿丽斯", wantInvalid: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			username, err := ParseUsername(test.value)
+			if test.wantInvalid {
+				if !errors.Is(err, ErrInvalid) {
+					t.Fatal("invalid username was accepted")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal("valid username was rejected")
+			}
+			if username.String() != test.canonical {
+				t.Fatal("username canonicalization mismatch")
+			}
+		})
+	}
+}
+
+func TestParsePhoneCredentialsPasswordBoundaries(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		password string
+	}{
+		{name: "too_short", password: "Aa12345"},
+		{name: "too_long", password: "Aa1" + strings.Repeat("a", MaxPasswordBytes-2)},
+		{name: "invalid_utf8", password: string([]byte{'A', 'a', '1', 0xff, '2', '3', '4', '5'})},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if _, err := ParsePhoneCredentials("13800138000", test.password); !errors.Is(err, ErrInvalid) {
+				t.Fatal("invalid phone credential password was accepted")
+			}
+		})
 	}
 }
 

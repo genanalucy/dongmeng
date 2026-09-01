@@ -108,8 +108,8 @@ func TestRepositoryMigrationsClassifyConcurrentIndexOutsideTransaction(t *testin
 			t.Fatalf("migration[%d].Version = %q, want %q", index, migrations[index].Version, version)
 		}
 	}
-	if migrations[0].OutsideTransaction || !migrations[1].OutsideTransaction || migrations[2].OutsideTransaction {
-		t.Fatalf("transaction strategies = [%t %t %t], want [false true false]", migrations[0].OutsideTransaction, migrations[1].OutsideTransaction, migrations[2].OutsideTransaction)
+	if migrations[0].OutsideTransaction || !migrations[1].OutsideTransaction || migrations[2].OutsideTransaction || migrations[3].OutsideTransaction {
+		t.Fatalf("repository migration transaction classification mismatch")
 	}
 	index := migrations[1].ConcurrentIndex
 	if index.Name != "refresh_tokens_expiry_idx" || index.Table != "refresh_tokens" || index.Method != "btree" || index.Unique || index.NullsNotDistinct || !index.Immediate || strings.Join(index.Columns, ",") != "expires_at,id" {
