@@ -48,6 +48,25 @@ class CloudApiAuthenticationContractTest {
         assertEquals(AuthTokens("access", "refresh"), store.read())
     }
 
+    @Test fun identityProfileGetsSafeIdentityContractWithoutFullPhone() {
+        val fake = FakeHttp(200, "{\"username\":\"alice_01\",\"email\":\"alice@example.test\",\"masked_phone\":\"138****8000\"}")
+        val api = CloudApi("https://cloud.example", MemoryTokenStore(AuthTokens("access", "refresh")), FixedInstallationIdStore(), fake.client)
+
+        assertEquals(AccountIdentityProfile("alice_01", "alice@example.test", "138****8000"), api.accountIdentityProfile())
+
+        val request = fake.singleRequest()
+        assertEquals("GET", request.method)
+        assertEquals("/api/v1/account/identity", request.url.encodedPath)
+        assertEquals("Bearer access", request.header("Authorization"))
+    }
+
+    @Test fun identityProfileAllowsLegacyResponseWithoutMaskedPhone() {
+        val fake = FakeHttp(200, "{\"username\":\"alice_01\",\"email\":\"alice@example.test\"}")
+        val api = CloudApi("https://cloud.example", MemoryTokenStore(AuthTokens("access", "refresh")), FixedInstallationIdStore(), fake.client)
+
+        assertEquals(AccountIdentityProfile("alice_01", "alice@example.test", null), api.accountIdentityProfile())
+    }
+
     @Test fun currentUserIgnoresEmailAndPhone() {
         val fake = FakeHttp(200, "{\"id\":\"user-1\",\"username\":\"alice_01\",\"role\":\"user\",\"email\":\"private@example.com\",\"phone\":\"+8613800138000\"}")
         val api = CloudApi("https://cloud.example", MemoryTokenStore(AuthTokens("access", "refresh")), FixedInstallationIdStore(), fake.client)

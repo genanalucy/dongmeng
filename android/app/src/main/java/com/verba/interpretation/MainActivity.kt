@@ -1110,11 +1110,14 @@ private fun AccountUsagePage(modifier: Modifier, onBack: () -> Unit, accountView
 @Composable
 private fun AccountSettingsPage(modifier: Modifier, onBack: () -> Unit, accountViewModel: AccountViewModel) {
     val state by accountViewModel.state.collectAsStateWithLifecycle()
+    LaunchedEffect(Unit) { accountViewModel.loadIdentityProfile() }
+    val identityProfile = state.identityProfile
     AccountIdentitySettingsScreen(
-        username = state.overview?.username ?: state.user?.username.orEmpty(),
-        email = "",
-        maskedPhone = "请输入完整手机号",
+        username = identityProfile?.username ?: state.overview?.username ?: state.user?.username.orEmpty(),
+        email = identityProfile?.email.orEmpty(),
+        maskedPhone = identityProfile?.maskedPhone.orEmpty(),
         loading = state.loading,
+        message = state.message,
         onBack = onBack,
         onSubmit = accountViewModel::updateIdentity,
         modifier = modifier,

@@ -2,6 +2,7 @@ package com.verba.interpretation.ui
 
 import android.app.Application
 import com.verba.interpretation.cloud.AccountApi
+import com.verba.interpretation.cloud.AccountIdentityProfile
 import com.verba.interpretation.cloud.AccountOverview
 import com.verba.interpretation.cloud.AuthTokens
 import com.verba.interpretation.cloud.CloudEntitlement
@@ -27,6 +28,27 @@ class AccountViewModelAccountCenterTest {
 
     @Before fun setUp() = Dispatchers.setMain(dispatcher)
     @After fun tearDown() = Dispatchers.resetMain()
+
+    @Test fun loadIdentityProfilePublishesSafeProfileForSettings() {
+        val api = AccountCenterApi(identityProfile = AccountIdentityProfile("alice_01", "alice@example.test", "138****8000"))
+        val viewModel = AccountViewModel(Application(), api, dispatcher)
+
+        viewModel.loadIdentityProfile()
+        dispatcher.scheduler.advanceUntilIdle()
+
+        assertEquals(AccountIdentityProfile("alice_01", "alice@example.test", "138****8000"), viewModel.state.value.identityProfile)
+        assertEquals(null, viewModel.state.value.message)
+    }
+
+    @Test fun identityProfileFailurePublishesSafeError() {
+        val viewModel = AccountViewModel(Application(), AccountCenterApi(identityFailure = true), dispatcher)
+
+        viewModel.loadIdentityProfile()
+        dispatcher.scheduler.advanceUntilIdle()
+
+        assertEquals(null, viewModel.state.value.identityProfile)
+        assertEquals("账户状态暂时无法更新，请稍后重试。", viewModel.state.value.message)
+    }
 
     @Test fun updateIdentityDispatchesOnlyValidNormalizedValuesAndRefreshesOverview() {
         val api = AccountCenterApi()
@@ -54,7 +76,10 @@ class AccountViewModelAccountCenterTest {
     }
 }
 
-private class AccountCenterApi : AccountApi {
+private class AccountCenterApi(
+    private val identityProfile: AccountIdentityProfile = AccountIdentityProfile("alice_01", "alice@example.test", null),
+    private val identityFailure: Boolean = false,
+) : AccountApi {
     var identityRequest: IdentityUpdateRequest? = null
     override fun register(username: String, email: String, phone: String, password: String) = Unit
     override fun login(identifier: String, password: String): AuthTokens = AuthTokens("access", "refresh")
@@ -63,6 +88,10 @@ private class AccountCenterApi : AccountApi {
     override fun currentEntitlement(): CloudEntitlement? = null
     override fun redeem(code: String): CloudEntitlement = CloudEntitlement("trial", "2026-09-01")
     override fun hasCredentials(): Boolean = false
+    override fun accountIdentityProfile(): AccountIdentityProfile {
+        check(!identityFailure) { "unavailable" }
+        return identityProfile
+    }
     override fun accountOverview(): AccountOverview = AccountOverview(
         username = "alice_01",
         entitlement = null,

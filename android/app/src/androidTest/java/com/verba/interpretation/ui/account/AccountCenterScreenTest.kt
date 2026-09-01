@@ -5,6 +5,7 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
 import com.verba.interpretation.cloud.AccountOverview
@@ -37,12 +38,26 @@ class AccountCenterScreenTest {
         composeRule.onNodeWithContentDescription("账户设置").assertExists()
     }
 
+    @Test fun identitySettingsDisplaysLoadedEmailAndMaskedPhone() {
+        composeRule.setContent {
+            MaterialTheme {
+                AccountIdentitySettingsScreen(
+                    username = "alice_01", email = "alice@example.test", maskedPhone = "138****8000", loading = false, message = null,
+                    onBack = {}, onSubmit = { _, _, _, _ -> },
+                )
+            }
+        }
+
+        composeRule.onNodeWithTag("identity-email").assertTextEquals("alice@example.test")
+        composeRule.onNodeWithTag("identity-phone").assertTextEquals("138****8000")
+    }
+
     @Test fun identitySettingsRequiresFullPhoneAndDoesNotDispatchInvalidForm() {
         var calls = 0
         composeRule.setContent {
             MaterialTheme {
                 AccountIdentitySettingsScreen(
-                    username = "alice_01", email = "alice@example.test", maskedPhone = "138****8000", loading = false,
+                    username = "alice_01", email = "alice@example.test", maskedPhone = "138****8000", loading = false, message = null,
                     onBack = {}, onSubmit = { _, _, _, _ -> calls++ },
                 )
             }

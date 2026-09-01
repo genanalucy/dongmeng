@@ -5,6 +5,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.verba.interpretation.cloud.AccountApi
+import com.verba.interpretation.cloud.AccountIdentityProfile
 import com.verba.interpretation.cloud.AccountOverview
 import com.verba.interpretation.cloud.CloudApi
 import com.verba.interpretation.cloud.CloudEndpointSettings
@@ -30,6 +31,7 @@ data class AccountUiState(
     val user: CloudUser? = null,
     val entitlement: CloudEntitlement? = null,
     val overview: AccountOverview? = null,
+    val identityProfile: AccountIdentityProfile? = null,
     val usage: UsagePage? = null,
     val message: String? = null,
     val previewingUserExperience: Boolean = false,
@@ -73,6 +75,18 @@ class AccountViewModel(
     }
 
     fun refreshOverview() = runOverviewRequest { api.accountOverview() }
+
+    fun loadIdentityProfile() {
+        viewModelScope.launch {
+            mutableState.value = mutableState.value.copy(loading = true, message = null)
+            try {
+                val identityProfile = withContext(ioDispatcher) { api.accountIdentityProfile() }
+                mutableState.value = mutableState.value.copy(loading = false, identityProfile = identityProfile)
+            } catch (_: Exception) {
+                mutableState.value = mutableState.value.copy(loading = false, message = SafeRequestError)
+            }
+        }
+    }
 
     fun loadUsage(limit: Int = UsagePageSize, offset: Int = 0) {
         if (limit !in 1..50 || offset < 0) return

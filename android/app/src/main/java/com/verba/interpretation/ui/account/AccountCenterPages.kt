@@ -87,13 +87,14 @@ fun AccountIdentitySettingsScreen(
     email: String,
     maskedPhone: String,
     loading: Boolean,
+    message: String?,
     onBack: () -> Unit,
     onSubmit: (String, String, String, String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var editedUsername by remember(username) { mutableStateOf(username) }
     var editedEmail by remember(email) { mutableStateOf(email) }
-    var phone by remember { mutableStateOf(maskedPhone) }
+    var phone by remember(maskedPhone) { mutableStateOf(maskedPhone) }
     var currentPassword by remember { mutableStateOf("") }
     var submitted by remember { mutableStateOf(false) }
     val validation = AccountIdentityFormPolicy.validate(editedUsername, editedEmail, phone, currentPassword)
@@ -104,10 +105,11 @@ fun AccountIdentitySettingsScreen(
             colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background),
         )
         LazyColumn(contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            message?.let { item { Text(it, color = MaterialTheme.colorScheme.error) } }
             item { IdentityField(editedUsername, { editedUsername = it }, "用户名", "identity-username", validation.usernameError.takeIf { submitted }, KeyboardType.Text, false) }
             item { IdentityField(editedEmail, { editedEmail = it }, "邮箱", "identity-email", validation.emailError.takeIf { submitted }, KeyboardType.Email, false) }
             item {
-                Text("手机号首次显示为掩码；如需保存修改，请重新输入完整手机号。", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("手机号不会自动提供完整号码；如需保存修改，请重新输入完整手机号。", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 IdentityField(phone, { phone = it }, "手机号", "identity-phone", validation.phoneError.takeIf { submitted }, KeyboardType.Phone, false)
             }
             item { IdentityField(currentPassword, { currentPassword = it }, "当前密码", "identity-current-password", validation.currentPasswordError.takeIf { submitted }, KeyboardType.Password, true) }

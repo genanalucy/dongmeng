@@ -22,6 +22,7 @@ data class CloudEntitlement(
 )
 data class UsageSummary(val totalSeconds: Long, val sessionCount: Long, val lastUsedAt: String?)
 data class AccountOverview(val username: String, val entitlement: CloudEntitlement?, val usage: UsageSummary)
+data class AccountIdentityProfile(val username: String, val email: String, val maskedPhone: String?)
 data class CloudUsage(val startedAt: String, val endedAt: String?, val durationSeconds: Long, val sourceLanguage: String?, val targetLanguage: String?)
 data class UsagePage(val items: List<CloudUsage>, val total: Int)
 
@@ -75,6 +76,7 @@ interface AccountApi {
     fun redeem(code: String): CloudEntitlement
     fun hasCredentials(): Boolean
     fun accountOverview(): AccountOverview
+    fun accountIdentityProfile(): AccountIdentityProfile
     fun usage(limit: Int, offset: Int): UsagePage
     fun updateIdentity(request: IdentityUpdateRequest)
 }
@@ -150,6 +152,15 @@ class CloudApi private constructor(
             entitlement = json.optJSONObject("entitlement")?.let(::parseEntitlement),
             usage = json.optJSONObject("usage")?.let(::parseUsageSummary)
                 ?: throw CloudApiException("服务响应缺少 usage。"),
+        )
+    }
+
+    override fun accountIdentityProfile(): AccountIdentityProfile {
+        val json = authorized("account/identity")
+        return AccountIdentityProfile(
+            username = json.requiredString("username"),
+            email = json.requiredString("email"),
+            maskedPhone = json.optString("masked_phone").trim().ifEmpty { null },
         )
     }
 

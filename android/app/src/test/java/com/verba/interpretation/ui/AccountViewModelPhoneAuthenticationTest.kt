@@ -108,6 +108,7 @@ private class RecordingAccountApi : AccountApi {
     override fun redeem(code: String): CloudEntitlement = error("not used")
     override fun hasCredentials(): Boolean = false
     override fun accountOverview() = com.verba.interpretation.cloud.AccountOverview("alice_01", null, com.verba.interpretation.cloud.UsageSummary(0, 0, null))
+    override fun accountIdentityProfile() = com.verba.interpretation.cloud.AccountIdentityProfile("alice_01", "alice@example.test", null)
     override fun usage(limit: Int, offset: Int) = com.verba.interpretation.cloud.UsagePage(emptyList(), 0)
     override fun updateIdentity(request: com.verba.interpretation.cloud.IdentityUpdateRequest) = Unit
 }
