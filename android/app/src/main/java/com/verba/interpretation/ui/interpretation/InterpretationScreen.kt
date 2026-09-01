@@ -9,6 +9,7 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.interaction.DragInteraction
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -49,13 +50,13 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -64,10 +65,8 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
-import com.verba.interpretation.ui.ChatFollowEvent
-import com.verba.interpretation.ui.ChatFollowPolicy
-import com.verba.interpretation.ui.ChatFollowState
 
 internal fun interpretationTimelineLatestIndex(bubbleCount: Int, hasError: Boolean): Int =
     interpretationTimelineScrollIndex(bubbleCount, hasError) ?: 0
@@ -108,26 +107,69 @@ fun InterpretationScreen(
     val scrollIndex = interpretationTimelineScrollIndex(model.bubbles.size, model.errorMessage != null)
     val latestIndex = scrollIndex ?: 0
     val currentScrollIndex by rememberUpdatedState(scrollIndex)
+    val currentLatestIndex by rememberUpdatedState(latestIndex)
     var previousToken by remember { mutableStateOf<List<String>?>(null) }
-    val atLatest by remember(listState, latestIndex) {
-        derivedStateOf {
-            val visibleItems = listState.layoutInfo.visibleItemsInfo
-            visibleItems.lastOrNull()?.index?.let { lastVisibleIndex -> lastVisibleIndex >= latestIndex } ?: true
+    var follow by remember { mutableStateOf(InterpretationTimelineFollowState()) }
+    var programmaticScrollCount by remember { mutableStateOf(0) }
+    var userDraggedDuringScroll by remember { mutableStateOf(false) }
+
+    suspend fun animateToLatest(index: Int) {
+        programmaticScrollCount += 1
+        try {
+            listState.animateScrollToItem(index)
+        } finally {
+            programmaticScrollCount -= 1
+            follow = InterpretationTimelineFollowReducer.reduce(
+                follow,
+                InterpretationTimelineFollowEvent.ProgrammaticScrollFinished,
+            )
         }
     }
-    var follow by remember { mutableStateOf(ChatFollowState()) }
-    LaunchedEffect(atLatest) {
-        follow = ChatFollowPolicy.reduce(
-            follow,
-            if (atLatest) ChatFollowEvent.UserReachedLatest else ChatFollowEvent.UserLeftLatest,
-        )
+
+    LaunchedEffect(listState) {
+        listState.interactionSource.interactions.collect { interaction ->
+            if (interaction is DragInteraction.Start) userDraggedDuringScroll = true
+        }
+    }
+    LaunchedEffect(listState) {
+        var wasScrolling = false
+        var scrollStartedProgrammatically = false
+        snapshotFlow { listState.isScrollInProgress }.collect { isScrolling ->
+            when {
+                isScrolling && !wasScrolling -> {
+                    scrollStartedProgrammatically = programmaticScrollCount > 0
+                }
+                !isScrolling && wasScrolling -> {
+                    if (!scrollStartedProgrammatically || userDraggedDuringScroll) {
+                        val atLatest = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index
+                            ?.let { it >= currentLatestIndex }
+                            ?: true
+                        follow = InterpretationTimelineFollowReducer.reduce(
+                            follow,
+                            InterpretationTimelineFollowEvent.UserScrollFinished(atLatest),
+                        )
+                    }
+                    userDraggedDuringScroll = false
+                }
+            }
+            wasScrolling = isScrolling
+        }
     }
     LaunchedEffect(timelineToken, latestIndex) {
         val before = previousToken
         val updates = if (before == null) 1 else interpretationTimelineUpdateCount(before, timelineToken)
         if (updates > 0) {
-            follow = ChatFollowPolicy.reduce(follow, ChatFollowEvent.TranscriptChanged(updates))
-            if (follow.followsLatest) scrollIndex?.let { listState.animateScrollToItem(it) }
+            follow = InterpretationTimelineFollowReducer.reduce(
+                follow,
+                InterpretationTimelineFollowEvent.TranscriptAppended(updates),
+            )
+            if (follow.scrollToLatestRequested) {
+                follow = InterpretationTimelineFollowReducer.reduce(
+                    follow,
+                    InterpretationTimelineFollowEvent.ScrollRequestStarted,
+                )
+                scrollIndex?.let { animateToLatest(it) }
+            }
         }
         previousToken = timelineToken
     }
@@ -165,9 +207,18 @@ fun InterpretationScreen(
             if (!follow.followsLatest) {
                 FloatingActionButton(
                     onClick = {
-                        follow = ChatFollowPolicy.reduce(follow, ChatFollowEvent.UserTappedLatest)
-                        currentScrollIndex?.let { index ->
-                            scope.launch { listState.animateScrollToItem(index) }
+                        follow = InterpretationTimelineFollowReducer.reduce(
+                            follow,
+                            InterpretationTimelineFollowEvent.UserTappedLatest,
+                        )
+                        if (follow.scrollToLatestRequested) {
+                            follow = InterpretationTimelineFollowReducer.reduce(
+                                follow,
+                                InterpretationTimelineFollowEvent.ScrollRequestStarted,
+                            )
+                            currentScrollIndex?.let { index ->
+                                scope.launch { animateToLatest(index) }
+                            }
                         }
                     },
                     modifier = Modifier.align(Alignment.BottomEnd).padding(20.dp).size(48.dp),
