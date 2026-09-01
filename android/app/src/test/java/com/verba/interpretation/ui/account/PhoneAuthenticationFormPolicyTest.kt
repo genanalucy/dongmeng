@@ -88,6 +88,18 @@ class PhoneAuthenticationFormPolicyTest {
         assertFalse(result.renderedErrors.any { it.contains(password) })
     }
 
+    @Test fun registrationHonorsSupplementaryUnicodeUtf8ByteBoundaries() {
+        val withinLimit = "A1a" + "\uD83D\uDE00".repeat(63) + "x"
+        val overLimit = withinLimit + "x"
+
+        assertEquals(256, withinLimit.toByteArray(Charsets.UTF_8).size)
+        assertTrue(PhoneAuthenticationFormPolicy.register("alice_01", "13800138000", withinLimit, withinLimit).isValid)
+        val rejected = PhoneAuthenticationFormPolicy.register("alice_01", "13800138000", overLimit, overLimit)
+        assertEquals(257, overLimit.toByteArray(Charsets.UTF_8).size)
+        assertEquals("密码不能超过 256 个字节。", rejected.passwordError)
+        assertFalse(rejected.renderedErrors.any { it.contains(overLimit) })
+    }
+
     @Test fun registrationRejectsMismatchedConfirmation() {
         val result = PhoneAuthenticationFormPolicy.register("alice_01", "13800138000", "Passw0rd", "Passw0rD")
 

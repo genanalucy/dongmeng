@@ -253,6 +253,33 @@ func TestAdminRoutesExposeDocumentedEnvelopesAndSafeAuditMetadata(t *testing.T) 
 	}
 }
 
+func TestAdminUsersHidePhoneAndReservedEmailForLegacyAndPhoneRecords(t *testing.T) {
+	adminID := uuid.New()
+	store := &adminContractStore{enabled: true, users: []domain.User{
+		{ID: uuid.New(), Email: "legacy@example.test", Role: string(domain.RoleUser), CreatedAt: time.Now()},
+		{ID: uuid.New(), Username: "alice_01", Phone: "+8613800138000", Email: "", Role: string(domain.RoleUser), CreatedAt: time.Now()},
+	}}
+	router, issuer, now := newAdminContractRouter(t, store)
+	response := adminRequest(router, "/api/v1/admin/users", adminAccessToken(t, issuer, adminID, domain.RoleAdmin, now))
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d", response.Code)
+	}
+	body := response.Body.String()
+	if strings.Contains(body, "phone") || strings.Contains(body, "reserved.invalid") {
+		t.Fatalf("admin response leaked internal identity: %s", body)
+	}
+	var envelope struct {
+		Users []struct {
+			Email string `json:"email"`
+			Phone string `json:"phone"`
+		} `json:"users"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &envelope); err != nil || len(envelope.Users) != 2 || envelope.Users[0].Phone != "" || envelope.Users[1].Email != "" || envelope.Users[1].Phone != "" {
+		t.Fatalf("safe admin user DTO = %#v, %v", envelope, err)
+	}
+}
+
 func TestAdminRoutesHideStoreFailures(t *testing.T) {
 	store := &adminContractStore{enabled: true, usersErr: errors.New("users store failure"), auditLogsErr: errors.New("audit store failure")}
 	router, issuer, now := newAdminContractRouter(t, store)

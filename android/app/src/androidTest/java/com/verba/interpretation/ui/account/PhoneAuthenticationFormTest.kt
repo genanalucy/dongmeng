@@ -38,6 +38,18 @@ class PhoneAuthenticationFormTest {
         composeRule.onNodeWithText("注册并登录").assertExists()
     }
 
+    @Test fun touchedInvalidLoginShowsFixedErrorSemanticsAndCannotDispatch() {
+        var calls = 0
+        setForm(onLogin = { _, _ -> calls++ })
+
+        composeRule.onNodeWithTag("phone").performTextInput("invalid")
+
+        assertError("phone", "请输入有效的中国大陆手机号。")
+        composeRule.onNodeWithText("请输入有效的中国大陆手机号。", substring = true).assertExists()
+        composeRule.onNodeWithText("登录").assert(SemanticsMatcher.keyIsDefined(androidx.compose.ui.semantics.SemanticsProperties.Disabled))
+        assertEquals(0, calls)
+    }
+
     @Test fun loginButtonDispatchesNormalizedPhoneAndPassword() {
         var submitted: Pair<String, String>? = null
         setForm(onLogin = { phone, password -> submitted = phone to password })

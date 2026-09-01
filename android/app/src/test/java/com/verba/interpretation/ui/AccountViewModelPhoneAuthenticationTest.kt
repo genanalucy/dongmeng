@@ -6,6 +6,14 @@ import com.verba.interpretation.cloud.AuthTokens
 import com.verba.interpretation.cloud.CloudEntitlement
 import com.verba.interpretation.cloud.CloudRole
 import com.verba.interpretation.cloud.CloudUser
+import com.verba.interpretation.cloud.CloudApi
+import com.verba.interpretation.cloud.InstallationIdStore
+import com.verba.interpretation.cloud.TokenStore
+import okhttp3.OkHttpClient
+import okhttp3.Protocol
+import okhttp3.Request
+import okhttp3.Response
+import okhttp3.ResponseBody.Companion.toResponseBody
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.StandardTestDispatcher
@@ -28,6 +36,23 @@ class AccountViewModelPhoneAuthenticationTest {
         Dispatchers.resetMain()
     }
 
+    @Test fun refreshRestoresLegacyUserIntoSignedInState() {
+        val transport = RefreshingHttp(listOf(
+            401 to "{\"error\":\"unauthorized\"}",
+            200 to "{\"access_token\":\"next\",\"refresh_token\":\"rotated\"}",
+            200 to "{\"id\":\"user-1\",\"role\":\"user\"}",
+            404 to "{\"error\":\"not_found\"}",
+        ))
+        val api = CloudApi("https://cloud.example", RefreshTokenStore(AuthTokens("old", "previous")), RefreshInstallationIdStore(), transport.client)
+
+        val viewModel = AccountViewModel(Application(), api, dispatcher)
+        dispatcher.scheduler.advanceUntilIdle()
+
+        assertEquals(true, viewModel.state.value.signedIn)
+        assertEquals("旧版用户", viewModel.state.value.user?.username)
+        assertEquals(listOf("/api/v1/users/me", "/api/v1/auth/refresh", "/api/v1/users/me", "/api/v1/entitlements/current"), transport.paths())
+    }
+
     @Test fun registerKeepsAutomaticLoginAndFetchSequence() {
         val api = RecordingAccountApi()
         val viewModel = AccountViewModel(Application(), api, dispatcher)
@@ -41,6 +66,27 @@ class AccountViewModelPhoneAuthenticationTest {
         )
         assertEquals("alice_01", viewModel.state.value.user?.username)
     }
+}
+
+private class RefreshTokenStore(private var tokens: AuthTokens?) : TokenStore {
+    override fun read(): AuthTokens? = tokens
+    override fun write(tokens: AuthTokens) { this.tokens = tokens }
+    override fun clear() { tokens = null }
+}
+
+private class RefreshInstallationIdStore : InstallationIdStore {
+    override fun get(): String = "install-1"
+}
+
+private class RefreshingHttp(private val responses: List<Pair<Int, String>>) {
+    private val requests = mutableListOf<Request>()
+    val client: OkHttpClient = OkHttpClient.Builder().addInterceptor { chain ->
+        requests += chain.request()
+        val (status, body) = responses[requests.lastIndex]
+        Response.Builder().request(chain.request()).protocol(Protocol.HTTP_1_1).code(status).message("test").body(body.toResponseBody()).build()
+    }.build()
+
+    fun paths(): List<String> = requests.map { it.url.encodedPath }
 }
 
 private class RecordingAccountApi : AccountApi {

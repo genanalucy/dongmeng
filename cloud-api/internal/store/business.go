@@ -214,7 +214,7 @@ func (p *Postgres) FeedbackArtifact(ctx context.Context, user, id uuid.UUID) (do
 	return a, storeErr(err)
 }
 func (p *Postgres) ListUsers(ctx context.Context, search string, limit, offset int) ([]domain.User, error) {
-	rows, err := p.pool.Query(ctx, `SELECT id,COALESCE(username,''),COALESCE(phone,''),email,role,created_at FROM users WHERE $1='' OR email ILIKE '%' || $1 || '%' ORDER BY created_at DESC,id DESC LIMIT $2 OFFSET $3`, search, limit, offset)
+	rows, err := p.query(ctx, `SELECT id,COALESCE(username,''),COALESCE(phone,''),email,role,created_at FROM users WHERE $1='' OR email ILIKE '%' || $1 || '%' ORDER BY created_at DESC,id DESC LIMIT $2 OFFSET $3`, search, limit, offset)
 	if err != nil {
 		return nil, err
 	}
