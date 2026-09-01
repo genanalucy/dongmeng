@@ -467,7 +467,11 @@ func (a api) users(w http.ResponseWriter, r *http.Request) {
 		domainError(w, r, e)
 		return
 	}
-	writeJSON(w, 200, map[string]any{"users": v})
+	users := make([]publicUserResponse, len(v))
+	for i, user := range v {
+		users[i] = publicUser(user)
+	}
+	writeJSON(w, 200, map[string]any{"users": users})
 }
 func (a api) sessionsAdmin(w http.ResponseWriter, r *http.Request) {
 	user, ok := pathUUID(r, "userID")

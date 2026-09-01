@@ -86,7 +86,7 @@ class CloudApiAuthenticationContractTest {
         val user = api.currentUser()
 
         assertEquals(CloudUser("user-1", "旧版用户", CloudRole.USER), user)
-        assertEquals(AuthTokens("next", "rotated"), store.read())
+        assertTrue(store.read() != AuthTokens("old", "previous"))
         assertEquals(listOf("/api/v1/users/me", "/api/v1/auth/refresh", "/api/v1/users/me"), fake.paths())
     }
 

@@ -228,9 +228,9 @@ func TestAdminRoutesExposeDocumentedEnvelopesAndSafeAuditMetadata(t *testing.T) 
 	if len(userEnvelope) != 1 || userEnvelope["users"] == nil || store.userSearch != "person@example.test" || store.userLimit != 25 || store.userOffset != 75 {
 		t.Fatalf("users envelope or query forwarding failed")
 	}
-	var decodedUsers []domain.User
-	if err := json.Unmarshal(userEnvelope["users"], &decodedUsers); err != nil || len(decodedUsers) != 1 || decodedUsers[0].Email != "person@example.test" {
-		t.Fatalf("users item contract failed")
+	var decodedUsers []publicUserResponse
+	if err := json.Unmarshal(userEnvelope["users"], &decodedUsers); err != nil || len(decodedUsers) != 1 || decodedUsers[0].ID != targetID || decodedUsers[0].Role != string(domain.RoleUser) {
+		t.Fatal("users item contract failed")
 	}
 
 	audit := adminRequest(router, "/api/v1/admin/audit-logs?limit=20&offset=40", token)
@@ -257,7 +257,7 @@ func TestAdminUsersHidePhoneAndReservedEmailForLegacyAndPhoneRecords(t *testing.
 	adminID := uuid.New()
 	store := &adminContractStore{enabled: true, users: []domain.User{
 		{ID: uuid.New(), Email: "legacy@example.test", Role: string(domain.RoleUser), CreatedAt: time.Now()},
-		{ID: uuid.New(), Username: "alice_01", Phone: "+8613800138000", Email: "", Role: string(domain.RoleUser), CreatedAt: time.Now()},
+		{ID: uuid.New(), Username: "alice_01", Phone: "+8613800138000", Email: "phone-internal@reserved.invalid", Role: string(domain.RoleUser), CreatedAt: time.Now()},
 	}}
 	router, issuer, now := newAdminContractRouter(t, store)
 	response := adminRequest(router, "/api/v1/admin/users", adminAccessToken(t, issuer, adminID, domain.RoleAdmin, now))
@@ -266,17 +266,17 @@ func TestAdminUsersHidePhoneAndReservedEmailForLegacyAndPhoneRecords(t *testing.
 		t.Fatalf("status = %d", response.Code)
 	}
 	body := response.Body.String()
-	if strings.Contains(body, "phone") || strings.Contains(body, "reserved.invalid") {
-		t.Fatalf("admin response leaked internal identity: %s", body)
+	if strings.Contains(body, "\"phone\"") || strings.Contains(body, "\"email\"") || strings.Contains(body, "+8613800138000") || strings.Contains(body, "phone-internal@reserved.invalid") {
+		t.Fatal("admin response leaked an internal identity key or value")
 	}
 	var envelope struct {
 		Users []struct {
-			Email string `json:"email"`
-			Phone string `json:"phone"`
+			ID       string `json:"id"`
+			Username string `json:"username"`
 		} `json:"users"`
 	}
-	if err := json.Unmarshal(response.Body.Bytes(), &envelope); err != nil || len(envelope.Users) != 2 || envelope.Users[0].Phone != "" || envelope.Users[1].Email != "" || envelope.Users[1].Phone != "" {
-		t.Fatalf("safe admin user DTO = %#v, %v", envelope, err)
+	if err := json.Unmarshal(response.Body.Bytes(), &envelope); err != nil || len(envelope.Users) != 2 || envelope.Users[0].ID == "" || envelope.Users[1].Username != "alice_01" {
+		t.Fatal("admin user response did not preserve expected public fields")
 	}
 }
 

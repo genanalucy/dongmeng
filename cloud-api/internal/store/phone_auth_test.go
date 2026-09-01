@@ -48,7 +48,11 @@ func TestListUsersExecutesSixColumnQueryAndHidesReservedEmail(t *testing.T) {
 	createdAt := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
 	var query string
 	store := &Postgres{query: func(_ context.Context, sql string, _ ...any) (rows, error) {
-		query = sql
+		query = strings.Join(strings.Fields(sql), " ")
+		const expectedProjection = "SELECT id,COALESCE(username,''),COALESCE(phone,''),email,role,created_at FROM users"
+		if !strings.HasPrefix(query, expectedProjection) {
+			return nil, errors.New("ListUsers SELECT projection does not match scan contract")
+		}
 		return &listUsersRows{values: [][]any{
 			{legacyID, "", "", "legacy@example.test", "user", createdAt},
 			{phoneID, "alice_01", "+8613800138000", "phone-internal@reserved.invalid", "user", createdAt},
@@ -60,11 +64,12 @@ func TestListUsersExecutesSixColumnQueryAndHidesReservedEmail(t *testing.T) {
 	if err != nil || len(users) != 2 {
 		t.Fatalf("ListUsers() = %v, %v", users, err)
 	}
-	if !strings.Contains(query, "COALESCE(username,'')") || !strings.Contains(query, "COALESCE(phone,'')") {
-		t.Fatalf("ListUsers query does not provide nullable columns: %q", query)
+	const expectedProjection = "SELECT id,COALESCE(username,''),COALESCE(phone,''),email,role,created_at FROM users"
+	if !strings.HasPrefix(query, expectedProjection) {
+		t.Fatal("ListUsers query projection changed")
 	}
 	if users[0].Email != "legacy@example.test" || users[1].Email != "" || users[1].Phone != "+8613800138000" {
-		t.Fatalf("ListUsers public values = %#v", users)
+		t.Fatal("ListUsers did not preserve the expected public values")
 	}
 }
 

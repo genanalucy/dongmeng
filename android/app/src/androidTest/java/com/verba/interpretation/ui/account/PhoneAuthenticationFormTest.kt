@@ -47,6 +47,7 @@ class PhoneAuthenticationFormTest {
         assertError("phone", "请输入有效的中国大陆手机号。")
         composeRule.onNodeWithText("请输入有效的中国大陆手机号。", substring = true).assertExists()
         composeRule.onNodeWithText("登录").assert(SemanticsMatcher.keyIsDefined(androidx.compose.ui.semantics.SemanticsProperties.Disabled))
+        composeRule.onNodeWithText("登录").performClick()
         assertEquals(0, calls)
     }
 

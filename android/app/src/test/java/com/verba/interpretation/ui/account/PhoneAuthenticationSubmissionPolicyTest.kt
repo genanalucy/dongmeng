@@ -60,8 +60,9 @@ class PhoneAuthenticationSubmissionPolicyTest {
 
     @Test fun supplementaryUnicodeOverByteLimitDoesNotDispatch() {
         var calls = 0
-        val password = "A1a" + "\uD83D\uDE00".repeat(63) + "xx"
+        val password = "A1a!" + "\uD83D\uDE00".repeat(63) + "x"
 
+        assertEquals(257, password.toByteArray(Charsets.UTF_8).size)
         val dispatched = PhoneAuthenticationSubmissionPolicy.submitRegistration("alice_01", "13800138000", password, password) { _, _, _ -> calls++ }
 
         assertFalse(dispatched)
