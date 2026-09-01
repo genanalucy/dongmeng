@@ -412,10 +412,6 @@ func (a api) accountIdentity(w http.ResponseWriter, r *http.Request) {
 		inputError(w, r)
 		return
 	}
-	if _, err = domain.ParsePassword(request.CurrentPassword); err != nil {
-		inputError(w, r)
-		return
-	}
 	p, _ := current(r)
 	user, err := a.store.UpdateIdentity(r.Context(), domain.UpdateIdentityParams{UserID: p.id, Username: username.String(), Email: email.String(), Phone: phone.String(), CurrentPassword: request.CurrentPassword})
 	if errors.Is(err, domain.ErrUnauthorized) || errors.Is(err, domain.ErrNotFound) || errors.Is(err, domain.ErrForbidden) {

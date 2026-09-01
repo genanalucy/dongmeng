@@ -170,19 +170,67 @@ func TestAccountIdentityRejectsInvalidInputBeforeStore(t *testing.T) {
 	store := &accountTestStore{adminContractStore: adminContractStore{enabled: true}}
 	router, issuer, now := newAccountRouter(t, store)
 	token := adminAccessToken(t, issuer, owner, domain.RoleUser, now)
-	response := accountRequest(router, http.MethodPatch, "/api/v1/account/identity", token, `{"username":"bad!","email":"not-an-email","phone":"12000138000","current_password":"short"}`)
+	response := accountRequest(router, http.MethodPatch, "/api/v1/account/identity", token, `{"username":"bad!","email":"not-an-email","phone":"12000138000","current_password":""}`)
 	if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), "invalid_request") || store.identityInput.UserID != uuid.Nil {
 		t.Fatalf("response/store input = %d/%#v", response.Code, store.identityInput)
 	}
 }
 
-func TestAccountOverviewJSONHasNoUnexpectedIdentityFields(t *testing.T) {
+func TestAccountIdentityAllowsWeakLegacyCurrentPassword(t *testing.T) {
 	owner := uuid.New()
-	store := &accountTestStore{adminContractStore: adminContractStore{enabled: true}, overview: domain.AccountOverview{User: domain.User{ID: owner, Username: "alice_01"}}}
+	store := &accountTestStore{adminContractStore: adminContractStore{enabled: true}, identity: domain.User{ID: owner, Username: "alice_01", Role: string(domain.RoleUser)}}
 	router, issuer, now := newAccountRouter(t, store)
-	response := accountRequest(router, http.MethodGet, "/api/v1/account/overview", adminAccessToken(t, issuer, owner, domain.RoleUser, now), "")
-	var payload map[string]json.RawMessage
-	if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil || payload["email"] != nil || payload["phone"] != nil {
-		t.Fatalf("payload = %s, err = %v", response.Body.String(), err)
+	response := accountRequest(router, http.MethodPatch, "/api/v1/account/identity", adminAccessToken(t, issuer, owner, domain.RoleUser, now), `{"username":"alice_01","email":"alice@example.test","phone":"13800138000","current_password":"x"}`)
+	if response.Code != http.StatusOK || store.identityInput.CurrentPassword != "x" {
+		t.Fatalf("legacy current password was rejected: %d %#v", response.Code, store.identityInput)
+	}
+}
+
+var forbiddenResponseKeys = map[string]bool{"email": true, "phone": true, "password": true, "password_hash": true, "current_password": true, "token": true, "audio": true, "transcript": true, "object_key": true, "artifact": true}
+
+func assertJSONKeys(t *testing.T, raw []byte, allowed map[string]bool) {
+	t.Helper()
+	var value any
+	if err := json.Unmarshal(raw, &value); err != nil {
+		t.Fatal(err)
+	}
+	assertJSONValueKeys(t, value, allowed, true)
+}
+
+func assertJSONValueKeys(t *testing.T, value any, allowed map[string]bool, top bool) {
+	t.Helper()
+	switch item := value.(type) {
+	case map[string]any:
+		for key, child := range item {
+			if forbiddenResponseKeys[key] || (top && !allowed[key]) {
+				t.Fatalf("forbidden response key %q in %#v", key, item)
+			}
+			assertJSONValueKeys(t, child, allowed, false)
+		}
+	case []any:
+		for _, child := range item {
+			assertJSONValueKeys(t, child, allowed, false)
+		}
+	}
+}
+
+func TestAccountResponsesUseOnlySafeJSONKeys(t *testing.T) {
+	owner := uuid.New()
+	store := &accountTestStore{adminContractStore: adminContractStore{enabled: true}, overview: domain.AccountOverview{User: domain.User{ID: owner, Username: "alice_01"}}, usage: []domain.AccountUsage{{SessionID: uuid.New(), StartedAt: time.Now(), DurationSeconds: 1}}, identity: domain.User{ID: owner, Username: "alice_01", Role: string(domain.RoleUser)}}
+	router, issuer, now := newAccountRouter(t, store)
+	token := adminAccessToken(t, issuer, owner, domain.RoleUser, now)
+	for _, test := range []struct {
+		method, path, body string
+		allowed            map[string]bool
+	}{
+		{http.MethodGet, "/api/v1/account/overview", "", map[string]bool{"username": true, "entitlement": true, "usage": true}},
+		{http.MethodGet, "/api/v1/account/usage?limit=1&offset=0", "", map[string]bool{"usage": true}},
+		{http.MethodPatch, "/api/v1/account/identity", `{"username":"alice_01","email":"alice@example.test","phone":"13800138000","current_password":"x"}`, map[string]bool{"id": true, "username": true, "role": true, "created_at": true}},
+	} {
+		response := accountRequest(router, test.method, test.path, token, test.body)
+		if response.Code != http.StatusOK {
+			t.Fatalf("%s = %d %s", test.path, response.Code, response.Body.String())
+		}
+		assertJSONKeys(t, response.Body.Bytes(), test.allowed)
 	}
 }
