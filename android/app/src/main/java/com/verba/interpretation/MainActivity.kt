@@ -7,6 +7,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.activity.viewModels
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.animateFloat
@@ -168,9 +169,13 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 class MainActivity : ComponentActivity() {
+    private val accountViewModel: AccountViewModel by viewModels {
+        AccountViewModel.factory(application)
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContent { BrandTheme { InterpretationApp() } }
+        setContent { BrandTheme { InterpretationApp(accountViewModel = accountViewModel) } }
     }
 }
 
@@ -178,7 +183,7 @@ class MainActivity : ComponentActivity() {
 @Composable
 private fun InterpretationApp(
     viewModel: InterpretationViewModel = viewModel(),
-    accountViewModel: AccountViewModel = viewModel(),
+    accountViewModel: AccountViewModel,
 ) {
     val interpretationState by viewModel.state.collectAsStateWithLifecycle()
     val accountState by accountViewModel.state.collectAsStateWithLifecycle()
@@ -1088,7 +1093,7 @@ private fun AccountPage(
     onBack: () -> Unit,
     onHistory: () -> Unit,
     onServiceSettings: () -> Unit,
-    accountViewModel: AccountViewModel = viewModel(),
+    accountViewModel: AccountViewModel,
 ) {
     val state by accountViewModel.state.collectAsStateWithLifecycle()
     var redemptionCode by remember { mutableStateOf("") }

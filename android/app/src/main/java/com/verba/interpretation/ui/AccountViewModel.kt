@@ -2,6 +2,7 @@ package com.verba.interpretation.ui
 
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.verba.interpretation.cloud.AccountApi
 import com.verba.interpretation.cloud.CloudApi
@@ -41,6 +42,19 @@ class AccountViewModel(
     private val api: AccountApi = CloudApi(CloudEndpointSettings(application), KeystoreTokenStore(application), SharedPreferencesInstallationIdStore(application)),
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
 ) : AndroidViewModel(application) {
+    companion object {
+        fun factory(application: Application): ViewModelProvider.Factory =
+            object : ViewModelProvider.Factory {
+                @Suppress("UNCHECKED_CAST")
+                override fun <T : androidx.lifecycle.ViewModel> create(modelClass: Class<T>): T {
+                    require(modelClass.isAssignableFrom(AccountViewModel::class.java)) {
+                        "Unsupported ViewModel class"
+                    }
+                    return AccountViewModel(application) as T
+                }
+            }
+    }
+
     private val mutableState = MutableStateFlow(AccountUiState())
     val state: StateFlow<AccountUiState> = mutableState.asStateFlow()
 
