@@ -228,8 +228,12 @@ func TestAdminRoutesExposeDocumentedEnvelopesAndSafeAuditMetadata(t *testing.T) 
 	if len(userEnvelope) != 1 || userEnvelope["users"] == nil || store.userSearch != "person@example.test" || store.userLimit != 25 || store.userOffset != 75 {
 		t.Fatalf("users envelope or query forwarding failed")
 	}
-	var decodedUsers []publicUserResponse
-	if err := json.Unmarshal(userEnvelope["users"], &decodedUsers); err != nil || len(decodedUsers) != 1 || decodedUsers[0].ID != targetID || decodedUsers[0].Role != string(domain.RoleUser) {
+	var decodedUsers []struct {
+		ID    uuid.UUID `json:"id"`
+		Email string    `json:"email"`
+		Role  string    `json:"role"`
+	}
+	if err := json.Unmarshal(userEnvelope["users"], &decodedUsers); err != nil || len(decodedUsers) != 1 || decodedUsers[0].ID != targetID || decodedUsers[0].Email != "person@example.test" || decodedUsers[0].Role != string(domain.RoleUser) {
 		t.Fatal("users item contract failed")
 	}
 
@@ -266,17 +270,16 @@ func TestAdminUsersHidePhoneAndReservedEmailForLegacyAndPhoneRecords(t *testing.
 		t.Fatalf("status = %d", response.Code)
 	}
 	body := response.Body.String()
-	if strings.Contains(body, "\"phone\"") || strings.Contains(body, "\"email\"") || strings.Contains(body, "+8613800138000") || strings.Contains(body, "phone-internal@reserved.invalid") {
-		t.Fatal("admin response leaked an internal identity key or value")
+	if strings.Contains(body, "\"phone\"") || strings.Contains(body, "+8613800138000") || strings.Contains(body, "phone-internal@reserved.invalid") {
+		t.Fatal("admin response leaked a phone identity key or value")
 	}
-	var envelope struct {
-		Users []struct {
-			ID       string `json:"id"`
-			Username string `json:"username"`
-		} `json:"users"`
+	var envelope struct { Users []map[string]json.RawMessage `json:"users"` }
+	if err := json.Unmarshal(response.Body.Bytes(), &envelope); err != nil || len(envelope.Users) != 2 {
+		t.Fatal("admin response has an invalid user envelope")
 	}
-	if err := json.Unmarshal(response.Body.Bytes(), &envelope); err != nil || len(envelope.Users) != 2 || envelope.Users[0].ID == "" || envelope.Users[1].Username != "alice_01" {
-		t.Fatal("admin user response did not preserve expected public fields")
+	legacy, phone := envelope.Users[0], envelope.Users[1]
+	if string(legacy["email"]) != "\"legacy@example.test\"" || legacy["phone"] != nil || phone["email"] != nil || phone["phone"] != nil || string(phone["username"]) != "\"alice_01\"" {
+		t.Fatal("admin user DTO did not preserve legacy email or hide phone identities")
 	}
 }
 

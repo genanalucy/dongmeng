@@ -455,6 +455,23 @@ func page(r *http.Request) (int, int) {
 	}
 	return l, o
 }
+
+type adminUserResponse struct {
+	ID        uuid.UUID `json:"id"`
+	Username  string    `json:"username,omitempty"`
+	Email     string    `json:"email,omitempty"`
+	Role      string    `json:"role"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+func adminUser(user domain.User) adminUserResponse {
+	email := user.Email
+	if strings.HasPrefix(email, "phone-") && strings.HasSuffix(email, "@reserved.invalid") {
+		email = ""
+	}
+	return adminUserResponse{ID: user.ID, Username: user.Username, Email: email, Role: user.Role, CreatedAt: user.CreatedAt}
+}
+
 func (a api) users(w http.ResponseWriter, r *http.Request) {
 	l, o := page(r)
 	search := strings.TrimSpace(r.URL.Query().Get("q"))
@@ -467,9 +484,9 @@ func (a api) users(w http.ResponseWriter, r *http.Request) {
 		domainError(w, r, e)
 		return
 	}
-	users := make([]publicUserResponse, len(v))
+	users := make([]adminUserResponse, len(v))
 	for i, user := range v {
-		users[i] = publicUser(user)
+		users[i] = adminUser(user)
 	}
 	writeJSON(w, 200, map[string]any{"users": users})
 }
