@@ -5,13 +5,18 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.verba.interpretation.cloud.AccountApi
+import com.verba.interpretation.cloud.AccountOverview
 import com.verba.interpretation.cloud.CloudApi
 import com.verba.interpretation.cloud.CloudEndpointSettings
 import com.verba.interpretation.cloud.CloudEntitlement
 import com.verba.interpretation.cloud.CloudRole
+import com.verba.interpretation.cloud.CloudUsage
 import com.verba.interpretation.cloud.CloudUser
+import com.verba.interpretation.cloud.IdentityUpdateRequest
 import com.verba.interpretation.cloud.KeystoreTokenStore
 import com.verba.interpretation.cloud.SharedPreferencesInstallationIdStore
+import com.verba.interpretation.cloud.UsagePage
+import com.verba.interpretation.ui.account.AccountIdentityFormPolicy
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -24,6 +29,8 @@ data class AccountUiState(
     val loading: Boolean = false,
     val user: CloudUser? = null,
     val entitlement: CloudEntitlement? = null,
+    val overview: AccountOverview? = null,
+    val usage: UsagePage? = null,
     val message: String? = null,
     val previewingUserExperience: Boolean = false,
 ) {
@@ -43,16 +50,16 @@ class AccountViewModel(
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
 ) : AndroidViewModel(application) {
     companion object {
-        fun factory(application: Application): ViewModelProvider.Factory =
-            object : ViewModelProvider.Factory {
-                @Suppress("UNCHECKED_CAST")
-                override fun <T : androidx.lifecycle.ViewModel> create(modelClass: Class<T>): T {
-                    require(modelClass.isAssignableFrom(AccountViewModel::class.java)) {
-                        "Unsupported ViewModel class"
-                    }
-                    return AccountViewModel(application) as T
-                }
+        private const val UsagePageSize = 20
+        private const val SafeRequestError = "账户状态暂时无法更新，请稍后重试。"
+
+        fun factory(application: Application): ViewModelProvider.Factory = object : ViewModelProvider.Factory {
+            @Suppress("UNCHECKED_CAST")
+            override fun <T : androidx.lifecycle.ViewModel> create(modelClass: Class<T>): T {
+                require(modelClass.isAssignableFrom(AccountViewModel::class.java)) { "Unsupported ViewModel class" }
+                return AccountViewModel(application) as T
             }
+        }
     }
 
     private val mutableState = MutableStateFlow(AccountUiState())
@@ -65,16 +72,51 @@ class AccountViewModel(
         runRequest { api.currentUser() to api.currentEntitlement() }
     }
 
+    fun refreshOverview() = runOverviewRequest { api.accountOverview() }
+
+    fun loadUsage(limit: Int = UsagePageSize, offset: Int = 0) {
+        if (limit !in 1..50 || offset < 0) return
+        viewModelScope.launch {
+            mutableState.value = mutableState.value.copy(loading = true, message = null)
+            try {
+                val usage = withContext(ioDispatcher) { api.usage(limit, offset) }
+                mutableState.value = mutableState.value.copy(loading = false, usage = usage)
+            } catch (_: Exception) {
+                mutableState.value = mutableState.value.copy(loading = false, message = SafeRequestError)
+            }
+        }
+    }
+
     fun register(username: String, email: String, phone: String, password: String) = runRequest {
         api.register(username, email, phone, password)
         api.login(phone, password)
         api.currentUser() to api.currentEntitlement()
     }
 
-
     fun login(identifier: String, password: String) = runRequest {
         api.login(identifier, password)
         api.currentUser() to api.currentEntitlement()
+    }
+
+    fun updateIdentity(username: String, email: String, phone: String, currentPassword: String) {
+        val validation = AccountIdentityFormPolicy.validate(username, email, phone, currentPassword)
+        if (!validation.isValid) {
+            mutableState.value = mutableState.value.copy(message = "请检查账户设置后重试。")
+            return
+        }
+        viewModelScope.launch {
+            mutableState.value = mutableState.value.copy(loading = true, message = null)
+            try {
+                withContext(ioDispatcher) {
+                    api.updateIdentity(IdentityUpdateRequest(validation.username, validation.email, validation.phone, currentPassword))
+                    api.accountOverview()
+                }.also { overview ->
+                    mutableState.value = mutableState.value.copy(loading = false, overview = overview, message = "账户设置已更新。")
+                }
+            } catch (_: Exception) {
+                mutableState.value = mutableState.value.copy(loading = false, message = SafeRequestError)
+            }
+        }
     }
 
     fun setPreviewingUserExperience(enabled: Boolean) {
@@ -85,8 +127,12 @@ class AccountViewModel(
     fun logout() {
         viewModelScope.launch {
             mutableState.value = mutableState.value.copy(loading = true, message = null)
-            withContext(ioDispatcher) { api.logout() }
-            mutableState.value = AccountUiState(message = "已退出登录。")
+            try {
+                withContext(ioDispatcher) { api.logout() }
+                mutableState.value = AccountUiState(message = "已退出登录。")
+            } catch (_: Exception) {
+                mutableState.value = mutableState.value.copy(loading = false, message = SafeRequestError)
+            }
         }
     }
 
@@ -95,8 +141,18 @@ class AccountViewModel(
         api.currentUser() to entitlement
     }
 
-    fun clearMessage() {
-        mutableState.value = mutableState.value.copy(message = null)
+    fun clearMessage() { mutableState.value = mutableState.value.copy(message = null) }
+
+    private fun runOverviewRequest(block: () -> AccountOverview) {
+        viewModelScope.launch {
+            mutableState.value = mutableState.value.copy(loading = true, message = null)
+            try {
+                val overview = withContext(ioDispatcher) { block() }
+                mutableState.value = mutableState.value.copy(loading = false, overview = overview)
+            } catch (_: Exception) {
+                mutableState.value = mutableState.value.copy(loading = false, message = SafeRequestError)
+            }
+        }
     }
 
     private fun runRequest(block: () -> Pair<CloudUser, CloudEntitlement?>) {
@@ -109,9 +165,10 @@ class AccountViewModel(
                     entitlement = entitlement,
                     previewingUserExperience = mutableState.value.previewingUserExperience && user.role == CloudRole.ADMIN,
                 )
-            } catch (error: Exception) {
-                mutableState.value = mutableState.value.copy(loading = false, message = error.message ?: "网络连接失败，请稍后重试。")
+            } catch (_: Exception) {
+                mutableState.value = mutableState.value.copy(loading = false, message = SafeRequestError)
             }
         }
     }
+
 }

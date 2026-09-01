@@ -138,7 +138,9 @@ import com.verba.interpretation.protocol.EndpointSettings
 import com.verba.interpretation.ui.AccountSecondaryDestination
 import com.verba.interpretation.ui.AccountUiState
 import com.verba.interpretation.ui.facetoface.FaceToFaceScreen
+import com.verba.interpretation.ui.account.AccountIdentitySettingsScreen
 import com.verba.interpretation.ui.account.AccountScreen
+import com.verba.interpretation.ui.account.AccountUsageScreen
 import com.verba.interpretation.ui.account.PhoneAuthenticationForm
 import com.verba.interpretation.ui.interpretation.InterpretationScreen
 import com.verba.interpretation.ui.interpretation.InterpretationUiMapper
@@ -249,10 +251,14 @@ private fun InterpretationApp(
             ProductScreen.ACCOUNT -> AccountPage(
                 modifier = Modifier.padding(padding),
                 onBack = { stack = stack.pop() },
+                onUsage = { stack = stack.push(ProductScreen.ACCOUNT_USAGE) },
                 onHistory = { stack = stack.push(ProductNavigationPolicy.accountSecondaryScreen(AccountSecondaryDestination.HISTORY)) },
+                onSettings = { stack = stack.push(ProductScreen.ACCOUNT_SETTINGS) },
                 onServiceSettings = { stack = stack.push(ProductNavigationPolicy.accountSecondaryScreen(AccountSecondaryDestination.SERVICE_SETTINGS)) },
                 accountViewModel = accountViewModel,
             )
+            ProductScreen.ACCOUNT_USAGE -> AccountUsagePage(Modifier.padding(padding), { stack = stack.pop() }, accountViewModel)
+            ProductScreen.ACCOUNT_SETTINGS -> AccountSettingsPage(Modifier.padding(padding), { stack = stack.pop() }, accountViewModel)
             ProductScreen.ADMIN_TEST -> AdminTestPage(
                 modifier = Modifier.padding(padding),
                 accountState = accountState,
@@ -1086,12 +1092,43 @@ private fun AdminTestPage(
     }
 }
 
+@Composable
+private fun AccountUsagePage(modifier: Modifier, onBack: () -> Unit, accountViewModel: AccountViewModel) {
+    val state by accountViewModel.state.collectAsStateWithLifecycle()
+    LaunchedEffect(Unit) { accountViewModel.loadUsage() }
+    AccountUsageScreen(
+        overview = state.overview,
+        usage = state.usage,
+        loading = state.loading,
+        message = state.message,
+        onBack = onBack,
+        onLoadMore = { accountViewModel.loadUsage(offset = state.usage?.items?.size ?: 0) },
+        modifier = modifier,
+    )
+}
+
+@Composable
+private fun AccountSettingsPage(modifier: Modifier, onBack: () -> Unit, accountViewModel: AccountViewModel) {
+    val state by accountViewModel.state.collectAsStateWithLifecycle()
+    AccountIdentitySettingsScreen(
+        username = state.overview?.username ?: state.user?.username.orEmpty(),
+        email = "",
+        maskedPhone = "请输入完整手机号",
+        loading = state.loading,
+        onBack = onBack,
+        onSubmit = accountViewModel::updateIdentity,
+        modifier = modifier,
+    )
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun AccountPage(
     modifier: Modifier,
     onBack: () -> Unit,
+    onUsage: () -> Unit,
     onHistory: () -> Unit,
+    onSettings: () -> Unit,
     onServiceSettings: () -> Unit,
     accountViewModel: AccountViewModel,
 ) {
@@ -1101,9 +1138,10 @@ private fun AccountPage(
         AccountScreen(
             state = state,
             onBack = onBack,
+            onUsage = onUsage,
             onHistory = onHistory,
+            onSettings = onSettings,
             onServiceSettings = onServiceSettings,
-            onHelp = {},
             onLogout = accountViewModel::logout,
             modifier = modifier,
         )

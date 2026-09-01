@@ -23,6 +23,8 @@ enum class ProductScreen {
     PROFILE,
     ENDPOINT_SETTINGS,
     ACCOUNT,
+    ACCOUNT_USAGE,
+    ACCOUNT_SETTINGS,
     ADMIN_TEST,
 }
 
@@ -93,6 +95,8 @@ object ProductNavigationPolicy {
         ProductScreen.PROFILE,
         ProductScreen.ENDPOINT_SETTINGS,
         ProductScreen.ACCOUNT,
+        ProductScreen.ACCOUNT_USAGE,
+        ProductScreen.ACCOUNT_SETTINGS,
         -> ProductDestination.PROFILE
         ProductScreen.ADMIN_TEST -> ProductDestination.ADMIN_TEST
     }
