@@ -118,6 +118,9 @@ import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
@@ -134,6 +137,10 @@ import com.verba.interpretation.ui.AccountSecondaryDestination
 import com.verba.interpretation.ui.AccountUiState
 import com.verba.interpretation.ui.facetoface.FaceToFaceScreen
 import com.verba.interpretation.ui.account.AccountScreen
+import com.verba.interpretation.ui.account.AuthenticationMode
+import com.verba.interpretation.ui.account.RegistrationFormPolicy
+import com.verba.interpretation.ui.account.RegistrationModeCallbacks
+import com.verba.interpretation.ui.account.RegistrationModeDispatcher
 import com.verba.interpretation.ui.interpretation.InterpretationScreen
 import com.verba.interpretation.ui.interpretation.InterpretationUiMapper
 import com.verba.interpretation.ui.AccountViewModel
@@ -1086,8 +1093,10 @@ private fun AccountPage(
     accountViewModel: AccountViewModel = viewModel(),
 ) {
     val state by accountViewModel.state.collectAsStateWithLifecycle()
+    var authenticationMode by remember { mutableStateOf(AuthenticationMode.LOGIN) }
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
+    var confirmation by remember { mutableStateOf("") }
     var redemptionCode by remember { mutableStateOf("") }
     if (state.signedIn) {
         AccountScreen(
@@ -1128,20 +1137,84 @@ private fun AccountPage(
             }
             if (!state.signedIn) {
                 item {
-                    Text("使用邮箱登录", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                    OutlinedTextField(email, { email = it.trim() }, label = { Text("邮箱") }, singleLine = true, modifier = Modifier.fillMaxWidth().padding(top = 10.dp))
-                    OutlinedTextField(password, { password = it }, label = { Text("密码") }, singleLine = true, modifier = Modifier.fillMaxWidth().padding(top = 10.dp))
-                    Row(Modifier.fillMaxWidth().padding(top = 10.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    val registration = RegistrationFormPolicy.validate(email, password, confirmation)
+                    val modeCallbacks = RegistrationModeCallbacks(
+                        onLogin = { authenticationMode = AuthenticationMode.LOGIN },
+                        onRegister = { authenticationMode = AuthenticationMode.REGISTER },
+                    )
+                    if (authenticationMode == AuthenticationMode.LOGIN) {
+                        Text("使用邮箱登录", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                        OutlinedTextField(
+                            value = email,
+                            onValueChange = { email = it },
+                            label = { Text("邮箱") },
+                            singleLine = true,
+                            keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = KeyboardType.Email, imeAction = ImeAction.Next),
+                            modifier = Modifier.fillMaxWidth().padding(top = 10.dp).heightIn(min = 48.dp),
+                        )
+                        OutlinedTextField(
+                            value = password,
+                            onValueChange = { password = it },
+                            label = { Text("密码") },
+                            singleLine = true,
+                            visualTransformation = PasswordVisualTransformation(),
+                            keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Done),
+                            modifier = Modifier.fillMaxWidth().padding(top = 10.dp).heightIn(min = 48.dp),
+                        )
                         Button(
-                            onClick = { accountViewModel.login(email, password) },
+                            onClick = { accountViewModel.login(email.trim(), password) },
                             enabled = !state.loading && email.isNotBlank() && password.isNotBlank(),
-                            modifier = Modifier.weight(1f),
+                            modifier = Modifier.fillMaxWidth().padding(top = 10.dp).heightIn(min = 48.dp).semantics { contentDescription = "登录" },
                         ) { Text(if (state.loading) "处理中…" else "登录") }
-                        OutlinedButton(
-                            onClick = { accountViewModel.register(email, password) },
-                            enabled = !state.loading && email.isNotBlank() && password.isNotBlank(),
-                            modifier = Modifier.weight(1f),
-                        ) { Text("注册") }
+                        TextButton(
+                            onClick = { RegistrationModeDispatcher.dispatch(AuthenticationMode.REGISTER, modeCallbacks) },
+                            enabled = !state.loading,
+                            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).semantics { contentDescription = "注册账户" },
+                        ) { Text("注册账户") }
+                    } else {
+                        Text("注册账户", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                        OutlinedTextField(
+                            value = email,
+                            onValueChange = { email = it },
+                            label = { Text("邮箱") },
+                            singleLine = true,
+                            isError = registration.emailError != null,
+                            supportingText = registration.emailError?.let { { Text(it) } },
+                            keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = KeyboardType.Email, imeAction = ImeAction.Next),
+                            modifier = Modifier.fillMaxWidth().padding(top = 10.dp).heightIn(min = 48.dp),
+                        )
+                        OutlinedTextField(
+                            value = password,
+                            onValueChange = { password = it },
+                            label = { Text("密码") },
+                            singleLine = true,
+                            isError = registration.passwordError != null,
+                            supportingText = registration.passwordError?.let { { Text(it) } },
+                            visualTransformation = PasswordVisualTransformation(),
+                            keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Next),
+                            modifier = Modifier.fillMaxWidth().padding(top = 10.dp).heightIn(min = 48.dp),
+                        )
+                        OutlinedTextField(
+                            value = confirmation,
+                            onValueChange = { confirmation = it },
+                            label = { Text("确认密码") },
+                            singleLine = true,
+                            isError = registration.confirmationError != null,
+                            supportingText = registration.confirmationError?.let { { Text(it) } },
+                            visualTransformation = PasswordVisualTransformation(),
+                            keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Done),
+                            modifier = Modifier.fillMaxWidth().padding(top = 10.dp).heightIn(min = 48.dp),
+                        )
+                        Button(
+                            onClick = { accountViewModel.register(registration.normalizedEmail, password) },
+                            enabled = !state.loading && registration.isValid,
+                            modifier = Modifier.fillMaxWidth().padding(top = 10.dp).heightIn(min = 48.dp).semantics { contentDescription = "提交注册" },
+                        ) { Text(if (state.loading) "处理中…" else "注册") }
+                        TextButton(
+                            onClick = { RegistrationModeDispatcher.dispatch(AuthenticationMode.LOGIN, modeCallbacks) },
+                            enabled = !state.loading,
+                            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).semantics { contentDescription = "返回登录" },
+                        ) { Text("返回登录") }
                     }
                 }
             } else {
