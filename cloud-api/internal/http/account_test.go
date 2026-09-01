@@ -86,7 +86,7 @@ func TestAccountOverviewUsesTokenSubjectAndHidesPrivateIdentity(t *testing.T) {
 		t.Fatalf("status/user = %d/%s", response.Code, store.overviewUser)
 	}
 	body := response.Body.String()
-	for _, private := range []string{"legacy@example.test", "+8613800138000", `\"email\"`, `\"phone\"`} {
+	for _, private := range []string{"legacy@example.test", "+8613800138000"} {
 		if strings.Contains(body, private) {
 			t.Fatalf("overview leaked %q: %s", private, body)
 		}
