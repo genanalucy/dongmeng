@@ -224,17 +224,25 @@ func TestPhoneLoginCanonicalizesEachAcceptedInputIndependently(t *testing.T) {
 	}
 }
 
+type verificationSpy struct{ calls int }
+
+func (s *verificationSpy) Verify(context.Context, string) error {
+	s.calls++
+	return errVerificationNotEnabled
+}
+
 func TestPhoneVerificationHasNoStoreSideEffects(t *testing.T) {
 	store := &adminContractStore{enabled: true}
-	router, _, _ := newAdminContractRouter(t, store)
+	spy := &verificationSpy{}
+	router := NewRouter(RouterOptions{Config: config.Config{Environment: "test", DatabaseTimeout: time.Second, RateLimitRPS: 1000, RateLimitBurst: 1000}, Store: store, Verification: spy})
 	for _, endpoint := range []string{"/api/v1/auth/phone-verifications", "/api/v1/auth/phone-verifications/confirm"} {
 		req := httptest.NewRequest(http.MethodPost, endpoint, strings.NewReader(`{"phone":"13800138000"}`))
 		req.Header.Set("Content-Type", "application/json")
 		req.RemoteAddr = "127.0.0.1:12345"
 		response := httptest.NewRecorder()
 		router.ServeHTTP(response, req)
-		if response.Code != http.StatusServiceUnavailable || store.phoneCalls != 0 || len(store.refreshes) != 0 || store.register != (domain.RegisterParams{}) {
-			t.Fatal("verification endpoint had a storage side effect")
+		if response.Code != http.StatusServiceUnavailable || spy.calls == 0 || store.phoneCalls != 0 || len(store.refreshes) != 0 || store.register != (domain.RegisterParams{}) {
+			t.Fatal("verification endpoint did not remain dependency-free")
 		}
 	}
 }

@@ -36,11 +36,24 @@ type authService interface {
 	EndTranslationSession(context.Context, uuid.UUID, uuid.UUID, time.Time) error
 	RevokeTranslationSession(context.Context, uuid.UUID, uuid.UUID, time.Time) error
 }
+type PhoneVerificationService interface {
+	Verify(context.Context, string) error
+}
+
+type disabledPhoneVerificationService struct{}
+
+func (disabledPhoneVerificationService) Verify(context.Context, string) error {
+	return errVerificationNotEnabled
+}
+
+var errVerificationNotEnabled = errors.New("verification not enabled")
+
 type api struct {
-	store      businessStore
-	tokens     auth.TokenIssuer
-	authorizer authService
-	now        func() time.Time
+	store        businessStore
+	tokens       auth.TokenIssuer
+	authorizer   authService
+	verification PhoneVerificationService
+	now          func() time.Time
 }
 type principalKey struct{}
 type principal struct {
@@ -198,11 +211,20 @@ func (a api) phoneVerification(w http.ResponseWriter, r *http.Request) {
 		inputError(w, r)
 		return
 	}
-	if _, err := domain.ParsePhone(x.Phone); err != nil {
+	phone, err := domain.ParsePhone(x.Phone)
+	if err != nil {
 		inputError(w, r)
 		return
 	}
-	writeError(w, r, http.StatusServiceUnavailable, "verification_not_enabled")
+	service := a.verification
+	if service == nil {
+		service = disabledPhoneVerificationService{}
+	}
+	if err := service.Verify(r.Context(), phone.String()); errors.Is(err, errVerificationNotEnabled) {
+		writeError(w, r, http.StatusServiceUnavailable, "verification_not_enabled")
+		return
+	}
+	writeError(w, r, http.StatusInternalServerError, "internal_error")
 }
 func (a api) issueTokens(w http.ResponseWriter, r *http.Request, u domain.User) {
 	now := a.now()

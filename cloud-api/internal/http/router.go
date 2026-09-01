@@ -14,13 +14,14 @@ import (
 
 type Readiness interface{ Ping(context.Context) error }
 type RouterOptions struct {
-	Config   config.Config
-	Database Readiness
-	Store    businessStore
-	Tokens   auth.TokenIssuer
-	Logger   *slog.Logger
-	Version  string
-	Now      func() time.Time
+	Config       config.Config
+	Database     Readiness
+	Store        businessStore
+	Tokens       auth.TokenIssuer
+	Logger       *slog.Logger
+	Version      string
+	Now          func() time.Time
+	Verification PhoneVerificationService
 }
 
 func noStore(next http.Handler) http.Handler {
@@ -81,7 +82,11 @@ func NewRouter(options RouterOptions) http.Handler {
 		return router
 	}
 	service := auth.AuthorizationService{Store: options.Store, EntitlementLifecycle: options.Store, Tokens: options.Tokens, MaxConcurrentSessions: auth.SingleActiveTranslationSessionLimit}
-	api := api{store: options.Store, tokens: options.Tokens, authorizer: service, now: now}
+	verification := options.Verification
+	if verification == nil {
+		verification = disabledPhoneVerificationService{}
+	}
+	api := api{store: options.Store, tokens: options.Tokens, authorizer: service, verification: verification, now: now}
 	router.Post("/api/v1/auth/register", api.register)
 	router.Post("/api/v1/auth/login", api.login)
 	router.Post("/api/v1/auth/phone-verifications", api.phoneVerification)

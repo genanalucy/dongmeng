@@ -44,7 +44,7 @@ func TestPostgresBusinessLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal("hash integration fixture password")
 	}
-	var userID, adminID, otherID, batchID uuid.UUID
+	var userID, adminID, otherID, legacyID, batchID uuid.UUID
 	t.Cleanup(func() {
 		cleanupContext, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -57,7 +57,7 @@ func TestPostgresBusinessLifecycle(t *testing.T) {
 			}
 		}
 		userIDs := make([]uuid.UUID, 0, 3)
-		for _, id := range []uuid.UUID{userID, adminID, otherID} {
+		for _, id := range []uuid.UUID{userID, adminID, otherID, legacyID} {
 			if id != uuid.Nil {
 				userIDs = append(userIDs, id)
 			}
@@ -69,7 +69,7 @@ func TestPostgresBusinessLifecycle(t *testing.T) {
 		}
 	})
 
-	user, trial, err := db.Register(ctx, domain.RegisterParams{Email: integrationEmail(), PasswordHash: hash, Now: now})
+	user, trial, err := db.Register(ctx, domain.RegisterParams{Username: "phoneuser_" + uuid.NewString()[:8], Phone: "+8613800138000", PasswordHash: hash, Now: now})
 	if err != nil {
 		t.Fatal("register fixture user")
 	}
@@ -84,11 +84,41 @@ func TestPostgresBusinessLifecycle(t *testing.T) {
 	if trialCount != 1 {
 		t.Fatalf("registration trial count = %d, want 1", trialCount)
 	}
-	if _, _, err := db.Register(ctx, domain.RegisterParams{Email: user.Email, PasswordHash: hash, Now: now}); !errors.Is(err, domain.ErrConflict) {
-		t.Fatal("duplicate registration was not rejected")
+	var storedReservedEmail string
+	if err := raw.QueryRow(ctx, `SELECT email FROM users WHERE id=$1`, user.ID).Scan(&storedReservedEmail); err != nil || !strings.HasPrefix(storedReservedEmail, "phone-") || !strings.HasSuffix(storedReservedEmail, "@reserved.invalid") {
+		t.Fatal("phone registration did not retain reserved email")
+	}
+	if _, _, err := db.UserByPhone(ctx, storedReservedEmail); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatal("reserved email was accepted as a phone login identity")
+	}
+	legacyEmail := integrationEmail()
+	if err := raw.QueryRow(ctx, `INSERT INTO users(email,password_hash) VALUES($1,$2) RETURNING id`, legacyEmail, hash).Scan(&legacyID); err != nil {
+		t.Fatal("insert legacy email fixture")
+	}
+	legacyByEmail, _, err := db.UserByEmail(ctx, legacyEmail)
+	if err != nil || legacyByEmail.ID != legacyID {
+		t.Fatal("legacy email user was not readable")
+	}
+	legacyByID, err := db.UserByID(ctx, legacyID)
+	if err != nil || legacyByID.Email != legacyEmail {
+		t.Fatal("legacy user id read was not compatible")
+	}
+	refresh := auth.RefreshManager{Store: db}
+	issued, err := refresh.Issue(ctx, legacyID, time.Hour, now)
+	if err != nil {
+		t.Fatal("issue legacy refresh")
+	}
+	if _, err := refresh.Rotate(ctx, issued.Plaintext, time.Hour, now.Add(time.Minute)); err != nil {
+		t.Fatal("rotate legacy refresh")
+	}
+	if _, _, err := db.Register(ctx, domain.RegisterParams{Username: user.Username, Phone: "+8613900138000", PasswordHash: hash, Now: now}); !errors.Is(err, domain.ErrConflict) {
+		t.Fatal("duplicate username was not rejected generically")
+	}
+	if _, _, err := db.Register(ctx, domain.RegisterParams{Username: "phoneuser_" + uuid.NewString()[:8], Phone: "+8613800138000", PasswordHash: hash, Now: now}); !errors.Is(err, domain.ErrConflict) {
+		t.Fatal("duplicate phone was not rejected generically")
 	}
 
-	admin, _, err := db.Register(ctx, domain.RegisterParams{Email: integrationEmail(), PasswordHash: hash, Now: now})
+	admin, _, err := db.Register(ctx, domain.RegisterParams{Username: "phoneuser_" + uuid.NewString()[:8], Phone: "+8613700138000", PasswordHash: hash, Now: now})
 	if err != nil {
 		t.Fatal("register fixture admin")
 	}
@@ -135,7 +165,7 @@ func TestPostgresBusinessLifecycle(t *testing.T) {
 		t.Fatal("second active session was not rejected")
 	}
 
-	other, _, err := db.Register(ctx, domain.RegisterParams{Email: integrationEmail(), PasswordHash: hash, Now: now})
+	other, _, err := db.Register(ctx, domain.RegisterParams{Username: "phoneuser_" + uuid.NewString()[:8], Phone: "+8613600138000", PasswordHash: hash, Now: now})
 	if err != nil {
 		t.Fatal("register cross-user fixture")
 	}
