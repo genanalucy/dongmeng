@@ -25,6 +25,43 @@ func TestParseCredentialsCanonicalizesEmail(t *testing.T) {
 	}
 }
 
+func TestParsePhoneCredentialsCanonicalizesPhoneAndEnforcesStrongPassword(t *testing.T) {
+	input, err := ParsePhoneCredentials(" 13800138000 ", "Aa123456")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if input.Phone.String() != "+8613800138000" || input.Password.String() != "Aa123456" {
+		t.Fatalf("unexpected phone credentials: %+v", input)
+	}
+
+	canonical, err := ParsePhone("+8613800138000")
+	if err != nil || canonical.String() != "+8613800138000" {
+		t.Fatalf("canonical phone = %q, err = %v", canonical, err)
+	}
+	for _, value := range []string{"12800138000", "1380013800", "+8612800138000", "008613800138000", "+8613800138000x"} {
+		if _, err := ParsePhone(value); !errors.Is(err, ErrInvalid) {
+			t.Fatalf("invalid phone %q error = %v", value, err)
+		}
+	}
+	for _, password := range []string{"aa123456", "AA123456", "Aaabcdef"} {
+		if _, err := ParsePhoneCredentials("13800138000", password); !errors.Is(err, ErrInvalid) {
+			t.Fatalf("weak password error = %v", err)
+		}
+	}
+}
+
+func TestParseUsernameCanonicalizesAndRestrictsCharacters(t *testing.T) {
+	username, err := ParseUsername("  Alice_01 ")
+	if err != nil || username.String() != "alice_01" {
+		t.Fatalf("username = %q, err = %v", username, err)
+	}
+	for _, value := range []string{"ab", "abcdefghijklmnopqrstuvwxyzabcdefg", "alice-name", "alice name", "阿丽斯"} {
+		if _, err := ParseUsername(value); !errors.Is(err, ErrInvalid) {
+			t.Fatalf("invalid username %q error = %v", value, err)
+		}
+	}
+}
+
 func TestTrialAndRedemptionPeriods(t *testing.T) {
 	start := time.Date(2026, 6, 1, 12, 0, 0, 0, time.FixedZone("UTC+8", 8*60*60))
 	trialStart, trialEnd, err := TrialPeriod(start)

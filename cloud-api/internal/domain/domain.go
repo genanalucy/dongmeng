@@ -89,6 +89,76 @@ func ParsePassword(value string) (Password, error) {
 
 func (p Password) String() string { return string(p) }
 
+type Username string
+
+func ParseUsername(value string) (Username, error) {
+	value = strings.ToLower(strings.TrimSpace(value))
+	if len(value) < 3 || len(value) > 32 {
+		return "", fmt.Errorf("%w: invalid username", ErrInvalid)
+	}
+	for _, char := range value {
+		if !((char >= 'a' && char <= 'z') || (char >= '0' && char <= '9') || char == '_') {
+			return "", fmt.Errorf("%w: invalid username", ErrInvalid)
+		}
+	}
+	return Username(value), nil
+}
+
+func (u Username) String() string { return string(u) }
+
+type Phone string
+
+func ParsePhone(value string) (Phone, error) {
+	value = strings.TrimSpace(value)
+	if strings.HasPrefix(value, "+86") {
+		value = value[3:]
+	}
+	if len(value) != 11 || value[0] != '1' || value[1] < '3' || value[1] > '9' {
+		return "", fmt.Errorf("%w: invalid phone", ErrInvalid)
+	}
+	for _, char := range value {
+		if char < '0' || char > '9' {
+			return "", fmt.Errorf("%w: invalid phone", ErrInvalid)
+		}
+	}
+	return Phone("+86" + value), nil
+}
+
+func (p Phone) String() string { return string(p) }
+
+type PhoneCredentialsInput struct {
+	Phone    Phone
+	Password Password
+}
+
+// ParsePhoneCredentials applies the phone-registration password policy.
+// ParsePassword remains intentionally length-only for legacy email credentials.
+func ParsePhoneCredentials(phone, password string) (PhoneCredentialsInput, error) {
+	parsedPhone, err := ParsePhone(phone)
+	if err != nil {
+		return PhoneCredentialsInput{}, err
+	}
+	parsedPassword, err := ParsePassword(password)
+	if err != nil {
+		return PhoneCredentialsInput{}, err
+	}
+	var upper, lower, digit bool
+	for _, char := range password {
+		switch {
+		case char >= 'A' && char <= 'Z':
+			upper = true
+		case char >= 'a' && char <= 'z':
+			lower = true
+		case char >= '0' && char <= '9':
+			digit = true
+		}
+	}
+	if !upper || !lower || !digit {
+		return PhoneCredentialsInput{}, fmt.Errorf("%w: invalid password", ErrInvalid)
+	}
+	return PhoneCredentialsInput{Phone: parsedPhone, Password: parsedPassword}, nil
+}
+
 type RefreshTokenValue string
 
 func ParseRefreshToken(value string) (RefreshTokenValue, error) {
