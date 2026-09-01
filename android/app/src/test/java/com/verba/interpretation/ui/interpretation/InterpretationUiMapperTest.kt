@@ -31,11 +31,10 @@ class InterpretationUiMapperTest {
         assertEquals(listOf(InterpretationAction.PAUSE, InterpretationAction.FINISH), model.actions)
         assertEquals("你好", model.sourceText)
         assertEquals("Hello", model.translationText)
-        assertEquals(listOf("你好"), model.sourceSegments)
-        assertEquals(listOf("Hello"), model.translationSegments)
+        assertEquals(listOf(InterpretationDisplayBubble("1:0", "你好", "Hello")), model.bubbles)
     }
 
-    @Test fun latestTurnSplitsSourceAndTranslationIndependentlyForDisplay() {
+    @Test fun latestTurnMapsFinalsByTheirSharedEventIndex() {
         val model = InterpretationUiMapper.map(
             InterpretationUiState(
                 turns = listOf(
@@ -43,15 +42,45 @@ class InterpretationUiMapperTest {
                         id = 1,
                         sourceLanguage = "zh",
                         targetLanguage = "en",
-                        sourceFinals = listOf("甲。乙。丙"),
-                        translationFinals = listOf("One. Two"),
+                        sourceFinals = listOf("我叫程卫东。", "啊！你打听打听去，这片谁不认识我姓陈的？"),
+                        translationFinals = listOf("Bro, watch your mouth.", "Who are you?"),
                     ),
                 ),
             ),
         )
 
-        assertEquals(listOf("甲。", "乙。", "丙"), model.sourceSegments)
-        assertEquals(listOf("One.", " Two"), model.translationSegments)
+        assertEquals(
+            listOf(
+                InterpretationDisplayBubble("1:0", "我叫程卫东。", "Bro, watch your mouth."),
+                InterpretationDisplayBubble("1:1", "啊！你打听打听去，这片谁不认识我姓陈的？", "Who are you?"),
+            ),
+            model.bubbles,
+        )
+    }
+
+    @Test fun sourcePartialAfterFinalsIsAPendingBubble() {
+        val model = InterpretationUiMapper.map(
+            InterpretationUiState(
+                turns = listOf(
+                    SubtitleTurn(
+                        id = 2,
+                        sourceLanguage = "zh",
+                        targetLanguage = "en",
+                        sourceFinals = listOf("已确认。"),
+                        sourcePartial = "还在说",
+                        translationFinals = listOf("Confirmed."),
+                    ),
+                ),
+            ),
+        )
+
+        assertEquals(
+            listOf(
+                InterpretationDisplayBubble("2:0", "已确认。", "Confirmed."),
+                InterpretationDisplayBubble("2:source-partial", "还在说", "正在翻译…"),
+            ),
+            model.bubbles,
+        )
     }
 
     @Test fun eachSessionPhaseExposesOnlyPermittedActions() {

@@ -83,12 +83,7 @@ fun InterpretationScreen(
             contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(20.dp),
         ) {
-            val bubbles = model.latestTurnId?.let { turnId -> InterpretationDisplayBubble.map(
-                turnId = turnId,
-                sourceSegments = model.sourceSegments,
-                translationSegments = model.translationSegments,
-            ) } ?: emptyList()
-            items(bubbles, key = InterpretationDisplayBubble::key) { bubble ->
+            items(model.bubbles, key = InterpretationDisplayBubble::key) { bubble ->
                 InterpretationBubble(bubble)
             }
             model.errorMessage?.let { error ->

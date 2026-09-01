@@ -13,36 +13,29 @@ class DisplaySentenceSplitterTest {
     }
 
     @Test
-    fun splitsAfterThirdCumulativeCommaInDisplaySegment() {
-        assertEquals(
-            listOf(
-                "空气症状慢慢缓和，他告诉德里斯这种痛苦像是药物带来的副作用，身体明明没有知觉，",
-                "精神却仍然会被疼痛折磨。",
-            ),
-            DisplaySentenceSplitter.split("空气症状慢慢缓和，他告诉德里斯这种痛苦像是药物带来的副作用，身体明明没有知觉，精神却仍然会被疼痛折磨。"),
-        )
+    fun capsLongUnpairedTextAtSafeDelimiterWithoutDataLoss() {
+        val text = "one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen seventeen eighteen"
+
+        val segments = DisplaySentenceSplitter.splitForVisualCap(text)
+
+        assertEquals(text, segments.joinToString(""))
+        assertEquals(listOf("one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen ", "sixteen seventeen eighteen"), segments)
     }
 
     @Test
-    fun countsFullWidthAndAsciiCommasTogether() {
-        assertEquals(listOf("甲，乙,丙，", "丁"), DisplaySentenceSplitter.split("甲，乙,丙，丁"))
-    }
+    fun hardCutsLongTextWhenNoSafeDelimiterExists() {
+        val text = "x".repeat(DisplaySentenceSplitter.MAX_LATIN_DISPLAY_CHARS + 1)
 
-    @Test
-    fun resetsCommaCountAfterFullStop() {
-        assertEquals(listOf("甲，乙。", "丙，丁，戊"), DisplaySentenceSplitter.split("甲，乙。丙，丁，戊"))
-    }
+        val segments = DisplaySentenceSplitter.splitForVisualCap(text)
 
-    @Test
-    fun doesNotSplitOnOneOrTwoCommas() {
-        assertEquals(listOf("甲，乙"), DisplaySentenceSplitter.split("甲，乙"))
-        assertEquals(listOf("甲，乙,丙"), DisplaySentenceSplitter.split("甲，乙,丙"))
+        assertEquals(text, segments.joinToString(""))
+        assertEquals(listOf("x".repeat(DisplaySentenceSplitter.MAX_LATIN_DISPLAY_CHARS), "x"), segments)
     }
 
     @Test
     fun preservesWhitespaceAndOmitsEmptySegmentsAcrossMultipleDelimiters() {
         assertEquals(
-            listOf(" 甲。", " 乙，，，", " 丙."),
+            listOf(" 甲。", " 乙，，， 丙."),
             DisplaySentenceSplitter.split(" 甲。 乙，，， 丙."),
         )
         assertEquals(listOf("。", "甲"), DisplaySentenceSplitter.split("。甲"))

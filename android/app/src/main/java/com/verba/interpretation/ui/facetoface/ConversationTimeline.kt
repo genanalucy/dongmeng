@@ -38,12 +38,10 @@ import com.verba.interpretation.ui.ChatFollowState
 import com.verba.interpretation.ui.FaceToFaceSide
 import com.verba.interpretation.ui.FaceToFaceTurn
 import com.verba.interpretation.ui.TranslationLanguage
-import com.verba.interpretation.ui.display.DisplaySentenceSplitter
+import com.verba.interpretation.ui.display.EventBoundaryDisplay
 
 internal fun conversationTimelineLatestIndex(turnCount: Int, hasListeningPlaceholder: Boolean): Int =
     (turnCount + if (hasListeningPlaceholder) 1 else 0).coerceAtLeast(1) - 1
-
-internal const val TRANSLATION_PENDING_COPY = "正在翻译…"
 
 internal data class ConversationDisplayBubble(
     val key: String,
@@ -58,13 +56,16 @@ internal data class ConversationDisplayBubble(
 internal fun displayConversationBubbles(turns: List<FaceToFaceTurn>): List<ConversationDisplayBubble> =
     turns.flatMap { turn ->
         val alignment = faceToFaceTurnAlignment(turn)
-        val source = DisplaySentenceSplitter.split(turn.sourceText)
-        val translation = DisplaySentenceSplitter.split(turn.translatedText)
-        (0 until maxOf(source.size, translation.size)).map { index ->
+        EventBoundaryDisplay.rows(
+            sourceFinals = turn.sourceFinals,
+            sourcePartial = turn.sourcePartial,
+            translationFinals = turn.translationFinals,
+            translationPartial = turn.translationPartial,
+        ).map { row ->
             ConversationDisplayBubble(
-                key = "${turn.id}:$index",
-                sourceText = source.getOrNull(index),
-                translationText = translation.getOrNull(index) ?: TRANSLATION_PENDING_COPY,
+                key = "${turn.id}:${row.key}",
+                sourceText = row.sourceText,
+                translationText = row.translationText,
                 side = turn.side,
                 sourceLanguage = turn.sourceLanguage,
                 targetLanguage = turn.targetLanguage,
