@@ -1,5 +1,6 @@
 package com.verba.interpretation.ui.facetoface
 
+import androidx.compose.foundation.interaction.DragInteraction
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -17,28 +18,33 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowDownward
+import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
-import com.verba.interpretation.ui.ChatFollowEvent
-import com.verba.interpretation.ui.ChatFollowPolicy
-import com.verba.interpretation.ui.ChatFollowState
 import com.verba.interpretation.ui.FaceToFaceSide
 import com.verba.interpretation.ui.FaceToFaceTurn
 import com.verba.interpretation.ui.TranslationLanguage
 import com.verba.interpretation.ui.display.EventBoundaryDisplay
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.launch
 
 internal fun conversationTimelineLatestIndex(turnCount: Int, hasListeningPlaceholder: Boolean): Int =
     (turnCount + if (hasListeningPlaceholder) 1 else 0).coerceAtLeast(1) - 1
@@ -96,53 +102,118 @@ internal fun ConversationTimeline(
     val hasListeningPlaceholder = activeMic != null
     val bubbles = remember(turns) { displayConversationBubbles(turns) }
     val turnToken = remember(bubbles, turns) { bubbles.map { "${it.key}:${it.sourceText}:${it.translationText}" } + turns.filter { it.sourceText.isBlank() && it.translatedText.isBlank() }.map { "${it.id}:empty" } }
+    val scope = rememberCoroutineScope()
     var previousToken by remember { mutableStateOf<List<String>?>(null) }
     var previousHasPlaceholder by remember { mutableStateOf(hasListeningPlaceholder) }
     val latestIndex = conversationTimelineLatestIndex(turnCount = bubbles.size, hasListeningPlaceholder = hasListeningPlaceholder)
-    val atLatest by remember(listState, latestIndex) {
-        derivedStateOf {
-            listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index?.let { it >= latestIndex } ?: true
+    val currentLatestIndex by rememberUpdatedState(latestIndex)
+    var follow by remember { mutableStateOf(ConversationTimelineFollowState()) }
+    var programmaticScrollCount by remember { mutableStateOf(0) }
+    var userDraggedDuringScroll by remember { mutableStateOf(false) }
+
+    suspend fun animateToLatest(index: Int) {
+        programmaticScrollCount += 1
+        try {
+            listState.animateScrollToItem(index)
+        } finally {
+            programmaticScrollCount -= 1
+            follow = ConversationTimelineFollowReducer.reduce(
+                follow,
+                ConversationTimelineFollowEvent.ProgrammaticScrollFinished,
+            )
         }
     }
-    val follow = remember { mutableStateOf(ChatFollowState()) }
-    LaunchedEffect(atLatest) {
-        follow.value = ChatFollowPolicy.reduce(
-            follow.value,
-            if (atLatest) ChatFollowEvent.UserReachedLatest else ChatFollowEvent.UserLeftLatest,
-        )
+
+    LaunchedEffect(listState) {
+        listState.interactionSource.interactions.collect { interaction ->
+            if (interaction is DragInteraction.Start) userDraggedDuringScroll = true
+        }
     }
-    LaunchedEffect(turnToken, hasListeningPlaceholder) {
+    LaunchedEffect(listState) {
+        var wasScrolling = false
+        var scrollStartedProgrammatically = false
+        snapshotFlow { listState.isScrollInProgress }.collect { isScrolling ->
+            when {
+                isScrolling && !wasScrolling -> scrollStartedProgrammatically = programmaticScrollCount > 0
+                !isScrolling && wasScrolling -> {
+                    if (!scrollStartedProgrammatically || userDraggedDuringScroll) {
+                        val atLatest = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index
+                            ?.let { it >= currentLatestIndex }
+                            ?: true
+                        follow = ConversationTimelineFollowReducer.reduce(
+                            follow,
+                            ConversationTimelineFollowEvent.UserScrollFinished(atLatest),
+                        )
+                    }
+                    userDraggedDuringScroll = false
+                }
+            }
+            wasScrolling = isScrolling
+        }
+    }
+    LaunchedEffect(turnToken, hasListeningPlaceholder, latestIndex) {
         val before = previousToken
-        val updates = if (before == null) 0 else conversationTimelineUpdateCount(
+        val updates = if (before == null) 1 else conversationTimelineUpdateCount(
             before,
             turnToken,
             previousHasPlaceholder,
             hasListeningPlaceholder,
         )
         if (updates > 0) {
-            follow.value = ChatFollowPolicy.reduce(follow.value, ChatFollowEvent.TranscriptChanged(updates))
-            if (follow.value.followsLatest) listState.animateScrollToItem(latestIndex)
+            follow = ConversationTimelineFollowReducer.reduce(
+                follow,
+                ConversationTimelineFollowEvent.TranscriptAppended(updates),
+            )
+            if (follow.scrollToLatestRequested) {
+                follow = ConversationTimelineFollowReducer.reduce(
+                    follow,
+                    ConversationTimelineFollowEvent.ScrollRequestStarted,
+                )
+                animateToLatest(latestIndex)
+            }
         }
         previousToken = turnToken
         previousHasPlaceholder = hasListeningPlaceholder
     }
-    LazyColumn(
-        state = listState,
-        modifier = modifier.fillMaxSize(),
-        contentPadding = PaddingValues(start = 16.dp, top = 12.dp, end = 16.dp, bottom = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
-    ) {
-        if (turns.isEmpty() && !hasListeningPlaceholder) {
-            item {
-                Text(
-                    "对话会按双方方向显示在这里",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.fillMaxWidth().padding(top = 24.dp),
-                )
+    Box(modifier = modifier.fillMaxSize()) {
+        LazyColumn(
+            state = listState,
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(start = 16.dp, top = 12.dp, end = 16.dp, bottom = 76.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            if (turns.isEmpty() && !hasListeningPlaceholder) {
+                item {
+                    Text(
+                        "对话会按双方方向显示在这里",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.fillMaxWidth().padding(top = 24.dp),
+                    )
+                }
+            }
+            items(bubbles, key = { it.key }) { bubble -> ConversationBubble(bubble) }
+            if (hasListeningPlaceholder) item(key = "listening") { ListeningPlaceholder(activeMic, listeningPlaceholder) }
+        }
+        if (!follow.followsLatest) {
+            FloatingActionButton(
+                onClick = {
+                    follow = ConversationTimelineFollowReducer.reduce(
+                        follow,
+                        ConversationTimelineFollowEvent.UserTappedLatest,
+                    )
+                    if (follow.scrollToLatestRequested) {
+                        follow = ConversationTimelineFollowReducer.reduce(
+                            follow,
+                            ConversationTimelineFollowEvent.ScrollRequestStarted,
+                        )
+                        scope.launch { animateToLatest(latestIndex) }
+                    }
+                },
+                modifier = Modifier.align(Alignment.BottomEnd).padding(end = 16.dp, bottom = 16.dp).height(48.dp).widthIn(min = 48.dp, max = 48.dp),
+            ) {
+                Icon(Icons.Filled.ArrowDownward, contentDescription = "回到最新对话")
             }
         }
-        items(bubbles, key = { it.key }) { bubble -> ConversationBubble(bubble) }
-        if (hasListeningPlaceholder) item(key = "listening") { ListeningPlaceholder(activeMic, listeningPlaceholder) }
     }
 }
 
