@@ -83,7 +83,12 @@ class PhoneAuthenticationFormTest {
     private fun assertEditableTags(vararg expected: String) {
         val editable = composeRule.onAllNodes(SemanticsMatcher.keyIsDefined(SemanticsActions.SetText))
         editable.assertCountEquals(expected.size)
-        expected.forEach { composeRule.onNodeWithTag(it).assertExists() }
+        expected.forEach { tag ->
+            composeRule.onAllNodes(
+                SemanticsMatcher.expectValue(SemanticsProperties.TestTag, tag)
+                    .and(SemanticsMatcher.keyIsDefined(SemanticsActions.SetText)),
+            ).assertCountEquals(1)
+        }
     }
 
     private fun assertForbiddenAuthenticationTermsAbsent() {
