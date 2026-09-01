@@ -46,14 +46,17 @@ class AccountViewModel(application: Application) : AndroidViewModel(application)
         runRequest { api.currentUser() to api.currentEntitlement() }
     }
 
-    fun register(email: String, password: String) = runRequest {
-        api.register(email, password)
-        api.login(email, password)
+    fun register(username: String, phone: String, password: String) = runRequest {
+        api.register(username, phone, password)
+        api.login(phone, password)
         api.currentUser() to api.currentEntitlement()
     }
 
-    fun login(email: String, password: String) = runRequest {
-        api.login(email, password)
+    // Temporary bridge for the pre-Task5 form; it does not add an email authentication path.
+    fun register(legacyIdentifierInput: String, password: String) = register("", legacyIdentifierInput, password)
+
+    fun login(phone: String, password: String) = runRequest {
+        api.login(phone, password)
         api.currentUser() to api.currentEntitlement()
     }
 

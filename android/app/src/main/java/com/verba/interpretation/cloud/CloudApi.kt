@@ -12,7 +12,22 @@ private val JSON = "application/json; charset=utf-8".toMediaType()
 
 enum class CloudRole { USER, ADMIN }
 
-data class CloudUser(val id: String, val email: String, val role: CloudRole)
+data class CloudUser(val id: String, val username: String, val role: CloudRole)
+
+data class PhoneRegistrationRequest(val username: String, val phone: String, val password: String) {
+    fun toJson(): String = JSONObject()
+        .put("username", username)
+        .put("phone", phone)
+        .put("password", password)
+        .toString()
+}
+
+data class PhoneLoginRequest(val phone: String, val password: String) {
+    fun toJson(): String = JSONObject()
+        .put("phone", phone)
+        .put("password", password)
+        .toString()
+}
 data class CloudEntitlement(val kind: String, val expiresAt: String)
 data class TranslationSessionGrant(val sessionId: String, val userId: String, val installId: String, val token: String)
 data class TranslationSession(val sessionId: String, val installId: String, val expiresAt: String)
@@ -32,12 +47,12 @@ class CloudApi(
     private val installationIdStore: InstallationIdStore,
     private val client: OkHttpClient = OkHttpClient(),
 ) : CloudTranslationSessionService {
-    fun register(email: String, password: String) {
-        publicPost("auth/register", JSONObject().put("email", email).put("password", password), expected = 201)
+    fun register(username: String, phone: String, password: String) {
+        publicPost("auth/register", JSONObject(PhoneRegistrationRequest(username, phone, password).toJson()), expected = 201)
     }
 
-    fun login(email: String, password: String): AuthTokens {
-        val response = publicPost("auth/login", JSONObject().put("email", email).put("password", password))
+    fun login(phone: String, password: String): AuthTokens {
+        val response = publicPost("auth/login", JSONObject(PhoneLoginRequest(phone, password).toJson()))
         return parseTokens(response).also(tokenStore::write)
     }
 
@@ -54,7 +69,7 @@ class CloudApi(
         val json = authorized("users/me")
         return CloudUser(
             id = json.requiredString("id"),
-            email = json.requiredString("email"),
+            username = json.requiredString("username"),
             role = CloudRole.entries.firstOrNull { it.name.equals(json.requiredString("role"), ignoreCase = true) }
                 ?: throw CloudApiException("服务返回了不支持的账户角色。"),
         )
@@ -185,7 +200,7 @@ class CloudApi(
         when (JSONObject(payload).optString("error")) {
             "no_entitlement" -> "当前账户没有可用权益，请兑换或等待试用生效。"
             "unauthorized" -> "登录状态已过期，请重新登录。"
-            "invalid_credentials" -> "邮箱或密码不正确。"
+            "invalid_credentials" -> "手机号或密码错误。"
             "conflict" -> "当前已有进行中的翻译会话，请先结束它。"
             else -> "服务请求失败（HTTP $status）。"
         }

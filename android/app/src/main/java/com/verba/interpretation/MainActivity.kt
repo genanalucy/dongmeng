@@ -1130,7 +1130,7 @@ private fun AccountPage(
             item {
                 Surface(shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.primaryContainer, modifier = Modifier.fillMaxWidth()) {
                     Column(Modifier.padding(18.dp)) {
-                        Text(state.user?.email ?: "未登录", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+                        Text(state.user?.username ?: "未登录", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
                         Text(entitlementText, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onPrimaryContainer, modifier = Modifier.padding(top = 4.dp))
                     }
                 }
