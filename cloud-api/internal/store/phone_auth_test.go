@@ -73,17 +73,11 @@ func TestListUsersExecutesSixColumnQueryAndHidesReservedEmail(t *testing.T) {
 	}
 }
 
-func TestReservedEmailIsUniqueAndNotAPublicIdentity(t *testing.T) {
-	first, second := reservedEmail(), reservedEmail()
-	if first == second || !strings.HasPrefix(first, "phone-") || !strings.HasSuffix(first, "@reserved.invalid") {
-		t.Fatal("reserved emails are not unique internal values")
-	}
-	if publicEmail(first) != "" {
-		t.Fatal("reserved email escaped the public store read boundary")
-	}
-	legacy := "legacy@example.test"
-	if publicEmail(legacy) != legacy {
-		t.Fatal("legacy email was not preserved")
+func TestPublicEmailPreservesRealAndLegacyEmail(t *testing.T) {
+	for _, email := range []string{"alice@example.test", "legacy@example.test"} {
+		if publicEmail(email) != email {
+			t.Fatal("real email was not preserved")
+		}
 	}
 	if domain.ErrConflict.Error() != "conflict" {
 		t.Fatal("collision mapping is not generic")

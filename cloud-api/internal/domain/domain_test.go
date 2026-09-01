@@ -104,6 +104,26 @@ func TestParsePhoneBoundaries(t *testing.T) {
 	}
 }
 
+func TestParseLoginIdentifierPrioritizesCanonicalPhoneThenEmailThenUsername(t *testing.T) {
+	for _, test := range []struct {
+		name, value, wantKind, wantValue string
+	}{
+		{name: "phone", value: " +8613800138000 ", wantKind: "phone", wantValue: "+8613800138000"},
+		{name: "email", value: " User@Example.COM ", wantKind: "email", wantValue: "user@example.com"},
+		{name: "username", value: " Alice_01 ", wantKind: "username", wantValue: "alice_01"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			identity, err := ParseLoginIdentifier(test.value)
+			if err != nil {
+				t.Fatal("valid identifier was rejected")
+			}
+			if identity.Kind.String() != test.wantKind || identity.Value != test.wantValue {
+				t.Fatal("identifier was not classified and canonicalized")
+			}
+		})
+	}
+}
+
 func TestParseUsernameBoundaries(t *testing.T) {
 	for _, test := range []struct {
 		name        string
@@ -114,6 +134,7 @@ func TestParseUsernameBoundaries(t *testing.T) {
 		{name: "exact_minimum", value: "Ab1", canonical: "ab1"},
 		{name: "exact_maximum", value: strings.Repeat("a", 32), canonical: strings.Repeat("a", 32)},
 		{name: "all_uppercase", value: "ALICE_01", canonical: "alice_01"},
+		{name: "pure_digits", value: "123456", wantInvalid: true},
 		{name: "over_maximum", value: strings.Repeat("a", 33), wantInvalid: true},
 		{name: "too_short", value: "ab", wantInvalid: true},
 		{name: "hyphen", value: "alice-name", wantInvalid: true},

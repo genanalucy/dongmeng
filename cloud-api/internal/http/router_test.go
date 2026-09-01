@@ -149,27 +149,35 @@ func TestPhoneVerificationRoutesValidateFormatBeforeReturningDisabled(t *testing
 	}
 }
 
-func TestPhoneAuthHTTPContractIsStrictAndDoesNotExposePhone(t *testing.T) {
+func TestMultiIdentityAuthHTTPContractIsStrictAndDoesNotExposePrivateIdentities(t *testing.T) {
 	hash, err := auth.HashPassword("Aa123456")
 	if err != nil {
 		t.Fatal(err)
 	}
-	const reservedEmail = "phone-123e4567-e89b-12d3-a456-426614174000@reserved.invalid"
-	store := &adminContractStore{enabled: true, reservedEmail: reservedEmail, phoneUser: domain.User{ID: uuid.New(), Username: "alice_01", Phone: "+8613800138000", Email: reservedEmail, Role: string(domain.RoleUser)}, phoneHash: hash}
+	const email = "alice@example.com"
+	store := &adminContractStore{enabled: true, phoneUser: domain.User{ID: uuid.New(), Username: "alice_01", Phone: "+8613800138000", Email: email, Role: string(domain.RoleUser)}, phoneHash: hash}
 	router, issuer, now := newAdminContractRouter(t, store)
 	for _, test := range []struct {
 		name, path, body string
 		status           int
 	}{
-		{"register exact", "/api/v1/auth/register", `{"username":"Alice_01","phone":"13800138000","password":"Aa123456"}`, http.StatusCreated},
-		{"register rejects unknown", "/api/v1/auth/register", `{"username":"alice_01","phone":"13800138000","password":"Aa123456","email":"x@example.test"}`, http.StatusBadRequest},
-		{"login email rejected", "/api/v1/auth/login", `{"phone":"x@example.test","password":"Aa123456"}`, http.StatusUnauthorized},
-		{"login username rejected", "/api/v1/auth/login", `{"phone":"alice_01","password":"Aa123456"}`, http.StatusUnauthorized},
-		{"login missing phone", "/api/v1/auth/login", `{"password":"Aa123456"}`, http.StatusUnauthorized},
+		{"register exact", "/api/v1/auth/register", `{"username":"Alice_01","email":"Alice@Example.COM","phone":"13800138000","password":"Aa123456"}`, http.StatusCreated},
+		{"register rejects unknown", "/api/v1/auth/register", `{"username":"alice_01","email":"alice@example.com","phone":"13800138000","password":"Aa123456","unknown":true}`, http.StatusBadRequest},
+		{"login phone", "/api/v1/auth/login", `{"identifier":"13800138000","password":"Aa123456"}`, http.StatusOK},
+		{"login email", "/api/v1/auth/login", `{"identifier":"Alice@Example.COM","password":"Aa123456"}`, http.StatusOK},
+		{"login username", "/api/v1/auth/login", `{"identifier":"Alice_01","password":"Aa123456"}`, http.StatusOK},
+		{"login unknown", "/api/v1/auth/login", `{"identifier":"missing_user","password":"Aa123456"}`, http.StatusUnauthorized},
+		{"login disabled", "/api/v1/auth/login", `{"identifier":"alice_01","password":"Aa123456"}`, http.StatusUnauthorized},
+		{"login wrong password", "/api/v1/auth/login", `{"identifier":"alice_01","password":"Wrong123"}`, http.StatusUnauthorized},
 		{"login malformed", "/api/v1/auth/login", `{`, http.StatusBadRequest},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			store.phoneQuery = ""
+			store.phoneQuery, store.emailQuery, store.usernameQuery = "", "", ""
+			store.phoneCalls, store.emailCalls, store.usernameCalls = 0, 0, 0
+			store.lookupErr = nil
+			if test.name == "login unknown" || test.name == "login disabled" {
+				store.lookupErr = domain.ErrNotFound
+			}
 			req := httptest.NewRequest(http.MethodPost, test.path, strings.NewReader(test.body))
 			req.Header.Set("Content-Type", "application/json")
 			req.RemoteAddr = "127.0.0.1:12345"
@@ -178,16 +186,19 @@ func TestPhoneAuthHTTPContractIsStrictAndDoesNotExposePhone(t *testing.T) {
 			if response.Code != test.status {
 				t.Fatalf("status = %d", response.Code)
 			}
-			if strings.Contains(response.Body.String(), "+8613800138000") || strings.Contains(response.Body.String(), reservedEmail) || strings.Contains(response.Body.String(), `"phone"`) || strings.Contains(response.Body.String(), `"email"`) {
+			if strings.Contains(response.Body.String(), "+8613800138000") || strings.Contains(response.Body.String(), email) || strings.Contains(response.Body.String(), `"phone"`) || strings.Contains(response.Body.String(), `"email"`) {
 				t.Fatal("response exposed internal identity")
 			}
-			if strings.Contains(test.name, "login ") && store.phoneCalls != 0 {
-				t.Fatal("invalid login reached phone store")
+			if strings.HasPrefix(test.name, "login ") && test.status == http.StatusUnauthorized && !strings.Contains(response.Body.String(), "invalid_credentials") {
+				t.Fatal("login failure did not return generic credentials failure")
+			}
+			if test.name == "login unknown" && (store.phoneCalls != 0 || store.emailCalls != 0 || store.usernameCalls != 1) {
+				t.Fatal("unknown login used the wrong store lookup")
 			}
 		})
 	}
-	if store.register.Username != "alice_01" || store.register.Phone != "+8613800138000" || len(store.storedEmails) != 1 || store.storedEmails[0] != reservedEmail {
-		t.Fatal("registration did not persist canonical identity and reserved email")
+	if store.register.Username != "alice_01" || store.register.Email != email || store.register.Phone != "+8613800138000" || len(store.storedEmails) != 1 || store.storedEmails[0] != email {
+		t.Fatal("registration did not persist canonical identities")
 	}
 	access, err := issuer.AccessToken(store.phoneUser.ID, string(domain.RoleUser), time.Minute, now)
 	if err != nil {
@@ -198,27 +209,33 @@ func TestPhoneAuthHTTPContractIsStrictAndDoesNotExposePhone(t *testing.T) {
 	req.RemoteAddr = "127.0.0.1:12345"
 	response := httptest.NewRecorder()
 	router.ServeHTTP(response, req)
-	if response.Code != http.StatusOK || strings.Contains(response.Body.String(), "+8613800138000") || strings.Contains(response.Body.String(), reservedEmail) || strings.Contains(response.Body.String(), `"phone"`) || strings.Contains(response.Body.String(), `"email"`) {
+	if response.Code != http.StatusOK || strings.Contains(response.Body.String(), "+8613800138000") || strings.Contains(response.Body.String(), email) || strings.Contains(response.Body.String(), `"phone"`) || strings.Contains(response.Body.String(), `"email"`) {
 		t.Fatal("me response exposed internal identity")
 	}
 }
 
-func TestPhoneLoginCanonicalizesEachAcceptedInputIndependently(t *testing.T) {
+func TestMultiIdentityLoginCanonicalizesEachAcceptedInputIndependently(t *testing.T) {
 	hash, err := auth.HashPassword("Aa123456")
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, phone := range []string{"13800138000", "+8613800138000"} {
-		t.Run("accepted phone", func(t *testing.T) {
+	for _, test := range []struct {
+		name, identifier, phone, email, username string
+	}{
+		{name: "phone", identifier: "13800138000", phone: "+8613800138000"},
+		{name: "email", identifier: "Alice@Example.COM", email: "alice@example.com"},
+		{name: "username", identifier: "Alice_01", username: "alice_01"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
 			store := &adminContractStore{enabled: true, phoneUser: domain.User{ID: uuid.New(), Phone: "+8613800138000", Role: string(domain.RoleUser)}, phoneHash: hash}
 			router, _, _ := newAdminContractRouter(t, store)
-			req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader(`{"phone":"`+phone+`","password":"Aa123456"}`))
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader(`{"identifier":"`+test.identifier+`","password":"Aa123456"}`))
 			req.Header.Set("Content-Type", "application/json")
 			req.RemoteAddr = "127.0.0.1:12345"
 			response := httptest.NewRecorder()
 			router.ServeHTTP(response, req)
-			if response.Code != http.StatusOK || store.phoneQuery != "+8613800138000" {
-				t.Fatal("accepted phone was not canonicalized before lookup")
+			if response.Code != http.StatusOK || store.phoneQuery != test.phone || store.emailQuery != test.email || store.usernameQuery != test.username {
+				t.Fatal("identifier was not canonicalized before the correct lookup")
 			}
 		})
 	}

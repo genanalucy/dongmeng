@@ -30,7 +30,7 @@ type businessStore interface {
 	RevokeEntitlementByAdmin(context.Context, uuid.UUID, uuid.UUID, uuid.UUID, time.Time) error
 }
 type authService interface {
-	Register(context.Context, string, string, string, time.Time) (auth.RegistrationResult, error)
+	Register(context.Context, string, string, string, string, time.Time) (auth.RegistrationResult, error)
 	ActiveEntitlement(context.Context, uuid.UUID, time.Time) (domain.Entitlement, error)
 	CreateTranslationSession(context.Context, uuid.UUID, string, time.Time) (auth.TranslationGrant, error)
 	EndTranslationSession(context.Context, uuid.UUID, uuid.UUID, time.Time) error
@@ -167,6 +167,7 @@ func domainError(w http.ResponseWriter, r *http.Request, err error) {
 func (a api) register(w http.ResponseWriter, r *http.Request) {
 	var x struct {
 		Username string `json:"username"`
+		Email    string `json:"email"`
 		Phone    string `json:"phone"`
 		Password string `json:"password"`
 	}
@@ -174,35 +175,49 @@ func (a api) register(w http.ResponseWriter, r *http.Request) {
 		inputError(w, r)
 		return
 	}
-	v, e := a.authorizer.Register(r.Context(), x.Username, x.Phone, x.Password, a.now())
+	v, e := a.authorizer.Register(r.Context(), x.Username, x.Email, x.Phone, x.Password, a.now())
 	if e != nil {
 		domainError(w, r, e)
 		return
 	}
 	writeJSON(w, http.StatusCreated, map[string]any{"user": publicUser(v.User), "trial_entitlement": v.Trial})
 }
+func invalidCredentials(w http.ResponseWriter, r *http.Request) {
+	writeError(w, r, http.StatusUnauthorized, "invalid_credentials")
+}
 func (a api) login(w http.ResponseWriter, r *http.Request) {
 	var x struct {
-		Phone    string `json:"phone"`
-		Password string `json:"password"`
+		Identifier string `json:"identifier"`
+		Password   string `json:"password"`
 	}
 	if decode(w, r, &x) != nil {
 		inputError(w, r)
 		return
 	}
-	phone, e := domain.ParsePhone(x.Phone)
+	identifier, e := domain.ParseLoginIdentifier(x.Identifier)
 	if e != nil {
-		unauthorized(w, r)
+		invalidCredentials(w, r)
 		return
 	}
-	u, hash, e := a.store.UserByPhone(r.Context(), phone.String())
+	var u domain.User
+	var hash string
+	switch identifier.Kind {
+	case domain.LoginIdentifierPhone:
+		u, hash, e = a.store.UserByPhone(r.Context(), identifier.Value)
+	case domain.LoginIdentifierEmail:
+		u, hash, e = a.store.UserByEmail(r.Context(), identifier.Value)
+	case domain.LoginIdentifierUsername:
+		u, hash, e = a.store.UserByUsername(r.Context(), identifier.Value)
+	default:
+		e = domain.ErrNotFound
+	}
 	if e != nil {
-		unauthorized(w, r)
+		invalidCredentials(w, r)
 		return
 	}
 	ok, e := auth.VerifyPassword(hash, x.Password)
 	if e != nil || !ok {
-		unauthorized(w, r)
+		invalidCredentials(w, r)
 		return
 	}
 	a.issueTokens(w, r, u)

@@ -33,6 +33,11 @@ type adminContractStore struct {
 	phoneUser     domain.User
 	phoneHash     string
 	phoneQuery    string
+	emailQuery    string
+	usernameQuery string
+	emailCalls    int
+	usernameCalls int
+	lookupErr     error
 	register      domain.RegisterParams
 	registerErr   error
 	reservedEmail string
@@ -57,6 +62,31 @@ func (s *adminContractStore) CreateRefreshToken(_ context.Context, params domain
 func (s *adminContractStore) UserByPhone(_ context.Context, phone string) (domain.User, string, error) {
 	s.phoneCalls++
 	s.phoneQuery = phone
+	if s.lookupErr != nil {
+		return domain.User{}, "", s.lookupErr
+	}
+	if s.phoneUser.ID == uuid.Nil {
+		return domain.User{}, "", domain.ErrNotFound
+	}
+	return s.phoneUser, s.phoneHash, nil
+}
+func (s *adminContractStore) UserByEmail(_ context.Context, email string) (domain.User, string, error) {
+	s.emailCalls++
+	s.emailQuery = email
+	if s.lookupErr != nil {
+		return domain.User{}, "", s.lookupErr
+	}
+	if s.phoneUser.ID == uuid.Nil {
+		return domain.User{}, "", domain.ErrNotFound
+	}
+	return s.phoneUser, s.phoneHash, nil
+}
+func (s *adminContractStore) UserByUsername(_ context.Context, username string) (domain.User, string, error) {
+	s.usernameCalls++
+	s.usernameQuery = username
+	if s.lookupErr != nil {
+		return domain.User{}, "", s.lookupErr
+	}
 	if s.phoneUser.ID == uuid.Nil {
 		return domain.User{}, "", domain.ErrNotFound
 	}
@@ -68,8 +98,8 @@ func (s *adminContractStore) Register(_ context.Context, params domain.RegisterP
 	if s.registerErr != nil {
 		return domain.User{}, domain.Entitlement{}, s.registerErr
 	}
-	s.storedEmails = append(s.storedEmails, s.reservedEmail)
-	user := domain.User{ID: uuid.New(), Username: params.Username, Phone: params.Phone, Role: string(domain.RoleUser), CreatedAt: params.Now}
+	s.storedEmails = append(s.storedEmails, params.Email)
+	user := domain.User{ID: uuid.New(), Username: params.Username, Email: params.Email, Phone: params.Phone, Role: string(domain.RoleUser), CreatedAt: params.Now}
 	trial, _ := domain.NewTrialEntitlement(uuid.New(), user.ID, params.Now)
 	return user, trial, nil
 }
@@ -273,7 +303,9 @@ func TestAdminUsersHidePhoneAndReservedEmailForLegacyAndPhoneRecords(t *testing.
 	if strings.Contains(body, "\"phone\"") || strings.Contains(body, "+8613800138000") || strings.Contains(body, "phone-internal@reserved.invalid") {
 		t.Fatal("admin response leaked a phone identity key or value")
 	}
-	var envelope struct { Users []map[string]json.RawMessage `json:"users"` }
+	var envelope struct {
+		Users []map[string]json.RawMessage `json:"users"`
+	}
 	if err := json.Unmarshal(response.Body.Bytes(), &envelope); err != nil || len(envelope.Users) != 2 {
 		t.Fatal("admin response has an invalid user envelope")
 	}

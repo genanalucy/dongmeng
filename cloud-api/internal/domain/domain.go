@@ -96,15 +96,51 @@ func ParseUsername(value string) (Username, error) {
 	if len(value) < 3 || len(value) > 32 {
 		return "", fmt.Errorf("%w: invalid username", ErrInvalid)
 	}
+	digitsOnly := true
 	for _, char := range value {
 		if !((char >= 'a' && char <= 'z') || (char >= '0' && char <= '9') || char == '_') {
 			return "", fmt.Errorf("%w: invalid username", ErrInvalid)
 		}
+		if char < '0' || char > '9' {
+			digitsOnly = false
+		}
+	}
+	if digitsOnly {
+		return "", fmt.Errorf("%w: invalid username", ErrInvalid)
 	}
 	return Username(value), nil
 }
 
 func (u Username) String() string { return string(u) }
+
+type LoginIdentifierKind string
+
+const (
+	LoginIdentifierPhone    LoginIdentifierKind = "phone"
+	LoginIdentifierEmail    LoginIdentifierKind = "email"
+	LoginIdentifierUsername LoginIdentifierKind = "username"
+)
+
+func (k LoginIdentifierKind) String() string { return string(k) }
+
+type LoginIdentifier struct {
+	Kind  LoginIdentifierKind
+	Value string
+}
+
+func ParseLoginIdentifier(value string) (LoginIdentifier, error) {
+	if phone, err := ParsePhone(value); err == nil {
+		return LoginIdentifier{Kind: LoginIdentifierPhone, Value: phone.String()}, nil
+	}
+	if email, err := ParseEmail(value); err == nil {
+		return LoginIdentifier{Kind: LoginIdentifierEmail, Value: email.String()}, nil
+	}
+	username, err := ParseUsername(value)
+	if err != nil {
+		return LoginIdentifier{}, err
+	}
+	return LoginIdentifier{Kind: LoginIdentifierUsername, Value: username.String()}, nil
+}
 
 type Phone string
 
@@ -410,8 +446,8 @@ type CodeBatch struct {
 }
 
 type RegisterParams struct {
-	Username, Phone, PasswordHash string
-	Now                           time.Time
+	Username, Email, Phone, PasswordHash string
+	Now                                  time.Time
 }
 
 type CreateRefreshParams struct {
@@ -454,6 +490,7 @@ type Store interface {
 	Register(context.Context, RegisterParams) (User, Entitlement, error)
 	UserByEmail(context.Context, string) (User, string, error)
 	UserByPhone(context.Context, string) (User, string, error)
+	UserByUsername(context.Context, string) (User, string, error)
 	UserByID(context.Context, uuid.UUID) (User, error)
 	ActiveEntitlement(context.Context, uuid.UUID, time.Time) (Entitlement, error)
 	CreateCodeBatch(context.Context, CreateBatchParams) (CodeBatch, error)
