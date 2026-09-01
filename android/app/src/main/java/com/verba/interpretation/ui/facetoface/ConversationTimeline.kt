@@ -13,7 +13,6 @@ import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -28,7 +27,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.verba.interpretation.ui.ChatFollowEvent
 import com.verba.interpretation.ui.ChatFollowPolicy
@@ -36,9 +34,31 @@ import com.verba.interpretation.ui.ChatFollowState
 import com.verba.interpretation.ui.FaceToFaceSide
 import com.verba.interpretation.ui.FaceToFaceTurn
 import com.verba.interpretation.ui.TranslationLanguage
+import com.verba.interpretation.ui.display.DisplaySentenceSplitter
 
 internal fun conversationTimelineLatestIndex(turnCount: Int, hasListeningPlaceholder: Boolean): Int =
     (turnCount + if (hasListeningPlaceholder) 1 else 0).coerceAtLeast(1) - 1
+
+internal data class ConversationDisplayBubble(
+    val key: String,
+    val text: String,
+    val side: FaceToFaceSide,
+    val language: String,
+    val alignment: FaceToFaceTurnAlignment,
+    val isTranslation: Boolean,
+)
+
+internal fun displayConversationBubbles(turns: List<FaceToFaceTurn>): List<ConversationDisplayBubble> =
+    turns.flatMap { turn ->
+        val alignment = faceToFaceTurnAlignment(turn)
+        val source = DisplaySentenceSplitter.split(turn.sourceText)
+        val translation = DisplaySentenceSplitter.split(turn.translatedText)
+        source.mapIndexed { index, text ->
+            ConversationDisplayBubble("${turn.id}:source:$index", text, turn.side, turn.sourceLanguage, alignment, false)
+        } + translation.mapIndexed { index, text ->
+            ConversationDisplayBubble("${turn.id}:translation:$index", text, turn.side, turn.targetLanguage, alignment, true)
+        }
+    }
 
 internal fun conversationTimelineUpdateCount(
     previousTurnToken: List<String>,
@@ -60,10 +80,11 @@ internal fun ConversationTimeline(
     listState: LazyListState = rememberLazyListState(),
 ) {
     val hasListeningPlaceholder = activeMic != null
-    val turnToken = remember(turns) { turns.map { "${it.id}:${it.sourceText}:${it.translatedText}:${it.finished}" } }
+    val bubbles = remember(turns) { displayConversationBubbles(turns) }
+    val turnToken = remember(bubbles, turns) { bubbles.map { "${it.key}:${it.text}" } + turns.filter { it.sourceText.isBlank() && it.translatedText.isBlank() }.map { "${it.id}:empty" } }
     var previousToken by remember { mutableStateOf<List<String>?>(null) }
     var previousHasPlaceholder by remember { mutableStateOf(hasListeningPlaceholder) }
-    val latestIndex = conversationTimelineLatestIndex(turns.size, hasListeningPlaceholder)
+    val latestIndex = conversationTimelineLatestIndex(turnCount = bubbles.size, hasListeningPlaceholder = hasListeningPlaceholder)
     val atLatest by remember(listState, latestIndex) {
         derivedStateOf {
             listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index?.let { it >= latestIndex } ?: true
@@ -106,29 +127,28 @@ internal fun ConversationTimeline(
                 )
             }
         }
-        items(turns, key = { it.id }) { turn -> ConversationBubble(turn) }
+        items(bubbles, key = { it.key }) { bubble -> ConversationBubble(bubble) }
         if (hasListeningPlaceholder) item(key = "listening") { ListeningPlaceholder(activeMic, listeningPlaceholder) }
     }
 }
 
 @Composable
-private fun ConversationBubble(turn: FaceToFaceTurn) {
-    val isRight = faceToFaceTurnAlignment(turn) == FaceToFaceTurnAlignment.END
-    val sourceName = TranslationLanguage.displayName(turn.sourceLanguage)
+private fun ConversationBubble(bubble: ConversationDisplayBubble) {
+    val isRight = bubble.alignment == FaceToFaceTurnAlignment.END
+    val languageName = TranslationLanguage.displayName(bubble.language)
+    val kind = if (bubble.isTranslation) "译文" else "原文"
     Column(Modifier.fillMaxWidth(), horizontalAlignment = if (isRight) Alignment.End else Alignment.Start) {
         Surface(
             modifier = Modifier.widthIn(max = 320.dp).semantics {
-                contentDescription = "$sourceName 对话。原文${turn.sourceText.ifBlank { "等待识别" }}。译文${turn.translatedText.ifBlank { "等待翻译" }}"
+                contentDescription = "$languageName $kind。${bubble.text}"
             },
             shape = RoundedCornerShape(20.dp),
             color = if (isRight) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface,
             tonalElevation = if (isRight) 0.dp else 1.dp,
         ) {
-            Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(sourceName, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
-                Text(turn.sourceText.ifBlank { "…" }, style = MaterialTheme.typography.bodyLarge)
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                Text(turn.translatedText.ifBlank { "…" }, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Medium)
+            Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text("$languageName $kind", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                Text(bubble.text, style = MaterialTheme.typography.bodyLarge)
             }
         }
     }

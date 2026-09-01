@@ -2,6 +2,7 @@ package com.verba.interpretation.ui.interpretation
 
 import com.verba.interpretation.ui.InterpretationUiState
 import com.verba.interpretation.ui.SessionPhase
+import com.verba.interpretation.ui.display.DisplaySentenceSplitter
 
 enum class InterpretationAction { START, PAUSE, RESUME, FINISH, RESET }
 
@@ -30,6 +31,8 @@ data class InterpretationScreenModel(
     val languageDirection: String,
     val sourceText: String,
     val translationText: String,
+    val sourceSegments: List<String>,
+    val translationSegments: List<String>,
     val showMicrophoneRipple: Boolean,
     val actions: List<InterpretationAction>,
     val errorMessage: String?,
@@ -40,10 +43,14 @@ object InterpretationUiMapper {
 
     fun map(state: InterpretationUiState): InterpretationScreenModel {
         val latest = state.turns.lastOrNull()
+        val sourceText = latest?.sourceText.orEmpty()
+        val translationText = latest?.translatedText.orEmpty()
         return InterpretationScreenModel(
             languageDirection = "${state.sourceLanguage} → ${state.targetLanguage}",
-            sourceText = latest?.sourceText.orEmpty(),
-            translationText = latest?.translatedText.orEmpty(),
+            sourceText = sourceText,
+            translationText = translationText,
+            sourceSegments = DisplaySentenceSplitter.split(sourceText),
+            translationSegments = DisplaySentenceSplitter.split(translationText),
             showMicrophoneRipple = state.phase == SessionPhase.RUNNING,
             actions = actionsFor(state.phase),
             errorMessage = if (state.phase == SessionPhase.ERROR) SAFE_ERROR_MESSAGE else null,

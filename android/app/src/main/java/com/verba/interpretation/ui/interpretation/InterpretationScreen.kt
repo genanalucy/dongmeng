@@ -82,8 +82,8 @@ fun InterpretationScreen(
         ) {
             item {
                 TranscriptFlow(
-                    sourceText = model.sourceText.ifBlank { "正在等待语音输入" },
-                    translationText = model.translationText.ifBlank { "翻译结果将显示在这里" },
+                    sourceSegments = model.sourceSegments.ifEmpty { listOf("正在等待语音输入") },
+                    translationSegments = model.translationSegments.ifEmpty { listOf("翻译结果将显示在这里") },
                 )
             }
             model.errorMessage?.let { error ->
@@ -184,29 +184,31 @@ private fun LanguageChip(text: String, modifier: Modifier = Modifier) {
 }
 
 @Composable
-private fun TranscriptFlow(sourceText: String, translationText: String) {
-    Column(modifier = Modifier.fillMaxWidth()) {
+private fun TranscriptFlow(sourceSegments: List<String>, translationSegments: List<String>) {
+    Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text("原文", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
-        Text(
-            text = sourceText,
-            modifier = Modifier.padding(top = 6.dp),
-            style = MaterialTheme.typography.headlineSmall,
-            color = MaterialTheme.colorScheme.onSurface,
-        )
+        sourceSegments.forEach { segment ->
+            Text(
+                text = segment,
+                style = MaterialTheme.typography.headlineSmall,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+        }
         Text(
             text = "译文",
-            modifier = Modifier.padding(top = 14.dp),
+            modifier = Modifier.padding(top = 6.dp),
             style = MaterialTheme.typography.labelMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-        Text(
-            text = translationText,
-            modifier = Modifier.padding(top = 6.dp),
-            style = MaterialTheme.typography.titleLarge,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
+        translationSegments.forEach { segment ->
+            Text(
+                text = segment,
+                style = MaterialTheme.typography.titleLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
         HorizontalDivider(
-            modifier = Modifier.padding(top = 20.dp),
+            modifier = Modifier.padding(top = 12.dp),
             color = MaterialTheme.colorScheme.outlineVariant,
         )
     }

@@ -31,6 +31,27 @@ class InterpretationUiMapperTest {
         assertEquals(listOf(InterpretationAction.PAUSE, InterpretationAction.FINISH), model.actions)
         assertEquals("你好", model.sourceText)
         assertEquals("Hello", model.translationText)
+        assertEquals(listOf("你好"), model.sourceSegments)
+        assertEquals(listOf("Hello"), model.translationSegments)
+    }
+
+    @Test fun latestTurnSplitsSourceAndTranslationIndependentlyForDisplay() {
+        val model = InterpretationUiMapper.map(
+            InterpretationUiState(
+                turns = listOf(
+                    SubtitleTurn(
+                        id = 1,
+                        sourceLanguage = "zh",
+                        targetLanguage = "en",
+                        sourceFinals = listOf("甲。乙。丙"),
+                        translationFinals = listOf("One. Two"),
+                    ),
+                ),
+            ),
+        )
+
+        assertEquals(listOf("甲。", "乙。", "丙"), model.sourceSegments)
+        assertEquals(listOf("One.", " Two"), model.translationSegments)
     }
 
     @Test fun eachSessionPhaseExposesOnlyPermittedActions() {
