@@ -106,6 +106,13 @@ func TestPostgresBusinessLifecycle(t *testing.T) {
 	if err := raw.QueryRow(ctx, `SELECT count(*) FROM refresh_tokens WHERE user_id=$1`, user.ID).Scan(&reservedRefreshCount); err != nil || reservedRefreshCount != 0 {
 		t.Fatal("reserved email login persisted a refresh token")
 	}
+	loginRequest = httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader(`{"phone":"+8613800138000","password":"integration-password"}`))
+	loginRequest.Header.Set("Content-Type", "application/json")
+	loginResponse = httptest.NewRecorder()
+	router.ServeHTTP(loginResponse, loginRequest)
+	if loginResponse.Code != http.StatusOK || !strings.Contains(loginResponse.Body.String(), `"token_type":"Bearer"`) {
+		t.Fatal("phone login did not issue the expected authentication response")
+	}
 	legacyEmail := integrationEmail()
 	if err := raw.QueryRow(ctx, `INSERT INTO users(email,password_hash) VALUES($1,$2) RETURNING id`, legacyEmail, hash).Scan(&legacyID); err != nil {
 		t.Fatal("insert legacy email fixture")
