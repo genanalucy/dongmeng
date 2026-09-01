@@ -132,19 +132,57 @@ class ProductNavigationPolicyTest {
     }
 
     @Test
-    fun onlyInterpretationHasAnExplicitExitTarget() {
-        assertFalse(ProductNavigationPolicy.hasExitTarget(ProductScreen.FACE_TO_FACE_WORKBENCH))
-        assertTrue(ProductNavigationPolicy.hasExitTarget(ProductScreen.INTERPRETATION_WORKBENCH))
-        assertEquals(
-            ProductScreen.FACE_TO_FACE_WORKBENCH,
-            ProductNavigationPolicy.exitTarget(ProductScreen.INTERPRETATION_WORKBENCH),
-        )
+    fun navigationStackStartsWithTheModeRootAndCannotPopIt() {
+        val stack = ProductNavigationStack.initial(ProductNavigationMode.USER)
+
+        assertEquals(ProductScreen.FACE_TO_FACE_WORKBENCH, stack.current)
+        assertFalse(stack.canPop)
+        assertTrue(stack === stack.pop())
     }
 
     @Test
-    fun accountSecondaryScreensReturnToProfilePrimaryDestination() {
-        assertEquals(ProductScreen.PROFILE, ProductNavigationPolicy.exitTarget(ProductScreen.ACCOUNT))
-        assertEquals(ProductScreen.PROFILE, ProductNavigationPolicy.exitTarget(ProductScreen.ENDPOINT_SETTINGS))
+    fun accountHistoryBackReturnsToAccount() {
+        val stack = ProductNavigationStack.initial(ProductNavigationMode.AUTHENTICATION)
+            .push(ProductScreen.HISTORY)
+
+        assertEquals(ProductScreen.ACCOUNT, stack.pop().current)
+    }
+
+    @Test
+    fun accountEndpointSettingsBackReturnsToAccount() {
+        val stack = ProductNavigationStack.initial(ProductNavigationMode.AUTHENTICATION)
+            .push(ProductScreen.ENDPOINT_SETTINGS)
+
+        assertEquals(ProductScreen.ACCOUNT, stack.pop().current)
+    }
+
+    @Test
+    fun profileEndpointSettingsBackReturnsToProfile() {
+        val stack = ProductNavigationStack.initial(ProductNavigationMode.USER)
+            .selectPrimary(ProductDestination.PROFILE)
+            .push(ProductScreen.ENDPOINT_SETTINGS)
+
+        assertEquals(ProductScreen.PROFILE, stack.pop().current)
+    }
+
+    @Test
+    fun selectingPrimaryDestinationResetsSecondaryHistoryToThatRoot() {
+        val stack = ProductNavigationStack.initial(ProductNavigationMode.AUTHENTICATION)
+            .push(ProductScreen.ENDPOINT_SETTINGS)
+            .selectPrimary(ProductDestination.FACE_TO_FACE)
+
+        assertEquals(ProductScreen.FACE_TO_FACE_WORKBENCH, stack.current)
+        assertFalse(stack.canPop)
+    }
+
+    @Test
+    fun interpretationExitSelectsFaceToFaceRoot() {
+        val stack = ProductNavigationStack.initial(ProductNavigationMode.USER)
+            .selectPrimary(ProductDestination.INTERPRETATION)
+            .selectPrimary(ProductDestination.FACE_TO_FACE)
+
+        assertEquals(ProductScreen.FACE_TO_FACE_WORKBENCH, stack.current)
+        assertFalse(stack.canPop)
     }
 
     @Test

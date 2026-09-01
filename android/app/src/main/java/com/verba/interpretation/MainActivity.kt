@@ -153,6 +153,7 @@ import com.verba.interpretation.ui.ProductDestination
 import com.verba.interpretation.ui.navigation.ProductBottomBar
 import com.verba.interpretation.ui.ProductNavigationMode
 import com.verba.interpretation.ui.ProductNavigationPolicy
+import com.verba.interpretation.ui.ProductNavigationStack
 import com.verba.interpretation.ui.ProductScreen
 import com.verba.interpretation.ui.SessionPhase
 import com.verba.interpretation.ui.SubtitleTurn
@@ -174,16 +175,19 @@ private fun InterpretationApp(
     viewModel: InterpretationViewModel = viewModel(),
     accountViewModel: AccountViewModel = viewModel(),
 ) {
-    var screen by remember { mutableStateOf(ProductScreen.ACCOUNT) }
     val interpretationState by viewModel.state.collectAsStateWithLifecycle()
     val accountState by accountViewModel.state.collectAsStateWithLifecycle()
     val navigationMode = accountState.navigationMode
-    LaunchedEffect(navigationMode) {
-        screen = ProductNavigationPolicy.initialScreen(navigationMode)
+    var stack by remember(navigationMode) {
+        mutableStateOf(ProductNavigationStack.initial(navigationMode))
     }
+    LaunchedEffect(navigationMode) {
+        stack = ProductNavigationStack.initial(navigationMode)
+    }
+    val screen = stack.current
     val productShell = ProductNavigationPolicy.shellFor(navigationMode, screen)
-    BackHandler(enabled = ProductNavigationPolicy.hasExitTarget(screen)) {
-        screen = ProductNavigationPolicy.exitTarget(screen)
+    BackHandler(enabled = stack.canPop) {
+        stack = stack.pop()
     }
 
     Scaffold(
@@ -194,13 +198,13 @@ private fun InterpretationApp(
                     ProductBottomBar(
                         destinations = productShell.destinations,
                         selected = ProductNavigationPolicy.selectedDestination(screen),
-                        onSelect = { screen = ProductNavigationPolicy.screenFor(it) },
+                        onSelect = { stack = stack.selectPrimary(it) },
                     )
                 } else {
                     AdminBottomBar(
                         destinations = productShell.destinations,
                         selected = ProductNavigationPolicy.selectedDestination(screen),
-                        onSelect = { screen = ProductNavigationPolicy.screenFor(it) },
+                        onSelect = { stack = stack.selectPrimary(it) },
                     )
                 }
             }
@@ -212,15 +216,15 @@ private fun InterpretationApp(
                 interpretationPhase = interpretationState.phase,
                 onLanguagePair = { source, target ->
                     viewModel.setLanguages(source, target)
-                    screen = ProductScreen.INTERPRETATION_WORKBENCH
+                    stack = stack.selectPrimary(ProductDestination.INTERPRETATION)
                 },
-                onInterpretation = { screen = ProductScreen.INTERPRETATION_WORKBENCH },
-                onFaceToFace = { screen = ProductScreen.FACE_TO_FACE_WORKBENCH },
+                onInterpretation = { stack = stack.selectPrimary(ProductDestination.INTERPRETATION) },
+                onFaceToFace = { stack = stack.selectPrimary(ProductDestination.FACE_TO_FACE) },
             )
             ProductScreen.INTERPRETATION_WORKBENCH -> SoloWorkbench(
                 modifier = Modifier.padding(padding),
                 viewModel = viewModel,
-                onExit = { screen = ProductNavigationPolicy.exitTarget(screen) },
+                onExit = { stack = stack.selectPrimary(ProductDestination.FACE_TO_FACE) },
             )
             ProductScreen.FACE_TO_FACE_WORKBENCH -> FaceToFaceWorkbench(
                 modifier = Modifier.padding(padding),
@@ -228,26 +232,26 @@ private fun InterpretationApp(
             ProductScreen.HISTORY -> HistoryPage(Modifier.padding(padding))
             ProductScreen.PROFILE -> ProfilePage(
                 modifier = Modifier.padding(padding),
-                onAccount = { screen = ProductScreen.ACCOUNT },
+                onAccount = { stack = stack.push(ProductScreen.ACCOUNT) },
                 showTestSettings = navigationMode == ProductNavigationMode.ADMIN_TEST,
-                onEndpointSettings = { screen = ProductScreen.ENDPOINT_SETTINGS },
+                onEndpointSettings = { stack = stack.push(ProductScreen.ENDPOINT_SETTINGS) },
             )
             ProductScreen.ACCOUNT -> AccountPage(
                 modifier = Modifier.padding(padding),
-                onBack = { screen = ProductNavigationPolicy.exitTarget(ProductScreen.ACCOUNT) },
-                onHistory = { screen = ProductNavigationPolicy.accountSecondaryScreen(AccountSecondaryDestination.HISTORY) },
-                onServiceSettings = { screen = ProductNavigationPolicy.accountSecondaryScreen(AccountSecondaryDestination.SERVICE_SETTINGS) },
+                onBack = { stack = stack.pop() },
+                onHistory = { stack = stack.push(ProductNavigationPolicy.accountSecondaryScreen(AccountSecondaryDestination.HISTORY)) },
+                onServiceSettings = { stack = stack.push(ProductNavigationPolicy.accountSecondaryScreen(AccountSecondaryDestination.SERVICE_SETTINGS)) },
                 accountViewModel = accountViewModel,
             )
             ProductScreen.ADMIN_TEST -> AdminTestPage(
                 modifier = Modifier.padding(padding),
                 accountState = accountState,
                 onPreviewUserExperience = { accountViewModel.setPreviewingUserExperience(true) },
-                onAccount = { screen = ProductScreen.ACCOUNT },
+                onAccount = { stack = stack.push(ProductScreen.ACCOUNT) },
             )
             ProductScreen.ENDPOINT_SETTINGS -> EndpointSettingsPage(
                 modifier = Modifier.padding(padding),
-                onBack = { screen = ProductNavigationPolicy.exitTarget(screen) },
+                onBack = { stack = stack.pop() },
             )
         }
     }

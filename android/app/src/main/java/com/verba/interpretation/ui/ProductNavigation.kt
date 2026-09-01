@@ -31,6 +31,29 @@ data class ProductShell(
     val destinations: List<ProductDestination>,
 )
 
+/** Immutable local navigation history for product roots and their secondary routes. */
+class ProductNavigationStack private constructor(
+    private val screens: List<ProductScreen>,
+) {
+    val current: ProductScreen
+        get() = screens.last()
+
+    val canPop: Boolean
+        get() = screens.size > 1
+
+    fun push(screen: ProductScreen): ProductNavigationStack = ProductNavigationStack(screens + screen)
+
+    fun pop(): ProductNavigationStack = if (canPop) ProductNavigationStack(screens.dropLast(1)) else this
+
+    fun selectPrimary(destination: ProductDestination): ProductNavigationStack =
+        ProductNavigationStack(listOf(ProductNavigationPolicy.screenFor(destination)))
+
+    companion object {
+        fun initial(mode: ProductNavigationMode): ProductNavigationStack =
+            ProductNavigationStack(listOf(ProductNavigationPolicy.initialScreen(mode)))
+    }
+}
+
 object ProductNavigationPolicy {
     fun accountSecondaryScreen(destination: AccountSecondaryDestination): ProductScreen = when (destination) {
         AccountSecondaryDestination.HISTORY -> ProductScreen.HISTORY
@@ -84,18 +107,6 @@ object ProductNavigationPolicy {
         )
     }
 
-    fun hasExitTarget(screen: ProductScreen): Boolean = screen in setOf(
-        ProductScreen.ENDPOINT_SETTINGS,
-        ProductScreen.ACCOUNT,
-        ProductScreen.INTERPRETATION_WORKBENCH,
-    )
-
-    fun exitTarget(screen: ProductScreen): ProductScreen = when (screen) {
-        ProductScreen.ENDPOINT_SETTINGS,
-        ProductScreen.ACCOUNT -> ProductScreen.PROFILE
-        ProductScreen.INTERPRETATION_WORKBENCH -> ProductScreen.FACE_TO_FACE_WORKBENCH
-        else -> screen
-    }
 }
 
 enum class HistoryFilter(val label: String) {
