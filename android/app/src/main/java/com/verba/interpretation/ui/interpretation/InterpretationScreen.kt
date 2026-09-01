@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -34,7 +35,6 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -80,11 +80,12 @@ fun InterpretationScreen(
             contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(20.dp),
         ) {
-            item {
-                TranscriptFlow(
-                    sourceSegments = model.sourceSegments.ifEmpty { listOf("正在等待语音输入") },
-                    translationSegments = model.translationSegments.ifEmpty { listOf("翻译结果将显示在这里") },
-                )
+            val bubbles = InterpretationDisplayBubble.map(
+                sourceSegments = model.sourceSegments.ifEmpty { listOf("正在等待语音输入") },
+                translationSegments = model.translationSegments.ifEmpty { listOf("翻译结果将显示在这里") },
+            )
+            items(bubbles, key = InterpretationDisplayBubble::key) { bubble ->
+                InterpretationBubble(bubble)
             }
             model.errorMessage?.let { error ->
                 item {
@@ -184,33 +185,27 @@ private fun LanguageChip(text: String, modifier: Modifier = Modifier) {
 }
 
 @Composable
-private fun TranscriptFlow(sourceSegments: List<String>, translationSegments: List<String>) {
-    Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text("原文", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
-        sourceSegments.forEach { segment ->
+private fun InterpretationBubble(bubble: InterpretationDisplayBubble) {
+    val isSource = bubble.role == InterpretationDisplayBubble.Role.SOURCE
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(20.dp),
+        color = if (isSource) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHigh,
+        tonalElevation = if (isSource) 2.dp else 0.dp,
+    ) {
+        Column(modifier = Modifier.padding(horizontal = 20.dp, vertical = 16.dp)) {
             Text(
-                text = segment,
-                style = MaterialTheme.typography.headlineSmall,
-                color = MaterialTheme.colorScheme.onSurface,
+                text = if (isSource) "原文" else "译文",
+                style = MaterialTheme.typography.labelMedium,
+                color = if (isSource) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Text(
+                text = bubble.text,
+                modifier = Modifier.padding(top = 6.dp),
+                style = if (isSource) MaterialTheme.typography.headlineSmall else MaterialTheme.typography.titleMedium,
+                color = if (isSource) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface,
             )
         }
-        Text(
-            text = "译文",
-            modifier = Modifier.padding(top = 6.dp),
-            style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        translationSegments.forEach { segment ->
-            Text(
-                text = segment,
-                style = MaterialTheme.typography.titleLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-        HorizontalDivider(
-            modifier = Modifier.padding(top = 12.dp),
-            color = MaterialTheme.colorScheme.outlineVariant,
-        )
     }
 }
 
