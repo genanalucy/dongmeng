@@ -19,6 +19,12 @@ type AccountOverview struct {
 	Usage       UsageSummary
 }
 
+type AccountIdentity struct {
+	Username    string
+	Email       string
+	MaskedPhone string
+}
+
 type AccountUsage struct {
 	SessionID       uuid.UUID  `json:"session_id"`
 	StartedAt       time.Time  `json:"started_at"`
@@ -40,4 +46,5 @@ type AccountStore interface {
 	AccountOverview(context.Context, uuid.UUID) (AccountOverview, error)
 	ListAccountUsage(context.Context, uuid.UUID, int, int) ([]AccountUsage, error)
 	UpdateIdentity(context.Context, UpdateIdentityParams) (User, error)
+	AccountIdentity(context.Context, uuid.UUID) (AccountIdentity, error)
 }

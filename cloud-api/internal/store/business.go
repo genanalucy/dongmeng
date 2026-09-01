@@ -305,6 +305,21 @@ func (p *Postgres) ListAccountUsage(ctx context.Context, user uuid.UUID, limit, 
 	return out, storeErr(rows.Err())
 }
 
+func (p *Postgres) AccountIdentity(ctx context.Context, userID uuid.UUID) (domain.AccountIdentity, error) {
+	var profile domain.AccountIdentity
+	var phone string
+	if err := p.pool.QueryRow(ctx, `SELECT COALESCE(username,''),email,COALESCE(phone,'') FROM users WHERE id=$1 AND disabled_at IS NULL`, userID).Scan(&profile.Username, &profile.Email, &phone); err != nil {
+		return domain.AccountIdentity{}, storeErr(err)
+	}
+	if profile.Username == "" {
+		profile.Username = "旧版用户"
+	}
+	if len(phone) == len("+8613800138000") && strings.HasPrefix(phone, "+86") {
+		profile.MaskedPhone = phone[:6] + "****" + phone[len(phone)-4:]
+	}
+	return profile, nil
+}
+
 func (p *Postgres) UpdateIdentity(ctx context.Context, input domain.UpdateIdentityParams) (domain.User, error) {
 	var user domain.User
 	err := p.tx(ctx, func(t pgx.Tx) error {

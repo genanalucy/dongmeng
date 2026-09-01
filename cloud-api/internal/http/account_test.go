@@ -29,6 +29,9 @@ type accountTestStore struct {
 	identity      domain.User
 	identityErr   error
 	identityInput domain.UpdateIdentityParams
+	profile       domain.AccountIdentity
+	profileErr    error
+	profileUser   uuid.UUID
 }
 
 func (s *accountTestStore) AccountOverview(_ context.Context, user uuid.UUID) (domain.AccountOverview, error) {
@@ -44,6 +47,11 @@ func (s *accountTestStore) ListAccountUsage(_ context.Context, user uuid.UUID, l
 func (s *accountTestStore) UpdateIdentity(_ context.Context, input domain.UpdateIdentityParams) (domain.User, error) {
 	s.identityInput = input
 	return s.identity, s.identityErr
+}
+
+func (s *accountTestStore) AccountIdentity(_ context.Context, user uuid.UUID) (domain.AccountIdentity, error) {
+	s.profileUser = user
+	return s.profile, s.profileErr
 }
 
 func newAccountRouter(t *testing.T, store *accountTestStore) (http.Handler, auth.TokenIssuer, time.Time) {
@@ -121,6 +129,38 @@ func TestAccountUsageIsStrictlySubjectScopedAndValidatesPagination(t *testing.T)
 	}
 }
 
+func TestAccountIdentityProfileIsSubjectScopedAndMasked(t *testing.T) {
+	owner := uuid.New()
+	store := &accountTestStore{adminContractStore: adminContractStore{enabled: true}, profile: domain.AccountIdentity{Username: "alice_01", Email: "alice@example.test", MaskedPhone: "+86138****8000"}}
+	router, issuer, now := newAccountRouter(t, store)
+	response := accountRequest(router, http.MethodGet, "/api/v1/account/identity", adminAccessToken(t, issuer, owner, domain.RoleUser, now), "")
+	if response.Code != http.StatusOK || store.profileUser != owner {
+		t.Fatalf("status/subject = %d/%s", response.Code, store.profileUser)
+	}
+	assertJSONSchema(t, response.Body.Bytes(), object(map[string]jsonSchema{"username": {}, "email": {allowSensitive: true}, "masked_phone": {}}))
+	for _, forbidden := range []string{"+8613800138000", "password", "token", "phone"} {
+		if strings.Contains(response.Body.String(), forbidden) && forbidden != "phone" {
+			t.Fatalf("profile leaked %q", forbidden)
+		}
+	}
+}
+
+func TestAccountIdentityProfileSupportsLegacyAndRejectsDisabledSubject(t *testing.T) {
+	owner := uuid.New()
+	store := &accountTestStore{adminContractStore: adminContractStore{enabled: true}, profile: domain.AccountIdentity{Username: "旧版用户", Email: "legacy@example.test"}}
+	router, issuer, now := newAccountRouter(t, store)
+	token := adminAccessToken(t, issuer, owner, domain.RoleUser, now)
+	response := accountRequest(router, http.MethodGet, "/api/v1/account/identity", token, "")
+	if response.Code != http.StatusOK || strings.Contains(response.Body.String(), "masked_phone") {
+		t.Fatalf("legacy profile = %d %s", response.Code, response.Body.String())
+	}
+	store.enabled = false
+	response = accountRequest(router, http.MethodGet, "/api/v1/account/identity", token, "")
+	if response.Code != http.StatusUnauthorized || store.profileUser != owner {
+		t.Fatalf("disabled profile = %d/%s", response.Code, store.profileUser)
+	}
+}
+
 func TestAccountIdentityNormalizesAndReturnsOnlyPublicUser(t *testing.T) {
 	owner := uuid.New()
 	store := &accountTestStore{adminContractStore: adminContractStore{enabled: true}, identity: domain.User{ID: owner, Username: "alice_01", Email: "alice@example.test", Phone: "+8613800138000", Role: string(domain.RoleUser)}}
@@ -195,8 +235,9 @@ var forbiddenResponseKeys = map[string]bool{
 }
 
 type jsonSchema struct {
-	fields  map[string]jsonSchema
-	element *jsonSchema
+	fields         map[string]jsonSchema
+	element        *jsonSchema
+	allowSensitive bool
 }
 
 func object(fields map[string]jsonSchema) jsonSchema { return jsonSchema{fields: fields} }
@@ -225,7 +266,7 @@ func validateJSONValueSchema(value any, schema jsonSchema, path string) error {
 		}
 		for key, child := range item {
 			childSchema, allowed := schema.fields[key]
-			if forbiddenResponseKeys[key] || !allowed {
+			if (!childSchema.allowSensitive && forbiddenResponseKeys[key]) || !allowed {
 				return fmt.Errorf("unexpected response key %s.%s", path, key)
 			}
 			if err := validateJSONValueSchema(child, childSchema, path+"."+key); err != nil {

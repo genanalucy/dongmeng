@@ -100,6 +100,7 @@ func NewRouter(options RouterOptions) http.Handler {
 		r.Get("/api/v1/users/me/devices", api.devices)
 		r.Get("/api/v1/account/overview", api.accountOverview)
 		r.Get("/api/v1/account/usage", api.accountUsage)
+		r.Get("/api/v1/account/identity", api.accountIdentityProfile)
 		r.Patch("/api/v1/account/identity", api.accountIdentity)
 		r.Get("/api/v1/entitlements/current", api.entitlement)
 		r.Post("/api/v1/redemptions", api.redeem)

@@ -386,6 +386,21 @@ func (a api) accountUsage(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"usage": items})
 }
 
+func (a api) accountIdentityProfile(w http.ResponseWriter, r *http.Request) {
+	p, _ := current(r)
+	profile, err := a.store.AccountIdentity(r.Context(), p.id)
+	if err != nil {
+		domainError(w, r, err)
+		return
+	}
+	response := struct {
+		Username    string `json:"username"`
+		Email       string `json:"email"`
+		MaskedPhone string `json:"masked_phone,omitempty"`
+	}{Username: profile.Username, Email: profile.Email, MaskedPhone: profile.MaskedPhone}
+	writeJSON(w, http.StatusOK, response)
+}
+
 func (a api) accountIdentity(w http.ResponseWriter, r *http.Request) {
 	var request struct {
 		Username        string `json:"username"`
