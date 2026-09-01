@@ -30,6 +30,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
@@ -39,6 +40,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -51,6 +53,8 @@ import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -60,12 +64,16 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.launch
 import com.verba.interpretation.ui.ChatFollowEvent
 import com.verba.interpretation.ui.ChatFollowPolicy
 import com.verba.interpretation.ui.ChatFollowState
 
 internal fun interpretationTimelineLatestIndex(bubbleCount: Int, hasError: Boolean): Int =
-    (bubbleCount + if (hasError) 1 else 0).coerceAtLeast(1) - 1
+    interpretationTimelineScrollIndex(bubbleCount, hasError) ?: 0
+
+internal fun interpretationTimelineScrollIndex(bubbleCount: Int, hasError: Boolean): Int? =
+    (bubbleCount + if (hasError) 1 else 0).takeIf { it > 0 }?.minus(1)
 
 internal fun interpretationTimelineUpdateCount(
     previousToken: List<String>,
@@ -95,27 +103,31 @@ fun InterpretationScreen(
         it == InterpretationAction.PAUSE || it == InterpretationAction.RESUME || it == InterpretationAction.FINISH
     }
     val listState = rememberLazyListState()
+    val scope = rememberCoroutineScope()
     val timelineToken = remember(model) { model.timelineToken() }
-    val latestIndex = interpretationTimelineLatestIndex(model.bubbles.size, model.errorMessage != null)
+    val scrollIndex = interpretationTimelineScrollIndex(model.bubbles.size, model.errorMessage != null)
+    val latestIndex = scrollIndex ?: 0
+    val currentScrollIndex by rememberUpdatedState(scrollIndex)
     var previousToken by remember { mutableStateOf<List<String>?>(null) }
     val atLatest by remember(listState, latestIndex) {
         derivedStateOf {
-            listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index?.let { it >= latestIndex } ?: true
+            val visibleItems = listState.layoutInfo.visibleItemsInfo
+            visibleItems.lastOrNull()?.index?.let { lastVisibleIndex -> lastVisibleIndex >= latestIndex } ?: true
         }
     }
-    val follow = remember { mutableStateOf(ChatFollowState()) }
+    var follow by remember { mutableStateOf(ChatFollowState()) }
     LaunchedEffect(atLatest) {
-        follow.value = ChatFollowPolicy.reduce(
-            follow.value,
+        follow = ChatFollowPolicy.reduce(
+            follow,
             if (atLatest) ChatFollowEvent.UserReachedLatest else ChatFollowEvent.UserLeftLatest,
         )
     }
-    LaunchedEffect(timelineToken) {
+    LaunchedEffect(timelineToken, latestIndex) {
         val before = previousToken
-        val updates = if (before == null) 0 else interpretationTimelineUpdateCount(before, timelineToken)
+        val updates = if (before == null) 1 else interpretationTimelineUpdateCount(before, timelineToken)
         if (updates > 0) {
-            follow.value = ChatFollowPolicy.reduce(follow.value, ChatFollowEvent.TranscriptChanged(updates))
-            if (follow.value.followsLatest) listState.animateScrollToItem(latestIndex)
+            follow = ChatFollowPolicy.reduce(follow, ChatFollowEvent.TranscriptChanged(updates))
+            if (follow.followsLatest) scrollIndex?.let { listState.animateScrollToItem(it) }
         }
         previousToken = timelineToken
     }
@@ -128,24 +140,42 @@ fun InterpretationScreen(
             onExit = { InterpretationActionDispatcher.exit(callbacks) },
         )
         // Keep long transcript/error content scrollable so the pinned controls remain reachable.
-        LazyColumn(
-            state = listState,
-            modifier = Modifier.weight(1f),
-            contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(20.dp),
-        ) {
-            items(model.bubbles, key = InterpretationDisplayBubble::key) { bubble ->
-                InterpretationBubble(bubble)
-            }
-            model.errorMessage?.let { error ->
-                item {
-                    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)) {
-                        Text(
-                            text = error,
-                            modifier = Modifier.padding(16.dp),
-                            color = MaterialTheme.colorScheme.onErrorContainer,
-                        )
+        Box(modifier = Modifier.weight(1f)) {
+            LazyColumn(
+                state = listState,
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(20.dp),
+            ) {
+                items(model.bubbles, key = InterpretationDisplayBubble::key) { bubble ->
+                    InterpretationBubble(bubble)
+                }
+                model.errorMessage?.let { error ->
+                    item {
+                        Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)) {
+                            Text(
+                                text = error,
+                                modifier = Modifier.padding(16.dp),
+                                color = MaterialTheme.colorScheme.onErrorContainer,
+                            )
+                        }
                     }
+                }
+            }
+            if (!follow.followsLatest) {
+                FloatingActionButton(
+                    onClick = {
+                        follow = ChatFollowPolicy.reduce(follow, ChatFollowEvent.UserTappedLatest)
+                        currentScrollIndex?.let { index ->
+                            scope.launch { listState.animateScrollToItem(index) }
+                        }
+                    },
+                    modifier = Modifier.align(Alignment.BottomEnd).padding(20.dp).size(48.dp),
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.ArrowDownward,
+                        contentDescription = "回到最新字幕",
+                    )
                 }
             }
         }

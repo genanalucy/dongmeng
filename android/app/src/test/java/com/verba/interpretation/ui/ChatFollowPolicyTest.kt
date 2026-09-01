@@ -7,11 +7,17 @@ import org.junit.Test
 
 class ChatFollowPolicyTest {
     @Test
-    fun transcriptUpdatesStayFollowingAtLatest() {
-        val next = ChatFollowPolicy.reduce(ChatFollowState(), ChatFollowEvent.TranscriptChanged(1))
+    fun defaultStateFollowsLatest() {
+        assertTrue(ChatFollowState().followsLatest)
+    }
 
-        assertTrue(next.followsLatest)
-        assertEquals(0, next.unseenUpdates)
+    @Test
+    fun bubbleOrErrorUpdateKeepsFollowingAndClearsUnseenUpdates() {
+        val afterBubble = ChatFollowPolicy.reduce(ChatFollowState(), ChatFollowEvent.TranscriptChanged(1))
+        val afterError = ChatFollowPolicy.reduce(afterBubble, ChatFollowEvent.TranscriptChanged(1))
+
+        assertTrue(afterError.followsLatest)
+        assertEquals(0, afterError.unseenUpdates)
     }
 
     @Test
@@ -29,6 +35,13 @@ class ChatFollowPolicyTest {
         val state = ChatFollowState(followsLatest = false, unseenUpdates = 4)
 
         assertEquals(ChatFollowState(), ChatFollowPolicy.reduce(state, ChatFollowEvent.UserReachedLatest))
+    }
+
+    @Test
+    fun tappingReturnToLatestResumesFollowing() {
+        val paused = ChatFollowState(followsLatest = false, unseenUpdates = 2)
+
+        assertEquals(ChatFollowState(), ChatFollowPolicy.reduce(paused, ChatFollowEvent.UserTappedLatest))
     }
 
     @Test

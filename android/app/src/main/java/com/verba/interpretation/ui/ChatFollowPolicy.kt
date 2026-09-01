@@ -9,13 +9,16 @@ data class ChatFollowState(
 sealed interface ChatFollowEvent {
     data object UserLeftLatest : ChatFollowEvent
     data object UserReachedLatest : ChatFollowEvent
+    data object UserTappedLatest : ChatFollowEvent
     data class TranscriptChanged(val addedItems: Int) : ChatFollowEvent
 }
 
 object ChatFollowPolicy {
     fun reduce(state: ChatFollowState, event: ChatFollowEvent): ChatFollowState = when (event) {
         ChatFollowEvent.UserLeftLatest -> state.copy(followsLatest = false)
-        ChatFollowEvent.UserReachedLatest -> ChatFollowState(followsLatest = true)
+        ChatFollowEvent.UserReachedLatest,
+        ChatFollowEvent.UserTappedLatest,
+        -> ChatFollowState(followsLatest = true)
         is ChatFollowEvent.TranscriptChanged -> {
             if (state.followsLatest) {
                 state.copy(unseenUpdates = 0)
