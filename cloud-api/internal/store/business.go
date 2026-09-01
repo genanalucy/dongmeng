@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dngmeng/cloud-api/internal/auth"
 	"github.com/dngmeng/cloud-api/internal/domain"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -265,6 +266,60 @@ func (p *Postgres) ListUsageRecords(ctx context.Context, user uuid.UUID, limit, 
 		out = append(out, v)
 	}
 	return out, rows.Err()
+}
+
+func (p *Postgres) AccountOverview(ctx context.Context, user uuid.UUID) (domain.AccountOverview, error) {
+	accountUser, err := p.UserByID(ctx, user)
+	if err != nil {
+		return domain.AccountOverview{}, err
+	}
+	var summary domain.UsageSummary
+	if err := p.pool.QueryRow(ctx, `SELECT COALESCE(sum(audio_seconds), 0), count(*), max(created_at) FROM usage_records WHERE user_id=$1`, user).Scan(&summary.AudioSeconds, &summary.SessionCount, &summary.LastUsedAt); err != nil {
+		return domain.AccountOverview{}, storeErr(err)
+	}
+	var entitlement domain.Entitlement
+	err = p.pool.QueryRow(ctx, `SELECT id,user_id,kind,starts_at,expires_at FROM entitlements WHERE user_id=$1 AND revoked_at IS NULL ORDER BY expires_at DESC,id DESC LIMIT 1`, user).Scan(&entitlement.ID, &entitlement.UserID, &entitlement.Kind, &entitlement.StartsAt, &entitlement.ExpiresAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.AccountOverview{User: accountUser, Usage: summary}, nil
+	}
+	if err != nil {
+		return domain.AccountOverview{}, storeErr(err)
+	}
+	return domain.AccountOverview{User: accountUser, Entitlement: &entitlement, Usage: summary}, nil
+}
+
+func (p *Postgres) ListAccountUsage(ctx context.Context, user uuid.UUID, limit, offset int) ([]domain.AccountUsage, error) {
+	rows, err := p.pool.Query(ctx, `SELECT s.id,s.created_at,s.ended_at,COALESCE(u.audio_seconds,0) FROM translation_sessions s LEFT JOIN usage_records u ON u.session_id=s.id AND u.user_id=s.user_id WHERE s.user_id=$1 ORDER BY s.created_at DESC,s.id DESC LIMIT $2 OFFSET $3`, user, limit, offset)
+	if err != nil {
+		return nil, storeErr(err)
+	}
+	defer rows.Close()
+	out := []domain.AccountUsage{}
+	for rows.Next() {
+		var value domain.AccountUsage
+		if err := rows.Scan(&value.SessionID, &value.StartedAt, &value.EndedAt, &value.DurationSeconds); err != nil {
+			return nil, storeErr(err)
+		}
+		out = append(out, value)
+	}
+	return out, storeErr(rows.Err())
+}
+
+func (p *Postgres) UpdateIdentity(ctx context.Context, input domain.UpdateIdentityParams) (domain.User, error) {
+	var user domain.User
+	err := p.tx(ctx, func(t pgx.Tx) error {
+		var hash string
+		if err := t.QueryRow(ctx, `SELECT password_hash FROM users WHERE id=$1 AND disabled_at IS NULL FOR UPDATE`, input.UserID).Scan(&hash); err != nil {
+			return storeErr(err)
+		}
+		valid, err := auth.VerifyPassword(hash, input.CurrentPassword)
+		if err != nil || !valid {
+			return domain.ErrUnauthorized
+		}
+		return storeErr(t.QueryRow(ctx, `UPDATE users SET username=$2,email=$3,phone=$4 WHERE id=$1 RETURNING id,username,phone,email,role,created_at`, input.UserID, input.Username, input.Email, input.Phone).Scan(&user.ID, &user.Username, &user.Phone, &user.Email, &user.Role, &user.CreatedAt))
+	})
+	user.Email = publicEmail(user.Email)
+	return user, err
 }
 
 func (p *Postgres) ListDevices(ctx context.Context, user uuid.UUID) ([]domain.Device, error) {

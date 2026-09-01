@@ -22,6 +22,9 @@ All endpoints below require exactly one `Authorization: Bearer <access JWT>`.
 | POST | `/api/v1/auth/logout` | `refresh_token`; revokes its family |
 | GET | `/api/v1/users/me` | current user |
 | GET | `/api/v1/users/me/devices` | devices observed from persisted `install_id` values |
+| GET | `/api/v1/account/overview` | safe username, latest entitlement status and caller-owned aggregate usage; never exposes email or phone |
+| GET | `/api/v1/account/usage?limit=1..50&offset>=0` | caller-owned paged session summaries; both pagination parameters are required |
+| PATCH | `/api/v1/account/identity` | `username`, `email`, `phone`, `current_password`; canonicalizes identities, requires the current password, and returns only the public user profile |
 | GET | `/api/v1/entitlements/current` | active, non-revoked entitlement |
 | POST | `/api/v1/redemptions` | `code`; one-time canonicalized code redemption creates a fixed 365-day entitlement |
 | POST/GET | `/api/v1/translation-sessions` | POST requires an opaque client `install_id`; one active session per user; GET lists caller-owned sessions |

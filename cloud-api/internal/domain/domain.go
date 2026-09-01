@@ -505,4 +505,5 @@ type Store interface {
 	ListTranslationSessions(context.Context, uuid.UUID, int, int) ([]TranslationSession, error)
 	ListDevices(context.Context, uuid.UUID) ([]Device, error)
 	ListAuditLogs(context.Context, int, int) ([]AuditLog, error)
+	AccountStore
 }

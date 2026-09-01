@@ -317,6 +317,118 @@ func (a api) devices(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"devices": v})
 }
 
+type accountEntitlementResponse struct {
+	Kind             string    `json:"kind,omitempty"`
+	StartsAt         time.Time `json:"starts_at,omitempty"`
+	ExpiresAt        time.Time `json:"expires_at,omitempty"`
+	Active           bool      `json:"active"`
+	RemainingSeconds int64     `json:"remaining_seconds"`
+}
+
+type accountUsageSummaryResponse struct {
+	AudioSeconds int        `json:"audio_seconds"`
+	SessionCount int        `json:"session_count"`
+	LastUsedAt   *time.Time `json:"last_used_at"`
+}
+
+func (a api) accountOverview(w http.ResponseWriter, r *http.Request) {
+	p, _ := current(r)
+	value, err := a.store.AccountOverview(r.Context(), p.id)
+	if err != nil {
+		domainError(w, r, err)
+		return
+	}
+	response := struct {
+		Username    string                      `json:"username"`
+		Entitlement accountEntitlementResponse  `json:"entitlement"`
+		Usage       accountUsageSummaryResponse `json:"usage"`
+	}{Username: publicUser(value.User).Username, Usage: accountUsageSummaryResponse{AudioSeconds: value.Usage.AudioSeconds, SessionCount: value.Usage.SessionCount, LastUsedAt: value.Usage.LastUsedAt}}
+	if value.Entitlement != nil {
+		response.Entitlement.Kind = value.Entitlement.Kind
+		response.Entitlement.StartsAt = value.Entitlement.StartsAt
+		response.Entitlement.ExpiresAt = value.Entitlement.ExpiresAt
+		response.Entitlement.Active = value.Entitlement.ActiveAt(a.now())
+		if response.Entitlement.Active {
+			response.Entitlement.RemainingSeconds = int64(value.Entitlement.ExpiresAt.Sub(a.now()).Seconds())
+		}
+	}
+	writeJSON(w, http.StatusOK, response)
+}
+
+func accountPage(r *http.Request) (int, int, error) {
+	limitText, offsetText := r.URL.Query().Get("limit"), r.URL.Query().Get("offset")
+	if limitText == "" || offsetText == "" {
+		return 0, 0, domain.ErrInvalid
+	}
+	limit, err := strconv.Atoi(limitText)
+	if err != nil || limit < 1 || limit > 50 {
+		return 0, 0, domain.ErrInvalid
+	}
+	offset, err := strconv.Atoi(offsetText)
+	if err != nil || offset < 0 {
+		return 0, 0, domain.ErrInvalid
+	}
+	return limit, offset, nil
+}
+
+func (a api) accountUsage(w http.ResponseWriter, r *http.Request) {
+	limit, offset, err := accountPage(r)
+	if err != nil {
+		inputError(w, r)
+		return
+	}
+	p, _ := current(r)
+	items, err := a.store.ListAccountUsage(r.Context(), p.id, limit, offset)
+	if err != nil {
+		domainError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"usage": items})
+}
+
+func (a api) accountIdentity(w http.ResponseWriter, r *http.Request) {
+	var request struct {
+		Username        string `json:"username"`
+		Email           string `json:"email"`
+		Phone           string `json:"phone"`
+		CurrentPassword string `json:"current_password"`
+	}
+	if decode(w, r, &request) != nil || request.Username == "" || request.Email == "" || request.Phone == "" || request.CurrentPassword == "" {
+		inputError(w, r)
+		return
+	}
+	username, err := domain.ParseUsername(request.Username)
+	if err != nil {
+		inputError(w, r)
+		return
+	}
+	email, err := domain.ParseEmail(request.Email)
+	if err != nil {
+		inputError(w, r)
+		return
+	}
+	phone, err := domain.ParsePhone(request.Phone)
+	if err != nil {
+		inputError(w, r)
+		return
+	}
+	if _, err = domain.ParsePassword(request.CurrentPassword); err != nil {
+		inputError(w, r)
+		return
+	}
+	p, _ := current(r)
+	user, err := a.store.UpdateIdentity(r.Context(), domain.UpdateIdentityParams{UserID: p.id, Username: username.String(), Email: email.String(), Phone: phone.String(), CurrentPassword: request.CurrentPassword})
+	if errors.Is(err, domain.ErrUnauthorized) || errors.Is(err, domain.ErrNotFound) || errors.Is(err, domain.ErrForbidden) {
+		invalidCredentials(w, r)
+		return
+	}
+	if err != nil {
+		domainError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, publicUser(user))
+}
+
 func (a api) entitlement(w http.ResponseWriter, r *http.Request) {
 	p, _ := current(r)
 	v, e := a.authorizer.ActiveEntitlement(r.Context(), p.id, a.now())
