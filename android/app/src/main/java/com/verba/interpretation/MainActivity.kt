@@ -113,6 +113,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.error
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
@@ -137,9 +138,7 @@ import com.verba.interpretation.ui.AccountSecondaryDestination
 import com.verba.interpretation.ui.AccountUiState
 import com.verba.interpretation.ui.facetoface.FaceToFaceScreen
 import com.verba.interpretation.ui.account.AccountScreen
-import com.verba.interpretation.ui.account.AuthenticationMode
-import com.verba.interpretation.ui.account.PhoneAuthenticationFormPolicy
-import com.verba.interpretation.ui.account.PhoneAuthenticationSubmissionPolicy
+import com.verba.interpretation.ui.account.PhoneAuthenticationForm
 import com.verba.interpretation.ui.interpretation.InterpretationScreen
 import com.verba.interpretation.ui.interpretation.InterpretationUiMapper
 import com.verba.interpretation.ui.AccountViewModel
@@ -1092,11 +1091,6 @@ private fun AccountPage(
     accountViewModel: AccountViewModel = viewModel(),
 ) {
     val state by accountViewModel.state.collectAsStateWithLifecycle()
-    var authenticationMode by remember { mutableStateOf(AuthenticationMode.LOGIN) }
-    var username by remember { mutableStateOf("") }
-    var phone by remember { mutableStateOf("") }
-    var password by remember { mutableStateOf("") }
-    var confirmation by remember { mutableStateOf("") }
     var redemptionCode by remember { mutableStateOf("") }
     if (state.signedIn) {
         AccountScreen(
@@ -1137,100 +1131,11 @@ private fun AccountPage(
             }
             if (!state.signedIn) {
                 item {
-                    val login = PhoneAuthenticationFormPolicy.login(phone, password)
-                    val registration = PhoneAuthenticationFormPolicy.register(username, phone, password, confirmation)
-                    if (authenticationMode == AuthenticationMode.LOGIN) {
-                        Text("手机号登录", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                        OutlinedTextField(
-                            value = phone,
-                            onValueChange = { phone = it },
-                            label = { Text("手机号") },
-                            singleLine = true,
-                            isError = login.phoneError != null,
-                            supportingText = login.phoneError?.let { { Text(it) } },
-                            keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = KeyboardType.Phone, imeAction = ImeAction.Next),
-                            modifier = Modifier.fillMaxWidth().padding(top = 10.dp).heightIn(min = 48.dp).semantics { contentDescription = "手机号" },
-                        )
-                        OutlinedTextField(
-                            value = password,
-                            onValueChange = { password = it },
-                            label = { Text("密码") },
-                            singleLine = true,
-                            isError = login.passwordError != null,
-                            supportingText = login.passwordError?.let { { Text(it) } },
-                            visualTransformation = PasswordVisualTransformation(),
-                            keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Done),
-                            modifier = Modifier.fillMaxWidth().padding(top = 10.dp).heightIn(min = 48.dp).semantics { contentDescription = "密码" },
-                        )
-                        Button(
-                            onClick = { PhoneAuthenticationSubmissionPolicy.submitLogin(phone, password, accountViewModel::login) },
-                            enabled = !state.loading && login.isValid,
-                            modifier = Modifier.fillMaxWidth().padding(top = 10.dp).heightIn(min = 48.dp).semantics { contentDescription = "登录" },
-                        ) { Text(if (state.loading) "处理中…" else "登录") }
-                        TextButton(
-                            onClick = { authenticationMode = AuthenticationMode.REGISTER },
-                            enabled = !state.loading,
-                            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).semantics { contentDescription = "注册账户" },
-                        ) { Text("注册账户") }
-                    } else {
-                        Text("注册账户", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                        OutlinedTextField(
-                            value = username,
-                            onValueChange = { username = it },
-                            label = { Text("用户名") },
-                            singleLine = true,
-                            isError = registration.usernameError != null,
-                            supportingText = registration.usernameError?.let { { Text(it) } },
-                            keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(imeAction = ImeAction.Next),
-                            modifier = Modifier.fillMaxWidth().padding(top = 10.dp).heightIn(min = 48.dp).semantics { contentDescription = "用户名" },
-                        )
-                        OutlinedTextField(
-                            value = phone,
-                            onValueChange = { phone = it },
-                            label = { Text("手机号") },
-                            singleLine = true,
-                            isError = registration.phoneError != null,
-                            supportingText = registration.phoneError?.let { { Text(it) } },
-                            keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = KeyboardType.Phone, imeAction = ImeAction.Next),
-                            modifier = Modifier.fillMaxWidth().padding(top = 10.dp).heightIn(min = 48.dp).semantics { contentDescription = "手机号" },
-                        )
-                        OutlinedTextField(
-                            value = password,
-                            onValueChange = { password = it },
-                            label = { Text("密码") },
-                            singleLine = true,
-                            isError = registration.passwordError != null,
-                            supportingText = registration.passwordError?.let { { Text(it) } },
-                            visualTransformation = PasswordVisualTransformation(),
-                            keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Next),
-                            modifier = Modifier.fillMaxWidth().padding(top = 10.dp).heightIn(min = 48.dp).semantics { contentDescription = "密码" },
-                        )
-                        OutlinedTextField(
-                            value = confirmation,
-                            onValueChange = { confirmation = it },
-                            label = { Text("确认密码") },
-                            singleLine = true,
-                            isError = registration.confirmationError != null,
-                            supportingText = registration.confirmationError?.let { { Text(it) } },
-                            visualTransformation = PasswordVisualTransformation(),
-                            keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Done),
-                            modifier = Modifier.fillMaxWidth().padding(top = 10.dp).heightIn(min = 48.dp).semantics { contentDescription = "确认密码" },
-                        )
-                        Button(
-                            onClick = {
-                                PhoneAuthenticationSubmissionPolicy.submitRegistration(
-                                    username, phone, password, confirmation, accountViewModel::register,
-                                )
-                            },
-                            enabled = !state.loading && registration.isValid,
-                            modifier = Modifier.fillMaxWidth().padding(top = 10.dp).heightIn(min = 48.dp).semantics { contentDescription = "提交注册" },
-                        ) { Text(if (state.loading) "处理中…" else "注册") }
-                        TextButton(
-                            onClick = { authenticationMode = AuthenticationMode.LOGIN },
-                            enabled = !state.loading,
-                            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).semantics { contentDescription = "返回登录" },
-                        ) { Text("返回登录") }
-                    }
+                    PhoneAuthenticationForm(
+                        loading = state.loading,
+                        onLogin = accountViewModel::login,
+                        onRegister = accountViewModel::register,
+                    )
                 }
             } else {
                 if (state.isAdmin && state.previewingUserExperience) {
