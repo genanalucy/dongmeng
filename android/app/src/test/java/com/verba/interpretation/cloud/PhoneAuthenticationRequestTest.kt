@@ -11,18 +11,18 @@ class PhoneAuthenticationRequestTest {
         val payload = JSONObject(PhoneRegistrationRequest("alice_01", "+8613800138000", "Passw0rd").toJson())
 
         assertEquals(3, payload.length())
-        assertTrue(payload.has("username"))
-        assertTrue(payload.has("phone"))
+        assertEquals("alice_01", payload.getString("username"))
+        assertEquals("+8613800138000", payload.getString("phone"))
+        assertEquals("Passw0rd", payload.getString("password"))
         assertFalse(payload.has("email"))
-        assertTrue(payload.has("password"))
     }
 
     @Test fun loginRequestContainsOnlyPhoneAndPassword() {
         val payload = JSONObject(PhoneLoginRequest("+8613800138000", "Passw0rd").toJson())
 
         assertEquals(2, payload.length())
-        assertTrue(payload.has("phone"))
+        assertEquals("+8613800138000", payload.getString("phone"))
+        assertEquals("Passw0rd", payload.getString("password"))
         assertFalse(payload.has("email"))
-        assertTrue(payload.has("password"))
     }
 }

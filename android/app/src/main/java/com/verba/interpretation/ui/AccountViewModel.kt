@@ -3,6 +3,7 @@ package com.verba.interpretation.ui
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.verba.interpretation.cloud.AccountApi
 import com.verba.interpretation.cloud.CloudApi
 import com.verba.interpretation.cloud.CloudEndpointSettings
 import com.verba.interpretation.cloud.CloudEntitlement
@@ -10,6 +11,7 @@ import com.verba.interpretation.cloud.CloudRole
 import com.verba.interpretation.cloud.CloudUser
 import com.verba.interpretation.cloud.KeystoreTokenStore
 import com.verba.interpretation.cloud.SharedPreferencesInstallationIdStore
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -34,8 +36,11 @@ data class AccountUiState(
         }
 }
 
-class AccountViewModel(application: Application) : AndroidViewModel(application) {
-    private val api = CloudApi(CloudEndpointSettings(application), KeystoreTokenStore(application), SharedPreferencesInstallationIdStore(application))
+class AccountViewModel(
+    application: Application,
+    private val api: AccountApi = CloudApi(CloudEndpointSettings(application), KeystoreTokenStore(application), SharedPreferencesInstallationIdStore(application)),
+    private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
+) : AndroidViewModel(application) {
     private val mutableState = MutableStateFlow(AccountUiState())
     val state: StateFlow<AccountUiState> = mutableState.asStateFlow()
 
@@ -52,8 +57,6 @@ class AccountViewModel(application: Application) : AndroidViewModel(application)
         api.currentUser() to api.currentEntitlement()
     }
 
-    // Temporary bridge for the pre-Task5 form; it does not add an email authentication path.
-    fun register(legacyIdentifierInput: String, password: String) = register("", legacyIdentifierInput, password)
 
     fun login(phone: String, password: String) = runRequest {
         api.login(phone, password)
@@ -68,7 +71,7 @@ class AccountViewModel(application: Application) : AndroidViewModel(application)
     fun logout() {
         viewModelScope.launch {
             mutableState.value = mutableState.value.copy(loading = true, message = null)
-            withContext(Dispatchers.IO) { api.logout() }
+            withContext(ioDispatcher) { api.logout() }
             mutableState.value = AccountUiState(message = "已退出登录。")
         }
     }
@@ -86,7 +89,7 @@ class AccountViewModel(application: Application) : AndroidViewModel(application)
         viewModelScope.launch {
             mutableState.value = mutableState.value.copy(loading = true, message = null)
             try {
-                val (user, entitlement) = withContext(Dispatchers.IO) { block() }
+                val (user, entitlement) = withContext(ioDispatcher) { block() }
                 mutableState.value = AccountUiState(
                     user = user,
                     entitlement = entitlement,

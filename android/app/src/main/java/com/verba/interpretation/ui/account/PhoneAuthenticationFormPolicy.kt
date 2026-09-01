@@ -43,7 +43,7 @@ object PhoneAuthenticationFormPolicy {
             normalizedPhone = normalizedPhone,
             usernameError = if (isValidUsername(normalizedUsername)) null else InvalidUsernameMessage,
             phoneError = if (normalizedPhone.isNotEmpty()) null else InvalidPhoneMessage,
-            passwordError = passwordError(password, required = false),
+            passwordError = registrationPasswordError(password),
             confirmationError = if (confirmation == password) null else MismatchedPasswordMessage,
         )
     }
@@ -53,7 +53,7 @@ object PhoneAuthenticationFormPolicy {
         return PhoneLoginFormValidation(
             normalizedPhone = normalizedPhone,
             phoneError = if (normalizedPhone.isNotEmpty()) null else InvalidPhoneMessage,
-            passwordError = passwordError(password, required = true),
+            passwordError = if (password.isEmpty()) EmptyPasswordMessage else null,
         )
     }
 
@@ -69,8 +69,7 @@ object PhoneAuthenticationFormPolicy {
         }
     }
 
-    private fun passwordError(password: String, required: Boolean): String? = when {
-        password.isEmpty() && required -> EmptyPasswordMessage
+    private fun registrationPasswordError(password: String): String? = when {
         password.length < 8 -> ShortPasswordMessage
         password.none { it in 'A'..'Z' } -> MissingUppercaseMessage
         password.none { it in 'a'..'z' } -> MissingLowercaseMessage

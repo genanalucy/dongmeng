@@ -139,6 +139,7 @@ import com.verba.interpretation.ui.facetoface.FaceToFaceScreen
 import com.verba.interpretation.ui.account.AccountScreen
 import com.verba.interpretation.ui.account.AuthenticationMode
 import com.verba.interpretation.ui.account.RegistrationFormPolicy
+import com.verba.interpretation.ui.account.LegacyAuthenticationEntryPolicy
 import com.verba.interpretation.ui.account.RegistrationModeCallbacks
 import com.verba.interpretation.ui.account.RegistrationModeDispatcher
 import com.verba.interpretation.ui.interpretation.InterpretationScreen
@@ -1097,6 +1098,7 @@ private fun AccountPage(
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
     var confirmation by remember { mutableStateOf("") }
+    var legacyAuthenticationNotice by remember { mutableStateOf<String?>(null) }
     var redemptionCode by remember { mutableStateOf("") }
     if (state.signedIn) {
         AccountScreen(
@@ -1162,7 +1164,7 @@ private fun AccountPage(
                             modifier = Modifier.fillMaxWidth().padding(top = 10.dp).heightIn(min = 48.dp),
                         )
                         Button(
-                            onClick = { accountViewModel.login(email.trim(), password) },
+                            onClick = { legacyAuthenticationNotice = LegacyAuthenticationEntryPolicy.reject() },
                             enabled = !state.loading && email.isNotBlank() && password.isNotBlank(),
                             modifier = Modifier.fillMaxWidth().padding(top = 10.dp).heightIn(min = 48.dp).semantics { contentDescription = "登录" },
                         ) { Text(if (state.loading) "处理中…" else "登录") }
@@ -1206,7 +1208,7 @@ private fun AccountPage(
                             modifier = Modifier.fillMaxWidth().padding(top = 10.dp).heightIn(min = 48.dp),
                         )
                         Button(
-                            onClick = { accountViewModel.register(registration.normalizedEmail, password) },
+                            onClick = { legacyAuthenticationNotice = LegacyAuthenticationEntryPolicy.reject() },
                             enabled = !state.loading && registration.isValid,
                             modifier = Modifier.fillMaxWidth().padding(top = 10.dp).heightIn(min = 48.dp).semantics { contentDescription = "提交注册" },
                         ) { Text(if (state.loading) "处理中…" else "注册") }
@@ -1235,6 +1237,13 @@ private fun AccountPage(
                             modifier = Modifier.weight(1f),
                         ) { Text(if (state.loading) "处理中…" else "兑换") }
                         OutlinedButton(onClick = accountViewModel::logout, enabled = !state.loading, modifier = Modifier.weight(1f)) { Text("退出登录") }
+                    }
+                }
+            }
+            legacyAuthenticationNotice?.let { notice ->
+                item {
+                    Surface(shape = RoundedCornerShape(14.dp), color = MaterialTheme.colorScheme.errorContainer) {
+                        Text(notice, color = MaterialTheme.colorScheme.onErrorContainer, modifier = Modifier.fillMaxWidth().padding(14.dp))
                     }
                 }
             }

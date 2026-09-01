@@ -41,22 +41,50 @@ interface CloudTranslationSessionService {
     fun endTranslationSession(sessionId: String)
 }
 
-class CloudApi(
-    private val endpointSettings: CloudEndpointSettings,
+interface AccountApi {
+    fun register(username: String, phone: String, password: String)
+    fun login(phone: String, password: String): AuthTokens
+    fun logout()
+    fun currentUser(): CloudUser
+    fun currentEntitlement(): CloudEntitlement?
+    fun redeem(code: String): CloudEntitlement
+    fun hasCredentials(): Boolean
+}
+
+class CloudApi private constructor(
+    private val endpointProvider: () -> String,
     private val tokenStore: TokenStore,
     private val installationIdStore: InstallationIdStore,
-    private val client: OkHttpClient = OkHttpClient(),
-) : CloudTranslationSessionService {
-    fun register(username: String, phone: String, password: String) {
-        publicPost("auth/register", JSONObject(PhoneRegistrationRequest(username, phone, password).toJson()), expected = 201)
+    private val client: OkHttpClient,
+) : CloudTranslationSessionService, AccountApi {
+    constructor(
+        endpointSettings: CloudEndpointSettings,
+        tokenStore: TokenStore,
+        installationIdStore: InstallationIdStore,
+        client: OkHttpClient = OkHttpClient(),
+    ) : this(endpointSettings::current, tokenStore, installationIdStore, client)
+
+    constructor(
+        endpoint: String,
+        tokenStore: TokenStore,
+        installationIdStore: InstallationIdStore,
+        client: OkHttpClient = OkHttpClient(),
+    ) : this({ endpoint }, tokenStore, installationIdStore, client)
+    override fun register(username: String, phone: String, password: String) {
+        try {
+            publicPost("auth/register", JSONObject(PhoneRegistrationRequest(username, phone, password).toJson()), expected = 201)
+        } catch (error: CloudApiException) {
+            if (error.statusCode == 409) throw CloudApiException("该手机号或用户名暂不可用，请更换后重试。", 409)
+            throw error
+        }
     }
 
-    fun login(phone: String, password: String): AuthTokens {
+    override fun login(phone: String, password: String): AuthTokens {
         val response = publicPost("auth/login", JSONObject(PhoneLoginRequest(phone, password).toJson()))
         return parseTokens(response).also(tokenStore::write)
     }
 
-    fun logout() {
+    override fun logout() {
         val tokens = tokenStore.read() ?: return
         try {
             authorizedPost("auth/logout", JSONObject().put("refresh_token", tokens.refreshToken))
@@ -65,7 +93,7 @@ class CloudApi(
         }
     }
 
-    fun currentUser(): CloudUser {
+    override fun currentUser(): CloudUser {
         val json = authorized("users/me")
         return CloudUser(
             id = json.requiredString("id"),
@@ -75,14 +103,14 @@ class CloudApi(
         )
     }
 
-    fun currentEntitlement(): CloudEntitlement? = try {
+    override fun currentEntitlement(): CloudEntitlement? = try {
         val json = authorized("entitlements/current")
         CloudEntitlement(kind = json.requiredString("kind"), expiresAt = json.requiredString("expires_at"))
     } catch (error: CloudApiException) {
         if (error.statusCode == 403 || error.statusCode == 404) null else throw error
     }
 
-    fun redeem(code: String): CloudEntitlement {
+    override fun redeem(code: String): CloudEntitlement {
         val json = authorizedPost("redemptions", JSONObject().put("code", code), expected = 201)
         return CloudEntitlement(kind = json.requiredString("kind"), expiresAt = json.requiredString("expires_at"))
     }
@@ -125,7 +153,7 @@ class CloudApi(
         authorizedPost("translation-sessions/$sessionId/end", JSONObject())
     }
 
-    fun hasCredentials(): Boolean = tokenStore.read() != null
+    override fun hasCredentials(): Boolean = tokenStore.read() != null
 
     private fun publicPost(path: String, body: JSONObject, expected: Int = 200): JSONObject = execute(path, body, null, expected)
 
@@ -167,7 +195,7 @@ class CloudApi(
     )
 
     private fun execute(path: String, body: JSONObject?, accessToken: String?, expected: Int, method: String = "POST"): JSONObject {
-        val url = endpointSettings.current().toHttpUrl().newBuilder().addPathSegments("api/v1/$path").build()
+        val url = endpointProvider().toHttpUrl().newBuilder().addPathSegments("api/v1/$path").build()
         val request = Request.Builder().url(url).apply {
             if (accessToken != null) header("Authorization", "Bearer $accessToken")
             when (method) {
@@ -183,7 +211,7 @@ class CloudApi(
     }
 
     private fun executeNoContent(path: String, body: JSONObject, accessToken: String, expected: Int) {
-        val url = endpointSettings.current().toHttpUrl().newBuilder().addPathSegments("api/v1/$path").build()
+        val url = endpointProvider().toHttpUrl().newBuilder().addPathSegments("api/v1/$path").build()
         val request = Request.Builder().url(url)
             .header("Authorization", "Bearer $accessToken")
             .post(body.toString().toRequestBody(JSON))
