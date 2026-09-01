@@ -8,6 +8,7 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -18,6 +19,8 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
@@ -80,10 +83,11 @@ fun InterpretationScreen(
             contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(20.dp),
         ) {
-            val bubbles = InterpretationDisplayBubble.map(
-                sourceSegments = model.sourceSegments.ifEmpty { listOf("正在等待语音输入") },
-                translationSegments = model.translationSegments.ifEmpty { listOf("翻译结果将显示在这里") },
-            )
+            val bubbles = model.latestTurnId?.let { turnId -> InterpretationDisplayBubble.map(
+                turnId = turnId,
+                sourceSegments = model.sourceSegments,
+                translationSegments = model.translationSegments,
+            ) } ?: emptyList()
             items(bubbles, key = InterpretationDisplayBubble::key) { bubble ->
                 InterpretationBubble(bubble)
             }
@@ -186,24 +190,28 @@ private fun LanguageChip(text: String, modifier: Modifier = Modifier) {
 
 @Composable
 private fun InterpretationBubble(bubble: InterpretationDisplayBubble) {
-    val isSource = bubble.role == InterpretationDisplayBubble.Role.SOURCE
     Surface(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier.fillMaxWidth().semantics {
+            contentDescription = listOfNotNull(
+                bubble.sourceText?.let { "原文。$it" },
+                "译文。${bubble.translationText}",
+            ).joinToString(" ")
+        },
         shape = RoundedCornerShape(20.dp),
-        color = if (isSource) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHigh,
-        tonalElevation = if (isSource) 2.dp else 0.dp,
+        color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
     ) {
         Column(modifier = Modifier.padding(horizontal = 20.dp, vertical = 16.dp)) {
+            bubble.sourceText?.let { source ->
+                Text(text = source, style = MaterialTheme.typography.headlineSmall)
+                Spacer(Modifier.height(9.dp))
+                Box(Modifier.fillMaxWidth().height(1.dp).background(MaterialTheme.colorScheme.outlineVariant))
+                Spacer(Modifier.height(9.dp))
+            }
             Text(
-                text = if (isSource) "原文" else "译文",
-                style = MaterialTheme.typography.labelMedium,
-                color = if (isSource) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Text(
-                text = bubble.text,
-                modifier = Modifier.padding(top = 6.dp),
-                style = if (isSource) MaterialTheme.typography.headlineSmall else MaterialTheme.typography.titleMedium,
-                color = if (isSource) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface,
+                text = bubble.translationText,
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
     }

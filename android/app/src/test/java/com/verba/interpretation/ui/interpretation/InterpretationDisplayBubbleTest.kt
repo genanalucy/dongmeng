@@ -1,26 +1,36 @@
 package com.verba.interpretation.ui.interpretation
 
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class InterpretationDisplayBubbleTest {
-    @Test fun mapsIndependentlySplitSegmentsToNonEmptyUnpairedBubblesWithStableUniqueKeys() {
+    @Test fun pairsLatestTurnSegmentsByIndexWithStableSentenceKeys() {
         val bubbles = InterpretationDisplayBubble.map(
+            turnId = 9,
             sourceSegments = listOf("甲。", "", "乙"),
             translationSegments = listOf("One.", " ", " Two"),
         )
 
         assertEquals(
             listOf(
-                InterpretationDisplayBubble("source-0", "甲。", InterpretationDisplayBubble.Role.SOURCE),
-                InterpretationDisplayBubble("source-2", "乙", InterpretationDisplayBubble.Role.SOURCE),
-                InterpretationDisplayBubble("translation-0", "One.", InterpretationDisplayBubble.Role.TRANSLATION),
-                InterpretationDisplayBubble("translation-2", " Two", InterpretationDisplayBubble.Role.TRANSLATION),
+                InterpretationDisplayBubble("9:0", "甲。", "One."),
+                InterpretationDisplayBubble("9:2", "乙", " Two"),
             ),
             bubbles,
         )
-        assertEquals(bubbles.map { it.key }.distinct().size, bubbles.size)
-        assertTrue(bubbles.none { it.text.isBlank() })
+    }
+
+    @Test fun usesFixedPendingCopyForSourceWithoutTranslation() {
+        assertEquals(
+            listOf(InterpretationDisplayBubble("3:0", "甲。", "正在翻译…")),
+            InterpretationDisplayBubble.map(turnId = 3, sourceSegments = listOf("甲。"), translationSegments = emptyList()),
+        )
+    }
+
+    @Test fun rendersTranslationOnlySegmentWithoutInventingSource() {
+        assertEquals(
+            listOf(InterpretationDisplayBubble("4:0", null, "译文。")),
+            InterpretationDisplayBubble.map(turnId = 4, sourceSegments = emptyList(), translationSegments = listOf("译文。")),
+        )
     }
 }

@@ -8,7 +8,7 @@ import org.junit.Test
 
 class ConversationDisplayBubbleTest {
     @Test
-    fun flattensSourceAndTranslationSeparatelyWhenTheirSplitCountsDiffer() {
+    fun pairsDisplaySentencesByIndexAndKeepsTurnScopedStableKeys() {
         val turn = FaceToFaceTurn(
             id = 42,
             side = FaceToFaceSide.LEFT,
@@ -21,11 +21,29 @@ class ConversationDisplayBubbleTest {
 
         assertEquals(
             listOf(
-                ConversationDisplayBubble("42:source:0", "甲。", FaceToFaceSide.LEFT, "zh", FaceToFaceTurnAlignment.START, false),
-                ConversationDisplayBubble("42:source:1", "乙。", FaceToFaceSide.LEFT, "zh", FaceToFaceTurnAlignment.START, false),
-                ConversationDisplayBubble("42:source:2", "丙", FaceToFaceSide.LEFT, "zh", FaceToFaceTurnAlignment.START, false),
-                ConversationDisplayBubble("42:translation:0", "One.", FaceToFaceSide.LEFT, "en", FaceToFaceTurnAlignment.START, true),
-                ConversationDisplayBubble("42:translation:1", " Two", FaceToFaceSide.LEFT, "en", FaceToFaceTurnAlignment.START, true),
+                ConversationDisplayBubble("42:0", "甲。", "One.", FaceToFaceSide.LEFT, "zh", "en", FaceToFaceTurnAlignment.START),
+                ConversationDisplayBubble("42:1", "乙。", " Two", FaceToFaceSide.LEFT, "zh", "en", FaceToFaceTurnAlignment.START),
+                ConversationDisplayBubble("42:2", "丙", "正在翻译…", FaceToFaceSide.LEFT, "zh", "en", FaceToFaceTurnAlignment.START),
+            ),
+            displayConversationBubbles(listOf(turn)),
+        )
+    }
+
+    @Test
+    fun keepsTranslationOnlySegmentUnpairedAndUsesSpeakingSideAlignment() {
+        val turn = FaceToFaceTurn(
+            id = 7,
+            side = FaceToFaceSide.RIGHT,
+            sourceLanguage = "en",
+            targetLanguage = "zh",
+            route = PlaybackRoute.LEFT,
+            sourceFinals = emptyList(),
+            translationFinals = listOf("译文。"),
+        )
+
+        assertEquals(
+            listOf(
+                ConversationDisplayBubble("7:0", null, "译文。", FaceToFaceSide.RIGHT, "en", "zh", FaceToFaceTurnAlignment.END),
             ),
             displayConversationBubbles(listOf(turn)),
         )

@@ -2,24 +2,22 @@ package com.verba.interpretation.ui.interpretation
 
 data class InterpretationDisplayBubble(
     val key: String,
-    val text: String,
-    val role: Role,
+    val sourceText: String?,
+    val translationText: String,
 ) {
-    enum class Role { SOURCE, TRANSLATION }
-
     companion object {
         fun map(
+            turnId: Long,
             sourceSegments: List<String>,
             translationSegments: List<String>,
-        ): List<InterpretationDisplayBubble> = buildList {
-            addAll(sourceSegments.toBubbles(Role.SOURCE))
-            addAll(translationSegments.toBubbles(Role.TRANSLATION))
-        }
-
-        private fun List<String>.toBubbles(role: Role): List<InterpretationDisplayBubble> =
-            mapIndexedNotNull { index, text ->
-                text.takeUnless(String::isBlank)?.let {
-                    InterpretationDisplayBubble("${role.name.lowercase()}-$index", it, role)
+        ): List<InterpretationDisplayBubble> =
+            (0 until maxOf(sourceSegments.size, translationSegments.size)).mapNotNull { index ->
+                val source = sourceSegments.getOrNull(index)?.takeUnless(String::isBlank)
+                val translation = translationSegments.getOrNull(index)?.takeUnless(String::isBlank)
+                when {
+                    source != null -> InterpretationDisplayBubble("$turnId:$index", source, translation ?: "正在翻译…")
+                    translation != null -> InterpretationDisplayBubble("$turnId:$index", null, translation)
+                    else -> null
                 }
             }
     }

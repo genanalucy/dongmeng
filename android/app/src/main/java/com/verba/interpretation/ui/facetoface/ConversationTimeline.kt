@@ -3,16 +3,20 @@ package com.verba.interpretation.ui.facetoface
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -39,13 +43,16 @@ import com.verba.interpretation.ui.display.DisplaySentenceSplitter
 internal fun conversationTimelineLatestIndex(turnCount: Int, hasListeningPlaceholder: Boolean): Int =
     (turnCount + if (hasListeningPlaceholder) 1 else 0).coerceAtLeast(1) - 1
 
+internal const val TRANSLATION_PENDING_COPY = "正在翻译…"
+
 internal data class ConversationDisplayBubble(
     val key: String,
-    val text: String,
+    val sourceText: String?,
+    val translationText: String,
     val side: FaceToFaceSide,
-    val language: String,
+    val sourceLanguage: String,
+    val targetLanguage: String,
     val alignment: FaceToFaceTurnAlignment,
-    val isTranslation: Boolean,
 )
 
 internal fun displayConversationBubbles(turns: List<FaceToFaceTurn>): List<ConversationDisplayBubble> =
@@ -53,10 +60,16 @@ internal fun displayConversationBubbles(turns: List<FaceToFaceTurn>): List<Conve
         val alignment = faceToFaceTurnAlignment(turn)
         val source = DisplaySentenceSplitter.split(turn.sourceText)
         val translation = DisplaySentenceSplitter.split(turn.translatedText)
-        source.mapIndexed { index, text ->
-            ConversationDisplayBubble("${turn.id}:source:$index", text, turn.side, turn.sourceLanguage, alignment, false)
-        } + translation.mapIndexed { index, text ->
-            ConversationDisplayBubble("${turn.id}:translation:$index", text, turn.side, turn.targetLanguage, alignment, true)
+        (0 until maxOf(source.size, translation.size)).map { index ->
+            ConversationDisplayBubble(
+                key = "${turn.id}:$index",
+                sourceText = source.getOrNull(index),
+                translationText = translation.getOrNull(index) ?: TRANSLATION_PENDING_COPY,
+                side = turn.side,
+                sourceLanguage = turn.sourceLanguage,
+                targetLanguage = turn.targetLanguage,
+                alignment = alignment,
+            )
         }
     }
 
@@ -81,7 +94,7 @@ internal fun ConversationTimeline(
 ) {
     val hasListeningPlaceholder = activeMic != null
     val bubbles = remember(turns) { displayConversationBubbles(turns) }
-    val turnToken = remember(bubbles, turns) { bubbles.map { "${it.key}:${it.text}" } + turns.filter { it.sourceText.isBlank() && it.translatedText.isBlank() }.map { "${it.id}:empty" } }
+    val turnToken = remember(bubbles, turns) { bubbles.map { "${it.key}:${it.sourceText}:${it.translationText}" } + turns.filter { it.sourceText.isBlank() && it.translatedText.isBlank() }.map { "${it.id}:empty" } }
     var previousToken by remember { mutableStateOf<List<String>?>(null) }
     var previousHasPlaceholder by remember { mutableStateOf(hasListeningPlaceholder) }
     val latestIndex = conversationTimelineLatestIndex(turnCount = bubbles.size, hasListeningPlaceholder = hasListeningPlaceholder)
@@ -135,20 +148,34 @@ internal fun ConversationTimeline(
 @Composable
 private fun ConversationBubble(bubble: ConversationDisplayBubble) {
     val isRight = bubble.alignment == FaceToFaceTurnAlignment.END
-    val languageName = TranslationLanguage.displayName(bubble.language)
-    val kind = if (bubble.isTranslation) "译文" else "原文"
+    val sourceLanguage = TranslationLanguage.displayName(bubble.sourceLanguage)
+    val targetLanguage = TranslationLanguage.displayName(bubble.targetLanguage)
     Column(Modifier.fillMaxWidth(), horizontalAlignment = if (isRight) Alignment.End else Alignment.Start) {
         Surface(
             modifier = Modifier.widthIn(max = 320.dp).semantics {
-                contentDescription = "$languageName $kind。${bubble.text}"
+                contentDescription = listOfNotNull(
+                    bubble.sourceText?.let { "$sourceLanguage 原文。$it" },
+                    "$targetLanguage 译文。${bubble.translationText}",
+                ).joinToString(" ")
             },
             shape = RoundedCornerShape(20.dp),
             color = if (isRight) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface,
-            tonalElevation = if (isRight) 0.dp else 1.dp,
+            border = if (isRight) null else BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
         ) {
-            Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text("$languageName $kind", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
-                Text(bubble.text, style = MaterialTheme.typography.bodyLarge)
+            Column(Modifier.padding(14.dp)) {
+                bubble.sourceText?.let { source ->
+                    Text(source, style = MaterialTheme.typography.bodyLarge)
+                    Spacer(Modifier.height(9.dp))
+                }
+                if (bubble.sourceText != null) Spacer(
+                    Modifier.fillMaxWidth().height(1.dp).background(MaterialTheme.colorScheme.outlineVariant),
+                )
+                if (bubble.sourceText != null) Spacer(Modifier.height(9.dp))
+                Text(
+                    bubble.translationText,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = if (isRight) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
         }
     }
