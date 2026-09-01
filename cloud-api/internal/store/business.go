@@ -58,10 +58,12 @@ func scanEnt(row pgx.Row) (domain.Entitlement, error) {
 	return e, storeErr(err)
 }
 
+func reservedEmail() string { return "phone-" + uuid.NewString() + "@reserved.invalid" }
+
 func (p *Postgres) Register(ctx context.Context, x domain.RegisterParams) (domain.User, domain.Entitlement, error) {
 	var u domain.User
 	var e domain.Entitlement
-	internalEmail := "phone-" + uuid.NewString() + "@reserved.invalid"
+	internalEmail := reservedEmail()
 	err := p.tx(ctx, func(t pgx.Tx) error {
 		err := t.QueryRow(ctx, `INSERT INTO users(email,username,phone,password_hash) VALUES($1,$2,$3,$4) RETURNING id,username,phone,role,created_at`, internalEmail, x.Username, x.Phone, x.PasswordHash).Scan(&u.ID, &u.Username, &u.Phone, &u.Role, &u.CreatedAt)
 		if err != nil {

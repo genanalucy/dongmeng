@@ -10,7 +10,7 @@ import (
 	"github.com/google/uuid"
 )
 
-func TestUserSerializationNeverExposesPhoneOrInternalEmail(t *testing.T) {
+func TestUserSerializationNeverExposesPhone(t *testing.T) {
 	user := User{ID: uuid.New(), Username: "alice_01", Phone: "+8613800138000", Email: "phone-internal@reserved.invalid", Role: string(RoleUser)}
 	encoded, err := json.Marshal(user)
 	if err != nil {
@@ -32,7 +32,7 @@ func TestParseCredentialsCanonicalizesEmail(t *testing.T) {
 		t.Fatal(err)
 	}
 	if input.Email.String() != "user@example.com" || input.Password.String() != "correct horse battery" {
-		t.Fatalf("unexpected credentials: %+v", input)
+		t.Fatal("credentials were not canonicalized")
 	}
 
 	invalidEmails := []string{"", "display <user@example.com>", "a@@example.com", "user@example.com " + string([]byte{0xff})}

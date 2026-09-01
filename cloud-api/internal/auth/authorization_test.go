@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -136,6 +137,19 @@ func TestAuthorizationServiceRegistersPhoneCredentialsWithThreeDayTrial(t *testi
 	}
 	if result.Trial.ExpiresAt.Sub(result.Trial.StartsAt) != domain.TrialDuration {
 		t.Fatalf("trial duration = %s", result.Trial.ExpiresAt.Sub(result.Trial.StartsAt))
+	}
+}
+
+func TestAuthorizationRegistrationDoesNotExposeCollisionField(t *testing.T) {
+	for _, name := range []string{"duplicate username", "duplicate phone"} {
+		t.Run(name, func(t *testing.T) {
+			store := &authorizationStoreStub{registerErr: domain.ErrConflict}
+			service := AuthorizationService{Store: store, HashPasswordValue: func(string) (string, error) { return "hash", nil }}
+			_, err := service.Register(context.Background(), "alice_01", "13800138000", "Aa123456", time.Now())
+			if !errors.Is(err, domain.ErrConflict) || strings.Contains(err.Error(), "username") || strings.Contains(err.Error(), "phone") {
+				t.Fatal("registration collision was not generic")
+			}
+		})
 	}
 }
 

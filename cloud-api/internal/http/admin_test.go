@@ -19,23 +19,26 @@ import (
 
 type adminContractStore struct {
 	domain.Store
-	enabled      bool
-	enabledErr   error
-	users        []domain.User
-	auditLogs    []domain.AuditLog
-	usersErr     error
-	auditLogsErr error
-	userSearch   string
-	userLimit    int
-	userOffset   int
-	auditLimit   int
-	auditOffset  int
-	phoneUser    domain.User
-	phoneHash    string
-	phoneQuery   string
-	register     domain.RegisterParams
-	registerErr  error
-	refreshes    []domain.RefreshToken
+	enabled       bool
+	enabledErr    error
+	users         []domain.User
+	auditLogs     []domain.AuditLog
+	usersErr      error
+	auditLogsErr  error
+	userSearch    string
+	userLimit     int
+	userOffset    int
+	auditLimit    int
+	auditOffset   int
+	phoneUser     domain.User
+	phoneHash     string
+	phoneQuery    string
+	register      domain.RegisterParams
+	registerErr   error
+	reservedEmail string
+	storedEmails  []string
+	phoneCalls    int
+	refreshes     []domain.RefreshToken
 }
 
 func (s *adminContractStore) UserByID(_ context.Context, id uuid.UUID) (domain.User, error) {
@@ -52,6 +55,7 @@ func (s *adminContractStore) CreateRefreshToken(_ context.Context, params domain
 }
 
 func (s *adminContractStore) UserByPhone(_ context.Context, phone string) (domain.User, string, error) {
+	s.phoneCalls++
 	s.phoneQuery = phone
 	if s.phoneUser.ID == uuid.Nil {
 		return domain.User{}, "", domain.ErrNotFound
@@ -64,6 +68,7 @@ func (s *adminContractStore) Register(_ context.Context, params domain.RegisterP
 	if s.registerErr != nil {
 		return domain.User{}, domain.Entitlement{}, s.registerErr
 	}
+	s.storedEmails = append(s.storedEmails, s.reservedEmail)
 	user := domain.User{ID: uuid.New(), Username: params.Username, Phone: params.Phone, Role: string(domain.RoleUser), CreatedAt: params.Now}
 	trial, _ := domain.NewTrialEntitlement(uuid.New(), user.ID, params.Now)
 	return user, trial, nil
