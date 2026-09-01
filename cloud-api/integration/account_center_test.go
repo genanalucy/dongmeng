@@ -98,9 +98,17 @@ func TestAccountCenterStoreOwnershipEntitlementsAndIdentityTransaction(t *testin
 
 	// Weak legacy current credentials are verified by bcrypt and the old email
 	// remains untouched while empty username/phone are completed.
-	updated, err := db.UpdateIdentity(ctx, domain.UpdateIdentityParams{UserID: legacy, Username: "legacy_01", Email: legacyEmail, Phone: "+8613800138000", CurrentPassword: "weak"})
+	requestedLegacyEmail := integrationEmail()
+	updated, err := db.UpdateIdentity(ctx, domain.UpdateIdentityParams{UserID: legacy, Username: "legacy_01", Email: requestedLegacyEmail, Phone: "+8613800138000", CurrentPassword: "weak"})
 	if err != nil || updated.Username != "legacy_01" || updated.Email != legacyEmail || updated.Phone != "+8613800138000" {
 		t.Fatalf("legacy completion = %#v, %v", updated, err)
+	}
+	if _, err := db.UpdateIdentity(ctx, domain.UpdateIdentityParams{UserID: other, Username: "other_01", Email: "changed-" + integrationEmail(), Phone: "+8613600138000", CurrentPassword: "weak"}); err != nil {
+		t.Fatalf("non-legacy email update = %v", err)
+	}
+	otherRead, err := db.UserByID(ctx, other)
+	if err != nil || otherRead.Email == otherEmail {
+		t.Fatalf("non-legacy email was not updated: %#v, %v", otherRead, err)
 	}
 	if _, err := db.UpdateIdentity(ctx, domain.UpdateIdentityParams{UserID: legacy, Username: "legacy_02", Email: legacyEmail, Phone: "+8613900138000", CurrentPassword: "wrong"}); !errors.Is(err, domain.ErrUnauthorized) {
 		t.Fatalf("wrong password error = %v", err)

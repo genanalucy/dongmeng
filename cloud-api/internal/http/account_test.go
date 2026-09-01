@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -186,31 +187,77 @@ func TestAccountIdentityAllowsWeakLegacyCurrentPassword(t *testing.T) {
 	}
 }
 
-var forbiddenResponseKeys = map[string]bool{"email": true, "phone": true, "password": true, "password_hash": true, "current_password": true, "token": true, "audio": true, "transcript": true, "object_key": true, "artifact": true}
-
-func assertJSONKeys(t *testing.T, raw []byte, allowed map[string]bool) {
-	t.Helper()
-	var value any
-	if err := json.Unmarshal(raw, &value); err != nil {
-		t.Fatal(err)
-	}
-	assertJSONValueKeys(t, value, allowed, true)
+var forbiddenResponseKeys = map[string]bool{
+	"email": true, "phone": true, "password": true, "password_hash": true,
+	"current_password": true, "token": true, "access_token": true,
+	"refresh_token": true, "audio": true, "audio_url": true, "transcript": true,
+	"object_key": true, "artifact": true,
 }
 
-func assertJSONValueKeys(t *testing.T, value any, allowed map[string]bool, top bool) {
+type jsonSchema struct {
+	fields  map[string]jsonSchema
+	element *jsonSchema
+}
+
+func object(fields map[string]jsonSchema) jsonSchema { return jsonSchema{fields: fields} }
+func array(element jsonSchema) jsonSchema            { return jsonSchema{element: &element} }
+
+func assertJSONSchema(t *testing.T, raw []byte, schema jsonSchema) {
 	t.Helper()
+	if err := validateJSONSchema(raw, schema); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func validateJSONSchema(raw []byte, schema jsonSchema) error {
+	var value any
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return err
+	}
+	return validateJSONValueSchema(value, schema, "$")
+}
+
+func validateJSONValueSchema(value any, schema jsonSchema, path string) error {
 	switch item := value.(type) {
 	case map[string]any:
+		if schema.fields == nil {
+			return fmt.Errorf("unexpected object at %s", path)
+		}
 		for key, child := range item {
-			if forbiddenResponseKeys[key] || (top && !allowed[key]) {
-				t.Fatalf("forbidden response key %q in %#v", key, item)
+			childSchema, allowed := schema.fields[key]
+			if forbiddenResponseKeys[key] || !allowed {
+				return fmt.Errorf("unexpected response key %s.%s", path, key)
 			}
-			assertJSONValueKeys(t, child, allowed, false)
+			if err := validateJSONValueSchema(child, childSchema, path+"."+key); err != nil {
+				return err
+			}
 		}
 	case []any:
-		for _, child := range item {
-			assertJSONValueKeys(t, child, allowed, false)
+		if schema.element == nil {
+			return fmt.Errorf("unexpected array at %s", path)
 		}
+		for _, child := range item {
+			if err := validateJSONValueSchema(child, *schema.element, path+"[]"); err != nil {
+				return err
+			}
+		}
+	default:
+		if schema.fields != nil || schema.element != nil {
+			return fmt.Errorf("unexpected scalar at %s", path)
+		}
+	}
+	return nil
+}
+
+func TestAccountResponseSchemaRejectsUnknownNestedKeys(t *testing.T) {
+	schema := object(map[string]jsonSchema{"usage": object(map[string]jsonSchema{"items": array(object(map[string]jsonSchema{"duration_seconds": {}}))})})
+	assertJSONSchema(t, []byte(`{"usage":{"items":[{"duration_seconds":1}]}}`), schema)
+	for _, payload := range []string{`{"usage":{"unexpected":true,"items":[]}}`, `{"usage":{"items":[{"duration_seconds":1,"access_token":"x"}]}}`} {
+		t.Run(payload, func(t *testing.T) {
+			if err := validateJSONSchema([]byte(payload), schema); err == nil {
+				t.Fatal("unknown nested key was accepted")
+			}
+		})
 	}
 }
 
@@ -221,16 +268,16 @@ func TestAccountResponsesUseOnlySafeJSONKeys(t *testing.T) {
 	token := adminAccessToken(t, issuer, owner, domain.RoleUser, now)
 	for _, test := range []struct {
 		method, path, body string
-		allowed            map[string]bool
+		schema             jsonSchema
 	}{
-		{http.MethodGet, "/api/v1/account/overview", "", map[string]bool{"username": true, "entitlement": true, "usage": true}},
-		{http.MethodGet, "/api/v1/account/usage?limit=1&offset=0", "", map[string]bool{"usage": true}},
-		{http.MethodPatch, "/api/v1/account/identity", `{"username":"alice_01","email":"alice@example.test","phone":"13800138000","current_password":"x"}`, map[string]bool{"id": true, "username": true, "role": true, "created_at": true}},
+		{http.MethodGet, "/api/v1/account/overview", "", object(map[string]jsonSchema{"username": {}, "entitlement": object(map[string]jsonSchema{"kind": {}, "starts_at": {}, "expires_at": {}, "active": {}, "remaining_seconds": {}}), "usage": object(map[string]jsonSchema{"audio_seconds": {}, "session_count": {}, "last_used_at": {}})})},
+		{http.MethodGet, "/api/v1/account/usage?limit=1&offset=0", "", object(map[string]jsonSchema{"usage": array(object(map[string]jsonSchema{"session_id": {}, "started_at": {}, "ended_at": {}, "duration_seconds": {}, "source_language": {}, "target_language": {}}))})},
+		{http.MethodPatch, "/api/v1/account/identity", `{"username":"alice_01","email":"alice@example.test","phone":"13800138000","current_password":"x"}`, object(map[string]jsonSchema{"id": {}, "username": {}, "role": {}, "created_at": {}})},
 	} {
 		response := accountRequest(router, test.method, test.path, token, test.body)
 		if response.Code != http.StatusOK {
 			t.Fatalf("%s = %d %s", test.path, response.Code, response.Body.String())
 		}
-		assertJSONKeys(t, response.Body.Bytes(), test.allowed)
+		assertJSONSchema(t, response.Body.Bytes(), test.schema)
 	}
 }

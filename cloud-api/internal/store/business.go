@@ -308,15 +308,22 @@ func (p *Postgres) ListAccountUsage(ctx context.Context, user uuid.UUID, limit, 
 func (p *Postgres) UpdateIdentity(ctx context.Context, input domain.UpdateIdentityParams) (domain.User, error) {
 	var user domain.User
 	err := p.tx(ctx, func(t pgx.Tx) error {
-		var hash string
-		if err := t.QueryRow(ctx, `SELECT password_hash FROM users WHERE id=$1 AND disabled_at IS NULL FOR UPDATE`, input.UserID).Scan(&hash); err != nil {
+		var hash, username, phone, existingEmail string
+		if err := t.QueryRow(ctx, `SELECT password_hash,COALESCE(username,''),COALESCE(phone,''),email FROM users WHERE id=$1 AND disabled_at IS NULL FOR UPDATE`, input.UserID).Scan(&hash, &username, &phone, &existingEmail); err != nil {
 			return storeErr(err)
 		}
 		valid, err := auth.VerifyPassword(hash, input.CurrentPassword)
 		if err != nil || !valid {
 			return domain.ErrUnauthorized
 		}
-		return storeErr(t.QueryRow(ctx, `UPDATE users SET username=$2,email=$3,phone=$4 WHERE id=$1 RETURNING id,username,phone,email,role,created_at`, input.UserID, input.Username, input.Email, input.Phone).Scan(&user.ID, &user.Username, &user.Phone, &user.Email, &user.Role, &user.CreatedAt))
+		// A legacy account is one created before both optional identity columns
+		// existed. Its first completion can add username and phone but must retain
+		// the pre-existing email login identity.
+		email := input.Email
+		if username == "" && phone == "" {
+			email = existingEmail
+		}
+		return storeErr(t.QueryRow(ctx, `UPDATE users SET username=$2,email=$3,phone=$4 WHERE id=$1 RETURNING id,username,phone,email,role,created_at`, input.UserID, input.Username, email, input.Phone).Scan(&user.ID, &user.Username, &user.Phone, &user.Email, &user.Role, &user.CreatedAt))
 	})
 	user.Email = publicEmail(user.Email)
 	return user, err
