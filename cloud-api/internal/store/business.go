@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/dngmeng/cloud-api/internal/domain"
@@ -40,8 +41,16 @@ func (p *Postgres) tx(ctx context.Context, f func(pgx.Tx) error) error {
 }
 func scanUser(row pgx.Row) (domain.User, error) {
 	var u domain.User
-	err := row.Scan(&u.ID, &u.Email, &u.Role, &u.CreatedAt)
+	err := row.Scan(&u.ID, &u.Username, &u.Phone, &u.Email, &u.Role, &u.CreatedAt)
+	u.Email = publicEmail(u.Email)
 	return u, storeErr(err)
+}
+
+func publicEmail(email string) string {
+	if strings.HasPrefix(email, "phone-") && strings.HasSuffix(email, "@reserved.invalid") {
+		return ""
+	}
+	return email
 }
 func scanEnt(row pgx.Row) (domain.Entitlement, error) {
 	var e domain.Entitlement
@@ -52,8 +61,9 @@ func scanEnt(row pgx.Row) (domain.Entitlement, error) {
 func (p *Postgres) Register(ctx context.Context, x domain.RegisterParams) (domain.User, domain.Entitlement, error) {
 	var u domain.User
 	var e domain.Entitlement
+	internalEmail := "phone-" + uuid.NewString() + "@reserved.invalid"
 	err := p.tx(ctx, func(t pgx.Tx) error {
-		err := t.QueryRow(ctx, `INSERT INTO users(email,password_hash) VALUES($1,$2) RETURNING id,email,role,created_at`, x.Email, x.PasswordHash).Scan(&u.ID, &u.Email, &u.Role, &u.CreatedAt)
+		err := t.QueryRow(ctx, `INSERT INTO users(email,username,phone,password_hash) VALUES($1,$2,$3,$4) RETURNING id,username,phone,role,created_at`, internalEmail, x.Username, x.Phone, x.PasswordHash).Scan(&u.ID, &u.Username, &u.Phone, &u.Role, &u.CreatedAt)
 		if err != nil {
 			return storeErr(err)
 		}
@@ -65,11 +75,18 @@ func (p *Postgres) Register(ctx context.Context, x domain.RegisterParams) (domai
 func (p *Postgres) UserByEmail(ctx context.Context, email string) (domain.User, string, error) {
 	var u domain.User
 	var hash string
-	err := p.pool.QueryRow(ctx, `SELECT id,email,role,created_at,password_hash FROM users WHERE email=$1 AND disabled_at IS NULL`, email).Scan(&u.ID, &u.Email, &u.Role, &u.CreatedAt, &hash)
+	err := p.pool.QueryRow(ctx, `SELECT id,COALESCE(username,''),COALESCE(phone,''),email,role,created_at,password_hash FROM users WHERE email=$1 AND disabled_at IS NULL`, email).Scan(&u.ID, &u.Username, &u.Phone, &u.Email, &u.Role, &u.CreatedAt, &hash)
+	u.Email = publicEmail(u.Email)
+	return u, hash, storeErr(err)
+}
+func (p *Postgres) UserByPhone(ctx context.Context, phone string) (domain.User, string, error) {
+	var u domain.User
+	var hash string
+	err := p.pool.QueryRow(ctx, `SELECT id,COALESCE(username,''),phone,role,created_at,password_hash FROM users WHERE phone=$1 AND disabled_at IS NULL`, phone).Scan(&u.ID, &u.Username, &u.Phone, &u.Role, &u.CreatedAt, &hash)
 	return u, hash, storeErr(err)
 }
 func (p *Postgres) UserByID(ctx context.Context, id uuid.UUID) (domain.User, error) {
-	return scanUser(p.pool.QueryRow(ctx, `SELECT id,email,role,created_at FROM users WHERE id=$1`, id))
+	return scanUser(p.pool.QueryRow(ctx, `SELECT id,COALESCE(username,''),COALESCE(phone,''),email,role,created_at FROM users WHERE id=$1`, id))
 }
 func (p *Postgres) ActiveEntitlement(ctx context.Context, id uuid.UUID, now time.Time) (domain.Entitlement, error) {
 	return scanEnt(p.pool.QueryRow(ctx, `SELECT id,user_id,kind,starts_at,expires_at FROM entitlements WHERE user_id=$1 AND revoked_at IS NULL AND starts_at<=$2 AND expires_at>$2 ORDER BY expires_at DESC,id DESC LIMIT 1`, id, now.UTC()))

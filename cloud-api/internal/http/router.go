@@ -84,6 +84,8 @@ func NewRouter(options RouterOptions) http.Handler {
 	api := api{store: options.Store, tokens: options.Tokens, authorizer: service, now: now}
 	router.Post("/api/v1/auth/register", api.register)
 	router.Post("/api/v1/auth/login", api.login)
+	router.Post("/api/v1/auth/phone-verifications", api.phoneVerification)
+	router.Post("/api/v1/auth/phone-verifications/confirm", api.phoneVerification)
 	router.Post("/api/v1/auth/refresh", api.refresh)
 	router.Group(func(r chi.Router) {
 		r.Use(api.require)

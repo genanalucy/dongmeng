@@ -254,9 +254,11 @@ func ParseCreateBatchInput(name string, count int) (CreateBatchInput, error) {
 
 type User struct {
 	ID        uuid.UUID `json:"id"`
-	Email     string    `json:"email"`
+	Username  string    `json:"username,omitempty"`
+	Phone     string    `json:"phone,omitempty"`
 	Role      string    `json:"role"`
 	CreatedAt time.Time `json:"created_at"`
+	Email     string    `json:"email,omitempty"`
 }
 
 type Device struct {
@@ -408,8 +410,8 @@ type CodeBatch struct {
 }
 
 type RegisterParams struct {
-	Email, PasswordHash string
-	Now                 time.Time
+	Username, Phone, PasswordHash string
+	Now                           time.Time
 }
 
 type CreateRefreshParams struct {
@@ -451,6 +453,7 @@ type Store interface {
 	RefreshTokenStore
 	Register(context.Context, RegisterParams) (User, Entitlement, error)
 	UserByEmail(context.Context, string) (User, string, error)
+	UserByPhone(context.Context, string) (User, string, error)
 	UserByID(context.Context, uuid.UUID) (User, error)
 	ActiveEntitlement(context.Context, uuid.UUID, time.Time) (Entitlement, error)
 	CreateCodeBatch(context.Context, CreateBatchParams) (CodeBatch, error)

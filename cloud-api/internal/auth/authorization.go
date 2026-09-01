@@ -73,7 +73,7 @@ type AuthorizationStore interface {
 }
 
 type AuthorizationFacade interface {
-	Register(context.Context, string, string, time.Time) (RegistrationResult, error)
+	Register(context.Context, string, string, string, time.Time) (RegistrationResult, error)
 	ActiveEntitlement(context.Context, uuid.UUID, time.Time) (domain.Entitlement, error)
 	CreateTranslationSession(context.Context, uuid.UUID, string, time.Time) (TranslationGrant, error)
 	EndTranslationSession(context.Context, uuid.UUID, uuid.UUID, time.Time) error
@@ -110,11 +110,15 @@ type TranslationGrant struct {
 	Token   string
 }
 
-func (s AuthorizationService) Register(ctx context.Context, email, password string, now time.Time) (RegistrationResult, error) {
+func (s AuthorizationService) Register(ctx context.Context, username, phone, password string, now time.Time) (RegistrationResult, error) {
 	if s.Store == nil || now.IsZero() {
 		return RegistrationResult{}, fmt.Errorf("%w: invalid registration service arguments", domain.ErrInvalid)
 	}
-	credentials, err := domain.ParseCredentials(email, password)
+	parsedUsername, err := domain.ParseUsername(username)
+	if err != nil {
+		return RegistrationResult{}, err
+	}
+	credentials, err := domain.ParsePhoneCredentials(phone, password)
 	if err != nil {
 		return RegistrationResult{}, err
 	}
@@ -127,14 +131,15 @@ func (s AuthorizationService) Register(ctx context.Context, email, password stri
 	}
 	now = postgresTimestamp(now)
 	user, trial, err := s.Store.Register(ctx, domain.RegisterParams{
-		Email:        credentials.Email.String(),
+		Username:     parsedUsername.String(),
+		Phone:        credentials.Phone.String(),
 		PasswordHash: hash,
 		Now:          now,
 	})
 	if err != nil {
 		return RegistrationResult{}, fmt.Errorf("register user and trial: %w", err)
 	}
-	if err := validateRegistrationResult(user, trial, credentials.Email.String(), now); err != nil {
+	if err := validateRegistrationResult(user, trial, parsedUsername.String(), credentials.Phone.String(), now); err != nil {
 		return RegistrationResult{}, err
 	}
 	return RegistrationResult{User: user, Trial: trial}, nil
@@ -309,8 +314,8 @@ func (s AuthorizationService) entitlementLifecycleStore() EntitlementLifecycleSt
 	return store
 }
 
-func validateRegistrationResult(user domain.User, trial domain.Entitlement, expectedEmail string, now time.Time) error {
-	if user.ID == uuid.Nil || user.Email != expectedEmail || domain.Role(user.Role) != domain.RoleUser {
+func validateRegistrationResult(user domain.User, trial domain.Entitlement, expectedUsername, expectedPhone string, now time.Time) error {
+	if user.ID == uuid.Nil || user.Username != expectedUsername || user.Phone != expectedPhone || user.Email != "" || domain.Role(user.Role) != domain.RoleUser {
 		return errors.New("registration store returned an invalid user")
 	}
 	if !trial.Valid() || trial.UserID != user.ID || domain.EntitlementKind(trial.Kind) != domain.EntitlementTrial || !trial.StartsAt.Equal(now) || !trial.ExpiresAt.Equal(now.Add(domain.TrialDuration)) {

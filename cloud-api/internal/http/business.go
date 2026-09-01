@@ -30,7 +30,7 @@ type businessStore interface {
 	RevokeEntitlementByAdmin(context.Context, uuid.UUID, uuid.UUID, uuid.UUID, time.Time) error
 }
 type authService interface {
-	Register(context.Context, string, string, time.Time) (auth.RegistrationResult, error)
+	Register(context.Context, string, string, string, time.Time) (auth.RegistrationResult, error)
 	ActiveEntitlement(context.Context, uuid.UUID, time.Time) (domain.Entitlement, error)
 	CreateTranslationSession(context.Context, uuid.UUID, string, time.Time) (auth.TranslationGrant, error)
 	EndTranslationSession(context.Context, uuid.UUID, uuid.UUID, time.Time) error
@@ -138,14 +138,15 @@ func domainError(w http.ResponseWriter, r *http.Request, err error) {
 }
 func (a api) register(w http.ResponseWriter, r *http.Request) {
 	var x struct {
-		Email    string `json:"email"`
+		Username string `json:"username"`
+		Phone    string `json:"phone"`
 		Password string `json:"password"`
 	}
 	if decode(w, r, &x) != nil {
 		inputError(w, r)
 		return
 	}
-	v, e := a.authorizer.Register(r.Context(), x.Email, x.Password, a.now())
+	v, e := a.authorizer.Register(r.Context(), x.Username, x.Phone, x.Password, a.now())
 	if e != nil {
 		domainError(w, r, e)
 		return
@@ -154,19 +155,19 @@ func (a api) register(w http.ResponseWriter, r *http.Request) {
 }
 func (a api) login(w http.ResponseWriter, r *http.Request) {
 	var x struct {
-		Email    string `json:"email"`
+		Phone    string `json:"phone"`
 		Password string `json:"password"`
 	}
 	if decode(w, r, &x) != nil {
 		inputError(w, r)
 		return
 	}
-	email, e := domain.ParseEmail(x.Email)
+	phone, e := domain.ParsePhone(x.Phone)
 	if e != nil {
 		unauthorized(w, r)
 		return
 	}
-	u, hash, e := a.store.UserByEmail(r.Context(), email.String())
+	u, hash, e := a.store.UserByPhone(r.Context(), phone.String())
 	if e != nil {
 		unauthorized(w, r)
 		return
@@ -177,6 +178,20 @@ func (a api) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.issueTokens(w, r, u)
+}
+func (a api) phoneVerification(w http.ResponseWriter, r *http.Request) {
+	var x struct {
+		Phone string `json:"phone"`
+	}
+	if decode(w, r, &x) != nil {
+		inputError(w, r)
+		return
+	}
+	if _, err := domain.ParsePhone(x.Phone); err != nil {
+		inputError(w, r)
+		return
+	}
+	writeError(w, r, http.StatusServiceUnavailable, "verification_not_enabled")
 }
 func (a api) issueTokens(w http.ResponseWriter, r *http.Request, u domain.User) {
 	now := a.now()

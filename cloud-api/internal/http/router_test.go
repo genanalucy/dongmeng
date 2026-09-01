@@ -121,6 +121,31 @@ func TestRequestIDIsSanitizedAndLoggedWithoutSensitiveData(t *testing.T) {
 	}
 }
 
+func TestPhoneVerificationRoutesValidateFormatBeforeReturningDisabled(t *testing.T) {
+	router, _, _ := newAdminContractRouter(t, &adminContractStore{enabled: true})
+	for _, endpoint := range []string{"/api/v1/auth/phone-verifications", "/api/v1/auth/phone-verifications/confirm"} {
+		for _, test := range []struct {
+			name, body string
+			status     int
+			errorCode  string
+		}{
+			{name: "valid phone is disabled", body: `{"phone":"13800138000"}`, status: http.StatusServiceUnavailable, errorCode: "verification_not_enabled"},
+			{name: "invalid phone is rejected", body: `{"phone":"12000138000"}`, status: http.StatusBadRequest, errorCode: "invalid_request"},
+		} {
+			t.Run(endpoint+"/"+test.name, func(t *testing.T) {
+				req := httptest.NewRequest(http.MethodPost, endpoint, strings.NewReader(test.body))
+				req.Header.Set("Content-Type", "application/json")
+				req.RemoteAddr = "127.0.0.1:12345"
+				response := httptest.NewRecorder()
+				router.ServeHTTP(response, req)
+				if response.Code != test.status || !strings.Contains(response.Body.String(), test.errorCode) {
+					t.Fatalf("response = %d %s", response.Code, response.Body.String())
+				}
+			})
+		}
+	}
+}
+
 func TestBusinessRoutesRequireConfiguredStore(t *testing.T) {
 	router := testRouter(readinessFunc(func(context.Context) error { return nil }), nil)
 	response := request(router, http.MethodPost, "/api/v1/auth/register", "")

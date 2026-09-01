@@ -101,43 +101,40 @@ func (s *authorizationStoreStub) RevokeTranslationSession(_ context.Context, use
 	return s.revokeSessionErr
 }
 
-func TestAuthorizationServiceRegisterPersistsThreeDayTrial(t *testing.T) {
+func TestAuthorizationServiceRegistersPhoneCredentialsWithThreeDayTrial(t *testing.T) {
 	now := time.Date(2026, 11, 1, 2, 3, 4, 5, time.FixedZone("UTC+8", 8*60*60))
 	storedAt := now.UTC().Truncate(time.Microsecond)
 	userID := uuid.New()
-	trial, err := domain.NewTrialEntitlement(uuid.New(), userID, storedAt)
-	if err != nil {
-		t.Fatal(err)
-	}
+	trial := mustTrial(t, userID, storedAt)
 	store := &authorizationStoreStub{
-		registerUser:  domain.User{ID: userID, Email: "user@example.com", Role: string(domain.RoleUser), CreatedAt: storedAt},
+		registerUser:  domain.User{ID: userID, Username: "alice_01", Phone: "+8613800138000", Role: string(domain.RoleUser), CreatedAt: storedAt},
 		registerTrial: trial,
 	}
 	service := AuthorizationService{
 		Store: store,
 		HashPasswordValue: func(password string) (string, error) {
-			if password != "correct horse battery" {
-				t.Fatalf("password passed to hasher = %q", password)
+			if password != "Aa123456" {
+				t.Fatalf("unexpected password passed to hasher")
 			}
 			return "encoded-password-hash", nil
 		},
 	}
 
-	result, err := service.Register(context.Background(), " User@Example.COM ", "correct horse battery", now)
+	result, err := service.Register(context.Background(), " Alice_01 ", "13800138000", "Aa123456", now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.User.ID != userID || result.Trial.ID != trial.ID {
+	if result.User.ID != userID || result.Trial.ID != trial.ID || result.User.Email != "" {
 		t.Fatalf("unexpected registration result: %+v", result)
 	}
 	if len(store.registerCalls) != 1 {
 		t.Fatalf("register calls = %d", len(store.registerCalls))
 	}
 	params := store.registerCalls[0]
-	if params.Email != "user@example.com" || params.PasswordHash != "encoded-password-hash" || !params.Now.Equal(storedAt) {
+	if params.Username != "alice_01" || params.Phone != "+8613800138000" || params.PasswordHash != "encoded-password-hash" || !params.Now.Equal(storedAt) {
 		t.Fatalf("unexpected persisted registration: %+v", params)
 	}
-	if result.Trial.ExpiresAt.Sub(result.Trial.StartsAt) != 72*time.Hour {
+	if result.Trial.ExpiresAt.Sub(result.Trial.StartsAt) != domain.TrialDuration {
 		t.Fatalf("trial duration = %s", result.Trial.ExpiresAt.Sub(result.Trial.StartsAt))
 	}
 }
@@ -146,20 +143,14 @@ func TestAuthorizationServiceRegisterAcceptsPostgresMicrosecondTrialTimestamps(t
 	now := time.Date(2026, 11, 1, 2, 3, 4, 123456789, time.UTC)
 	storedAt := now.Truncate(time.Microsecond)
 	userID := uuid.New()
-	trial, err := domain.NewTrialEntitlement(uuid.New(), userID, storedAt)
-	if err != nil {
-		t.Fatal(err)
-	}
+	trial := mustTrial(t, userID, storedAt)
 	store := &authorizationStoreStub{
-		registerUser:  domain.User{ID: userID, Email: "user@example.com", Role: string(domain.RoleUser), CreatedAt: storedAt},
+		registerUser:  domain.User{ID: userID, Username: "alice_01", Phone: "+8613800138000", Role: string(domain.RoleUser), CreatedAt: storedAt},
 		registerTrial: trial,
 	}
-	service := AuthorizationService{
-		Store:             store,
-		HashPasswordValue: func(string) (string, error) { return "encoded-password-hash", nil },
-	}
+	service := AuthorizationService{Store: store, HashPasswordValue: func(string) (string, error) { return "encoded-password-hash", nil }}
 
-	if _, err := service.Register(context.Background(), "user@example.com", "correct horse battery", now); err != nil {
+	if _, err := service.Register(context.Background(), "alice_01", "13800138000", "Aa123456", now); err != nil {
 		t.Fatalf("registration rejected PostgreSQL microsecond timestamp: %v", err)
 	}
 }
@@ -179,17 +170,17 @@ func TestAuthorizationServiceRegisterRejectsInvalidOrUnpersistedTrial(t *testing
 		err   error
 	}{
 		{name: "store error", err: domain.ErrConflict},
-		{name: "wrong email", user: domain.User{ID: userID, Email: "other@example.com", Role: string(domain.RoleUser)}, trial: validTrial},
-		{name: "elevated role", user: domain.User{ID: userID, Email: "user@example.com", Role: string(domain.RoleAdmin)}, trial: validTrial},
-		{name: "wrong owner", user: domain.User{ID: userID, Email: "user@example.com", Role: string(domain.RoleUser)}, trial: mustTrial(t, uuid.New(), now)},
-		{name: "wrong duration", user: domain.User{ID: userID, Email: "user@example.com", Role: string(domain.RoleUser)}, trial: domain.Entitlement{ID: uuid.New(), UserID: userID, Kind: string(domain.EntitlementTrial), StartsAt: now, ExpiresAt: now.Add(48 * time.Hour)}},
+		{name: "wrong phone", user: domain.User{ID: userID, Username: "alice_01", Phone: "+8613900138000", Role: string(domain.RoleUser)}, trial: validTrial},
+		{name: "elevated role", user: domain.User{ID: userID, Username: "alice_01", Phone: "+8613800138000", Role: string(domain.RoleAdmin)}, trial: validTrial},
+		{name: "wrong owner", user: domain.User{ID: userID, Username: "alice_01", Phone: "+8613800138000", Role: string(domain.RoleUser)}, trial: mustTrial(t, uuid.New(), now)},
+		{name: "wrong duration", user: domain.User{ID: userID, Username: "alice_01", Phone: "+8613800138000", Role: string(domain.RoleUser)}, trial: domain.Entitlement{ID: uuid.New(), UserID: userID, Kind: string(domain.EntitlementTrial), StartsAt: now, ExpiresAt: now.Add(48 * time.Hour)}},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			store := &authorizationStoreStub{registerUser: test.user, registerTrial: test.trial, registerErr: test.err}
 			service := AuthorizationService{Store: store, HashPasswordValue: func(string) (string, error) { return "hash", nil }}
-			result, err := service.Register(context.Background(), "user@example.com", "correct horse battery", now)
+			result, err := service.Register(context.Background(), "alice_01", "13800138000", "Aa123456", now)
 			if err == nil {
 				t.Fatal("invalid registration result accepted")
 			}
@@ -204,7 +195,7 @@ func TestAuthorizationServiceDoesNotPersistEmptyPasswordHash(t *testing.T) {
 	store := &authorizationStoreStub{}
 	service := AuthorizationService{Store: store, HashPasswordValue: func(string) (string, error) { return "", nil }}
 
-	result, err := service.Register(context.Background(), "user@example.com", "correct horse battery", time.Now())
+	result, err := service.Register(context.Background(), "alice_01", "13800138000", "Aa123456", time.Now())
 	if err == nil || result != (RegistrationResult{}) {
 		t.Fatalf("empty password hash accepted: result=%+v err=%v", result, err)
 	}
@@ -490,7 +481,7 @@ func TestAuthorizationServiceDelegatesSessionTerminalStates(t *testing.T) {
 func TestAuthorizationServiceRejectsInvalidConfigurationAndIDs(t *testing.T) {
 	now := time.Now()
 	service := AuthorizationService{}
-	if _, err := service.Register(context.Background(), "user@example.com", "correct horse battery", now); !errors.Is(err, domain.ErrInvalid) {
+	if _, err := service.Register(context.Background(), "alice_01", "13800138000", "Aa123456", now); !errors.Is(err, domain.ErrInvalid) {
 		t.Fatalf("nil registration store error = %v", err)
 	}
 	if _, err := service.ActiveEntitlement(context.Background(), uuid.Nil, now); !errors.Is(err, domain.ErrInvalid) {
