@@ -10,6 +10,7 @@ class PhoneAuthenticationFormPolicyTest {
     @Test fun registrationNormalizesMainlandPhoneToCanonicalChinaFormat() {
         val result = PhoneAuthenticationFormPolicy.register(
             username = "  Alice_01 ",
+            email = " Alice@Example.COM ",
             phone = " 13800138000 ",
             password = "Passw0rd",
             confirmation = "Passw0rd",
@@ -17,14 +18,24 @@ class PhoneAuthenticationFormPolicyTest {
 
         assertTrue(result.isValid)
         assertEquals("alice_01", result.normalizedUsername)
+        assertEquals("alice@example.com", result.normalizedEmail)
         assertEquals("+8613800138000", result.normalizedPhone)
         assertNull(result.usernameError)
         assertNull(result.phoneError)
     }
 
+    @Test fun registrationRejectsInvalidEmailWithoutEchoingIt() {
+        val submittedEmail = "invalid-email"
+        val result = PhoneAuthenticationFormPolicy.register("alice_01", submittedEmail, "13800138000", "Passw0rd", "Passw0rd")
+
+        assertEquals("请输入有效的邮箱地址。", result.emailError)
+        assertFalse(result.isValid)
+        assertFalse(result.renderedErrors.any { it.contains(submittedEmail) })
+    }
+
     @Test fun registrationRejectsNonMainlandPhoneWithoutEchoingIt() {
         val submittedPhone = "12800138000"
-        val result = PhoneAuthenticationFormPolicy.register("alice_01", submittedPhone, "Passw0rd", "Passw0rd")
+        val result = PhoneAuthenticationFormPolicy.register("alice_01", "alice@example.com", submittedPhone, "Passw0rd", "Passw0rd")
 
         assertEquals("请输入有效的中国大陆手机号。", result.phoneError)
         assertFalse(result.isValid)
@@ -32,8 +43,8 @@ class PhoneAuthenticationFormPolicyTest {
     }
 
     @Test fun registrationNormalizesUsernameAndAcceptsLengthBoundaries() {
-        val minimum = PhoneAuthenticationFormPolicy.register(" Ab_ ", "13800138000", "Passw0rd", "Passw0rd")
-        val maximum = PhoneAuthenticationFormPolicy.register("A".repeat(32), "13800138000", "Passw0rd", "Passw0rd")
+        val minimum = PhoneAuthenticationFormPolicy.register(" Ab_ ", "alice@example.com", "13800138000", "Passw0rd", "Passw0rd")
+        val maximum = PhoneAuthenticationFormPolicy.register("A".repeat(32), "alice@example.com", "13800138000", "Passw0rd", "Passw0rd")
 
         assertTrue(minimum.isValid)
         assertEquals("ab_", minimum.normalizedUsername)
@@ -42,10 +53,10 @@ class PhoneAuthenticationFormPolicyTest {
     }
 
     @Test fun registrationRejectsUsernameOutsideBoundariesOrWithNonAsciiCharacters() {
-        listOf("ab", "a".repeat(33), "alice-name").forEach { username ->
-            val result = PhoneAuthenticationFormPolicy.register(username, "13800138000", "Passw0rd", "Passw0rd")
+        listOf("ab", "123456", "a".repeat(33), "alice-name").forEach { username ->
+            val result = PhoneAuthenticationFormPolicy.register(username, "alice@example.com", "13800138000", "Passw0rd", "Passw0rd")
 
-            assertEquals("用户名需要 3 至 32 个字符，仅支持字母、数字和下划线。", result.usernameError)
+            assertEquals("用户名需要 3 至 32 个字符，仅支持字母、数字和下划线，且不能全为数字。", result.usernameError)
             assertFalse(result.isValid)
         }
     }
@@ -59,7 +70,7 @@ class PhoneAuthenticationFormPolicyTest {
         )
 
         cases.forEach { (submittedPassword, expectedError) ->
-            val result = PhoneAuthenticationFormPolicy.register("alice_01", "13800138000", submittedPassword, "different")
+            val result = PhoneAuthenticationFormPolicy.register("alice_01", "alice@example.com", "13800138000", submittedPassword, "different")
 
             assertEquals(expectedError, result.passwordError)
             assertFalse(result.renderedErrors.any { it.contains(submittedPassword) || it.contains("different") })
@@ -70,8 +81,8 @@ class PhoneAuthenticationFormPolicyTest {
         val withinLimit = "A" + "a".repeat(253) + "1" + "b"
         val overLimit = withinLimit + "b"
 
-        assertTrue(PhoneAuthenticationFormPolicy.register("alice_01", "13800138000", withinLimit, withinLimit).isValid)
-        val result = PhoneAuthenticationFormPolicy.register("alice_01", "13800138000", overLimit, overLimit)
+        assertTrue(PhoneAuthenticationFormPolicy.register("alice_01", "alice@example.com", "13800138000", withinLimit, withinLimit).isValid)
+        val result = PhoneAuthenticationFormPolicy.register("alice_01", "alice@example.com", "13800138000", overLimit, overLimit)
 
         assertEquals("密码不能超过 256 个字节。", result.passwordError)
         assertFalse(result.isValid)
@@ -81,7 +92,7 @@ class PhoneAuthenticationFormPolicyTest {
     @Test fun registrationRejectsMultiBytePasswordOverUtf8ByteLimit() {
         val password = "A1a" + "中".repeat(85)
 
-        val result = PhoneAuthenticationFormPolicy.register("alice_01", "13800138000", password, password)
+        val result = PhoneAuthenticationFormPolicy.register("alice_01", "alice@example.com", "13800138000", password, password)
 
         assertEquals("密码不能超过 256 个字节。", result.passwordError)
         assertFalse(result.isValid)
@@ -93,33 +104,37 @@ class PhoneAuthenticationFormPolicyTest {
         val overLimit = withinLimit + "x"
 
         assertEquals(256, withinLimit.toByteArray(Charsets.UTF_8).size)
-        assertTrue(PhoneAuthenticationFormPolicy.register("alice_01", "13800138000", withinLimit, withinLimit).isValid)
-        val rejected = PhoneAuthenticationFormPolicy.register("alice_01", "13800138000", overLimit, overLimit)
+        assertTrue(PhoneAuthenticationFormPolicy.register("alice_01", "alice@example.com", "13800138000", withinLimit, withinLimit).isValid)
+        val rejected = PhoneAuthenticationFormPolicy.register("alice_01", "alice@example.com", "13800138000", overLimit, overLimit)
         assertEquals(257, overLimit.toByteArray(Charsets.UTF_8).size)
         assertEquals("密码不能超过 256 个字节。", rejected.passwordError)
         assertFalse(rejected.renderedErrors.any { it.contains(overLimit) })
     }
 
     @Test fun registrationRejectsMismatchedConfirmation() {
-        val result = PhoneAuthenticationFormPolicy.register("alice_01", "13800138000", "Passw0rd", "Passw0rD")
+        val result = PhoneAuthenticationFormPolicy.register("alice_01", "alice@example.com", "13800138000", "Passw0rd", "Passw0rD")
 
         assertEquals("两次输入的密码不一致。", result.confirmationError)
         assertFalse(result.isValid)
     }
 
-    @Test fun loginNormalizesAlreadyCanonicalPhone() {
-        val result = PhoneAuthenticationFormPolicy.login("+8613800138000", "Passw0rd")
+    @Test fun loginPrioritizesPhoneThenEmailThenUsernameAndNormalizesIdentifier() {
+        val phone = PhoneAuthenticationFormPolicy.login("+8613800138000", "Passw0rd")
+        val email = PhoneAuthenticationFormPolicy.login(" Alice@Example.COM ", "Passw0rd")
+        val username = PhoneAuthenticationFormPolicy.login(" Alice_01 ", "Passw0rd")
 
-        assertTrue(result.isValid)
-        assertEquals("+8613800138000", result.normalizedPhone)
-        assertNull(result.phoneError)
-        assertNull(result.passwordError)
+        assertTrue(phone.isValid)
+        assertEquals("+8613800138000", phone.normalizedIdentifier)
+        assertEquals("alice@example.com", email.normalizedIdentifier)
+        assertEquals("alice_01", username.normalizedIdentifier)
+        assertNull(phone.identifierError)
+        assertNull(phone.passwordError)
     }
 
-    @Test fun loginRequiresPhoneAndPassword() {
+    @Test fun loginRequiresRecognizableIdentifierAndPassword() {
         val result = PhoneAuthenticationFormPolicy.login("", "")
 
-        assertEquals("请输入有效的中国大陆手机号。", result.phoneError)
+        assertEquals("请输入有效的邮箱、手机号或用户名。", result.identifierError)
         assertEquals("请输入密码。", result.passwordError)
         assertFalse(result.isValid)
     }

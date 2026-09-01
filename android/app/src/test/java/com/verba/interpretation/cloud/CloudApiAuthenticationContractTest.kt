@@ -14,35 +14,36 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class CloudApiAuthenticationContractTest {
-    @Test fun registerPostsExactPhoneContractAndAcceptsCreated() {
+    @Test fun registerPostsExactMultiIdentityContractAndAcceptsCreated() {
         val fake = FakeHttp(201, "{}")
         val api = CloudApi("https://cloud.example", MemoryTokenStore(), FixedInstallationIdStore(), fake.client)
 
-        api.register("alice_01", "+8613800138000", "Passw0rd")
+        api.register("alice_01", "alice@example.com", "+8613800138000", "Passw0rd")
 
         val request = fake.singleRequest()
         assertEquals("POST", request.method)
         assertEquals("/api/v1/auth/register", request.url.encodedPath)
         val body = JSONObject(request.body!!.jsonBody())
-        assertEquals(3, body.length())
+        assertEquals(4, body.length())
         assertEquals("alice_01", body.getString("username"))
+        assertEquals("alice@example.com", body.getString("email"))
         assertEquals("+8613800138000", body.getString("phone"))
         assertEquals("Passw0rd", body.getString("password"))
     }
 
-    @Test fun loginPostsExactPhoneContractAndStoresTokens() {
+    @Test fun loginPostsIdentifierContractAndStoresTokens() {
         val fake = FakeHttp(200, "{\"access_token\":\"access\",\"refresh_token\":\"refresh\"}")
         val store = MemoryTokenStore()
         val api = CloudApi("https://cloud.example", store, FixedInstallationIdStore(), fake.client)
 
-        api.login("+8613800138000", "Passw0rd")
+        api.login("alice@example.com", "Passw0rd")
 
         val request = fake.singleRequest()
         assertEquals("POST", request.method)
         assertEquals("/api/v1/auth/login", request.url.encodedPath)
         val body = JSONObject(request.body!!.jsonBody())
         assertEquals(2, body.length())
-        assertEquals("+8613800138000", body.getString("phone"))
+        assertEquals("alice@example.com", body.getString("identifier"))
         assertEquals("Passw0rd", body.getString("password"))
         assertEquals(AuthTokens("access", "refresh"), store.read())
     }
@@ -68,9 +69,9 @@ class CloudApiAuthenticationContractTest {
         val fake = FakeHttp(401, "{\"error\":\"unauthorized\"}")
         val api = CloudApi("https://cloud.example", MemoryTokenStore(), FixedInstallationIdStore(), fake.client)
 
-        val error = assertThrows(CloudApiException::class.java) { api.login("+8613800138000", "wrong") }
+        val error = assertThrows(CloudApiException::class.java) { api.login("alice@example.com", "wrong") }
 
-        assertEquals("手机号或密码错误。", error.message)
+        assertEquals("账号或密码错误。", error.message)
         assertEquals(401, error.statusCode)
     }
 
@@ -100,16 +101,16 @@ class CloudApiAuthenticationContractTest {
         val error = assertThrows(CloudApiException::class.java) { api.currentUser() }
 
         assertEquals("登录状态已过期，请重新登录。", error.message)
-        assertTrue(error.message != "手机号或密码错误。")
+        assertTrue(error.message != "账号或密码错误。")
     }
 
     @Test fun registrationConflictUsesAvailabilityMessage() {
         val fake = FakeHttp(409, "{\"error\":\"conflict\"}")
         val api = CloudApi("https://cloud.example", MemoryTokenStore(), FixedInstallationIdStore(), fake.client)
 
-        val error = assertThrows(CloudApiException::class.java) { api.register("alice_01", "+8613800138000", "Passw0rd") }
+        val error = assertThrows(CloudApiException::class.java) { api.register("alice_01", "alice@example.com", "+8613800138000", "Passw0rd") }
 
-        assertEquals("该手机号或用户名暂不可用，请更换后重试。", error.message)
+        assertEquals("该用户名、邮箱或手机号暂不可用，请更换后重试。", error.message)
     }
 
     @Test fun translationSessionConflictKeepsSessionMessage() {

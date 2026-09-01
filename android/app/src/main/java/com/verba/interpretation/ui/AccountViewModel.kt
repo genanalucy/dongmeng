@@ -65,15 +65,15 @@ class AccountViewModel(
         runRequest { api.currentUser() to api.currentEntitlement() }
     }
 
-    fun register(username: String, phone: String, password: String) = runRequest {
-        api.register(username, phone, password)
+    fun register(username: String, email: String, phone: String, password: String) = runRequest {
+        api.register(username, email, phone, password)
         api.login(phone, password)
         api.currentUser() to api.currentEntitlement()
     }
 
 
-    fun login(phone: String, password: String) = runRequest {
-        api.login(phone, password)
+    fun login(identifier: String, password: String) = runRequest {
+        api.login(identifier, password)
         api.currentUser() to api.currentEntitlement()
     }
 

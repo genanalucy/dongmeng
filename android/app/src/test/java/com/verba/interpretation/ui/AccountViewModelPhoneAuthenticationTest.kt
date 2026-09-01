@@ -57,11 +57,11 @@ class AccountViewModelPhoneAuthenticationTest {
         val api = RecordingAccountApi()
         val viewModel = AccountViewModel(Application(), api, dispatcher)
 
-        viewModel.register("alice_01", "+8613800138000", "Passw0rd")
+        viewModel.register("alice_01", "alice@example.com", "+8613800138000", "Passw0rd")
         dispatcher.scheduler.advanceUntilIdle()
 
         assertEquals(
-            listOf("register:alice_01:+8613800138000", "login:+8613800138000", "currentUser", "currentEntitlement"),
+            listOf("register:alice_01:alice@example.com:+8613800138000", "login:+8613800138000", "currentUser", "currentEntitlement"),
             api.calls,
         )
         assertEquals("alice_01", viewModel.state.value.user?.username)
@@ -91,9 +91,9 @@ private class RefreshingHttp(private val responses: List<Pair<Int, String>>) {
 
 private class RecordingAccountApi : AccountApi {
     val calls = mutableListOf<String>()
-    override fun register(username: String, phone: String, password: String) { calls += "register:$username:$phone" }
-    override fun login(phone: String, password: String): AuthTokens {
-        calls += "login:$phone"
+    override fun register(username: String, email: String, phone: String, password: String) { calls += "register:$username:$email:$phone" }
+    override fun login(identifier: String, password: String): AuthTokens {
+        calls += "login:$identifier"
         return AuthTokens("access", "refresh")
     }
     override fun logout() = Unit

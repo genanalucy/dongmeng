@@ -14,17 +14,18 @@ enum class CloudRole { USER, ADMIN }
 
 data class CloudUser(val id: String, val username: String, val role: CloudRole)
 
-data class PhoneRegistrationRequest(val username: String, val phone: String, val password: String) {
+data class RegistrationRequest(val username: String, val email: String, val phone: String, val password: String) {
     fun toJson(): String = JSONObject()
         .put("username", username)
+        .put("email", email)
         .put("phone", phone)
         .put("password", password)
         .toString()
 }
 
-data class PhoneLoginRequest(val phone: String, val password: String) {
+data class LoginRequest(val identifier: String, val password: String) {
     fun toJson(): String = JSONObject()
-        .put("phone", phone)
+        .put("identifier", identifier)
         .put("password", password)
         .toString()
 }
@@ -42,8 +43,8 @@ interface CloudTranslationSessionService {
 }
 
 interface AccountApi {
-    fun register(username: String, phone: String, password: String)
-    fun login(phone: String, password: String): AuthTokens
+    fun register(username: String, email: String, phone: String, password: String)
+    fun login(identifier: String, password: String): AuthTokens
     fun logout()
     fun currentUser(): CloudUser
     fun currentEntitlement(): CloudEntitlement?
@@ -70,20 +71,20 @@ class CloudApi private constructor(
         installationIdStore: InstallationIdStore,
         client: OkHttpClient = OkHttpClient(),
     ) : this({ endpoint }, tokenStore, installationIdStore, client)
-    override fun register(username: String, phone: String, password: String) {
+    override fun register(username: String, email: String, phone: String, password: String) {
         try {
-            publicPost("auth/register", JSONObject(PhoneRegistrationRequest(username, phone, password).toJson()), expected = 201)
+            publicPost("auth/register", JSONObject(RegistrationRequest(username, email, phone, password).toJson()), expected = 201)
         } catch (error: CloudApiException) {
-            if (error.statusCode == 409) throw CloudApiException("该手机号或用户名暂不可用，请更换后重试。", 409)
+            if (error.statusCode == 409) throw CloudApiException("该用户名、邮箱或手机号暂不可用，请更换后重试。", 409)
             throw error
         }
     }
 
-    override fun login(phone: String, password: String): AuthTokens {
+    override fun login(identifier: String, password: String): AuthTokens {
         val response = try {
-            publicPost("auth/login", JSONObject(PhoneLoginRequest(phone, password).toJson()))
+            publicPost("auth/login", JSONObject(LoginRequest(identifier, password).toJson()))
         } catch (error: CloudApiException) {
-            if (error.statusCode == 401) throw CloudApiException("手机号或密码错误。", 401)
+            if (error.statusCode == 401) throw CloudApiException("账号或密码错误。", 401)
             throw error
         }
         return parseTokens(response).also(tokenStore::write)
@@ -233,7 +234,7 @@ class CloudApi private constructor(
         when (JSONObject(payload).optString("error")) {
             "no_entitlement" -> "当前账户没有可用权益，请兑换或等待试用生效。"
             "unauthorized" -> "登录状态已过期，请重新登录。"
-            "invalid_credentials" -> "手机号或密码错误。"
+            "invalid_credentials" -> "账号或密码错误。"
             "conflict" -> "当前已有进行中的翻译会话，请先结束它。"
             else -> "服务请求失败（HTTP $status）。"
         }

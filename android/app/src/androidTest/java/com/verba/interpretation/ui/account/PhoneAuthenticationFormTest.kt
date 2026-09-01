@@ -22,9 +22,9 @@ class PhoneAuthenticationFormTest {
     @Test fun loginHasNoErrorsUntilFieldsAreTouched() {
         setForm()
 
-        assertEditableTags("phone", "password")
+        assertEditableTags("identifier", "password")
         assertForbiddenAuthenticationTermsAbsent()
-        composeRule.onNodeWithText("请输入有效的中国大陆手机号。", substring = true).assertDoesNotExist()
+        composeRule.onNodeWithText("请输入有效的邮箱、手机号或用户名。", substring = true).assertDoesNotExist()
         composeRule.onNodeWithText("请输入密码。", substring = true).assertDoesNotExist()
     }
 
@@ -32,7 +32,7 @@ class PhoneAuthenticationFormTest {
         setForm()
         composeRule.onNodeWithText("注册账户").performClick()
 
-        assertEditableTags("username", "phone", "password", "confirmation")
+        assertEditableTags("username", "email", "phone", "password", "confirmation")
         assertForbiddenAuthenticationTermsAbsent()
         composeRule.onNodeWithText("用户名需要 3 至 32 个字符，仅支持字母、数字和下划线。", substring = true).assertDoesNotExist()
         composeRule.onNodeWithText("注册并登录").assertExists()
@@ -42,43 +42,45 @@ class PhoneAuthenticationFormTest {
         var calls = 0
         setForm(onLogin = { _, _ -> calls++ })
 
-        composeRule.onNodeWithTag("phone").performTextInput("invalid")
+        composeRule.onNodeWithTag("identifier").performTextInput("invalid")
 
-        assertError("phone", "请输入有效的中国大陆手机号。")
-        composeRule.onNodeWithText("请输入有效的中国大陆手机号。", substring = true).assertExists()
+        assertError("identifier", "请输入有效的邮箱、手机号或用户名。")
+        composeRule.onNodeWithText("请输入有效的邮箱、手机号或用户名。", substring = true).assertExists()
         composeRule.onNodeWithText("登录").assert(SemanticsMatcher.keyIsDefined(androidx.compose.ui.semantics.SemanticsProperties.Disabled))
         composeRule.onNodeWithText("登录").performClick()
         assertEquals(0, calls)
     }
 
-    @Test fun loginButtonDispatchesNormalizedPhoneAndPassword() {
+    @Test fun loginButtonDispatchesNormalizedEmailIdentifierAndPassword() {
         var submitted: Pair<String, String>? = null
-        setForm(onLogin = { phone, password -> submitted = phone to password })
+        setForm(onLogin = { identifier, password -> submitted = identifier to password })
 
-        composeRule.onNodeWithTag("phone").performTextInput("13800138000")
+        composeRule.onNodeWithText("邮箱 / 手机号 / 用户名").assertExists()
+        composeRule.onNodeWithTag("identifier").performTextInput("Alice@Example.COM")
         composeRule.onNodeWithTag("password").performTextInput("legacy")
         composeRule.onNodeWithText("登录").performClick()
 
-        assertEquals("+8613800138000" to "legacy", submitted)
+        assertEquals("alice@example.com" to "legacy", submitted)
     }
 
-    @Test fun registrationButtonDispatchesOnlyUsernamePhoneAndPassword() {
-        var submitted: Triple<String, String, String>? = null
-        setForm(onRegister = { username, phone, password -> submitted = Triple(username, phone, password) })
+    @Test fun registrationButtonDispatchesAllIdentitiesAndPassword() {
+        var submitted: List<String>? = null
+        setForm(onRegister = { username, email, phone, password -> submitted = listOf(username, email, phone, password) })
 
         composeRule.onNodeWithText("注册账户").performClick()
         composeRule.onNodeWithTag("username").performTextInput("alice_01")
+        composeRule.onNodeWithTag("email").performTextInput("Alice@Example.COM")
         composeRule.onNodeWithTag("phone").performTextInput("13800138000")
         composeRule.onNodeWithTag("password").performTextInput("Passw0rd")
         composeRule.onNodeWithTag("confirmation").performTextInput("Passw0rd")
         composeRule.onNodeWithText("注册并登录").performClick()
 
-        assertEquals(Triple("alice_01", "+8613800138000", "Passw0rd"), submitted)
+        assertEquals(listOf("alice_01", "alice@example.com", "+8613800138000", "Passw0rd"), submitted)
     }
 
     private fun setForm(
         onLogin: (String, String) -> Unit = { _, _ -> },
-        onRegister: (String, String, String) -> Unit = { _, _, _ -> },
+        onRegister: (String, String, String, String) -> Unit = { _, _, _, _ -> },
     ) {
         composeRule.setContent { MaterialTheme { PhoneAuthenticationForm(false, onLogin, onRegister) } }
     }
@@ -95,7 +97,7 @@ class PhoneAuthenticationFormTest {
     }
 
     private fun assertForbiddenAuthenticationTermsAbsent() {
-        listOf("邮箱", "验证码").forEach { term ->
+        listOf("验证码").forEach { term ->
             composeRule.onAllNodesWithText(term, substring = true, useUnmergedTree = true).assertCountEquals(0)
         }
     }
