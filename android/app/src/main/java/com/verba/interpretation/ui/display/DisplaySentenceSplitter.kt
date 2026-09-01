@@ -12,21 +12,24 @@ object DisplaySentenceSplitter {
 
         val segments = mutableListOf<String>()
         var segmentStart = 0
+        var commaCount = 0
         var index = 0
         while (index < text.length) {
             val character = text[index]
             val delimiterEnd = when (character) {
                 '。', '.' -> index + 1
-                '，', ',' -> commaRunEnd(text, index, character)
+                '，', ',' -> {
+                    commaCount++
+                    (index + 1).takeIf { commaCount == 3 }
+                }
                 else -> null
             }
             if (delimiterEnd != null) {
                 text.substring(segmentStart, delimiterEnd).takeIf { it.isNotEmpty() }?.let(segments::add)
                 segmentStart = delimiterEnd
-                index = delimiterEnd
-            } else {
-                index++
+                commaCount = 0
             }
+            index++
         }
         text.substring(segmentStart).takeIf { it.isNotEmpty() }?.let(segments::add)
         return segments
@@ -37,9 +40,4 @@ object DisplaySentenceSplitter {
         translation = split(translation),
     )
 
-    private fun commaRunEnd(text: String, start: Int, comma: Char): Int? {
-        var end = start
-        while (end < text.length && text[end] == comma) end++
-        return end.takeIf { end - start >= 3 }
-    }
 }
