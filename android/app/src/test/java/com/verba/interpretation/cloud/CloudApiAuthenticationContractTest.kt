@@ -53,14 +53,24 @@ class CloudApiAuthenticationContractTest {
         assertEquals(CloudUser("user-1", "alice_01", CloudRole.USER), api.currentUser())
     }
 
-    @Test fun currentUserRejectsMissingUsernameWithoutEchoingEmail() {
+    @Test fun currentUserUsesFixedNonEmailNameWhenLegacyUsernameIsMissing() {
         val fake = FakeHttp(200, "{\"id\":\"user-1\",\"role\":\"user\",\"email\":\"private@example.com\"}")
         val api = CloudApi("https://cloud.example", MemoryTokenStore(AuthTokens("access", "refresh")), FixedInstallationIdStore(), fake.client)
 
-        val error = assertThrows(CloudApiException::class.java) { api.currentUser() }
+        val user = api.currentUser()
 
-        assertEquals("服务响应缺少 username。", error.message)
-        assertFalse(error.message.orEmpty().contains("private@example.com"))
+        assertEquals(CloudUser("user-1", "旧版用户", CloudRole.USER), user)
+        assertFalse(user.username.contains("private@example.com"))
+    }
+
+    @Test fun loginMapsUnauthorizedToCredentialMessageOnlyForLogin() {
+        val fake = FakeHttp(401, "{\"error\":\"unauthorized\"}")
+        val api = CloudApi("https://cloud.example", MemoryTokenStore(), FixedInstallationIdStore(), fake.client)
+
+        val error = assertThrows(CloudApiException::class.java) { api.login("+8613800138000", "wrong") }
+
+        assertEquals("手机号或密码错误。", error.message)
+        assertEquals(401, error.statusCode)
     }
 
     @Test fun registrationConflictUsesAvailabilityMessage() {

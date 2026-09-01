@@ -33,6 +33,7 @@ object PhoneAuthenticationFormPolicy {
     private const val MissingUppercaseMessage = "密码需包含大写英文字母。"
     private const val MissingLowercaseMessage = "密码需包含小写英文字母。"
     private const val MissingNumberMessage = "密码需包含数字。"
+    private const val PasswordTooLongMessage = "密码不能超过 256 个字节。"
     private const val MismatchedPasswordMessage = "两次输入的密码不一致。"
 
     fun register(username: String, phone: String, password: String, confirmation: String): PhoneRegistrationFormValidation {
@@ -70,6 +71,7 @@ object PhoneAuthenticationFormPolicy {
     }
 
     private fun registrationPasswordError(password: String): String? = when {
+        password.toByteArray(Charsets.UTF_8).size > 256 -> PasswordTooLongMessage
         password.length < 8 -> ShortPasswordMessage
         password.none { it in 'A'..'Z' } -> MissingUppercaseMessage
         password.none { it in 'a'..'z' } -> MissingLowercaseMessage

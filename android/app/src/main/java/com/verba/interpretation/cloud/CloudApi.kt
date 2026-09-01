@@ -80,7 +80,12 @@ class CloudApi private constructor(
     }
 
     override fun login(phone: String, password: String): AuthTokens {
-        val response = publicPost("auth/login", JSONObject(PhoneLoginRequest(phone, password).toJson()))
+        val response = try {
+            publicPost("auth/login", JSONObject(PhoneLoginRequest(phone, password).toJson()))
+        } catch (error: CloudApiException) {
+            if (error.statusCode == 401) throw CloudApiException("手机号或密码错误。", 401)
+            throw error
+        }
         return parseTokens(response).also(tokenStore::write)
     }
 
@@ -97,7 +102,7 @@ class CloudApi private constructor(
         val json = authorized("users/me")
         return CloudUser(
             id = json.requiredString("id"),
-            username = json.requiredString("username"),
+            username = json.optString("username").trim().ifEmpty { "旧版用户" },
             role = CloudRole.entries.firstOrNull { it.name.equals(json.requiredString("role"), ignoreCase = true) }
                 ?: throw CloudApiException("服务返回了不支持的账户角色。"),
         )

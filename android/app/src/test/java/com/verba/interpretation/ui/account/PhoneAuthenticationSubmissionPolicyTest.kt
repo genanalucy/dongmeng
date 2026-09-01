@@ -43,6 +43,21 @@ class PhoneAuthenticationSubmissionPolicyTest {
         assertEquals(Triple("alice_01", "+8613800138000", "Passw0rd"), received)
     }
 
+    @Test fun overByteLimitRegistrationDoesNotDispatch() {
+        var calls = 0
+        val password = "A1a" + "中".repeat(85)
+
+        val dispatched = PhoneAuthenticationSubmissionPolicy.submitRegistration(
+            username = "alice_01",
+            phone = "13800138000",
+            password = password,
+            confirmation = password,
+        ) { _, _, _ -> calls++ }
+
+        assertFalse(dispatched)
+        assertEquals(0, calls)
+    }
+
     @Test fun invalidRegistrationDoesNotDispatch() {
         var calls = 0
 

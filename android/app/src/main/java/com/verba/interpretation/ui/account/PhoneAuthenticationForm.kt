@@ -34,13 +34,14 @@ fun PhoneAuthenticationForm(
     var phone by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
     var confirmation by remember { mutableStateOf("") }
+    var touched by remember { mutableStateOf(emptySet<String>()) }
     val login = PhoneAuthenticationFormPolicy.login(phone, password)
     val registration = PhoneAuthenticationFormPolicy.register(username, phone, password, confirmation)
     Column {
         if (mode == AuthenticationMode.LOGIN) {
             Text("手机号登录", style = MaterialTheme.typography.titleMedium)
-            PhoneField(phone, { phone = it }, login.phoneError, "phone", ImeAction.Next)
-            PasswordField(password, { password = it }, login.passwordError, "password", ImeAction.Done)
+            PhoneField(phone, { phone = it; touched = touched + "phone" }, login.phoneError.takeIf { "phone" in touched }, "phone", ImeAction.Next)
+            PasswordField(password, { password = it; touched = touched + "password" }, login.passwordError.takeIf { "password" in touched }, "password", ImeAction.Done)
             Button(
                 onClick = { PhoneAuthenticationSubmissionPolicy.submitLogin(phone, password, onLogin) },
                 enabled = !loading && login.isValid,
@@ -49,15 +50,15 @@ fun PhoneAuthenticationForm(
             TextButton(onClick = { mode = AuthenticationMode.REGISTER }, enabled = !loading, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("注册账户") }
         } else {
             Text("注册账户", style = MaterialTheme.typography.titleMedium)
-            TextField(username, { username = it }, "用户名", registration.usernameError, "username", KeyboardType.Text, ImeAction.Next, false)
-            PhoneField(phone, { phone = it }, registration.phoneError, "phone", ImeAction.Next)
-            PasswordField(password, { password = it }, registration.passwordError, "password", ImeAction.Next)
-            PasswordField(confirmation, { confirmation = it }, registration.confirmationError, "confirmation", ImeAction.Done)
+            TextField(username, { username = it; touched = touched + "username" }, "用户名", registration.usernameError.takeIf { "username" in touched }, "username", KeyboardType.Text, ImeAction.Next, false)
+            PhoneField(phone, { phone = it; touched = touched + "phone" }, registration.phoneError.takeIf { "phone" in touched }, "phone", ImeAction.Next)
+            PasswordField(password, { password = it; touched = touched + "password" }, registration.passwordError.takeIf { "password" in touched }, "password", ImeAction.Next)
+            PasswordField(confirmation, { confirmation = it; touched = touched + "confirmation" }, registration.confirmationError.takeIf { "confirmation" in touched }, "confirmation", ImeAction.Done)
             Button(
                 onClick = { PhoneAuthenticationSubmissionPolicy.submitRegistration(username, phone, password, confirmation, onRegister) },
                 enabled = !loading && registration.isValid,
                 modifier = Modifier.fillMaxWidth().padding(top = 10.dp).heightIn(min = 48.dp),
-            ) { Text(if (loading) "处理中…" else "注册") }
+            ) { Text(if (loading) "处理中…" else "注册并登录") }
             TextButton(onClick = { mode = AuthenticationMode.LOGIN }, enabled = !loading, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("返回登录") }
         }
     }

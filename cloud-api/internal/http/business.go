@@ -63,13 +63,17 @@ type principal struct {
 
 type publicUserResponse struct {
 	ID        uuid.UUID `json:"id"`
-	Username  string    `json:"username,omitempty"`
+	Username  string    `json:"username"`
 	Role      string    `json:"role"`
 	CreatedAt time.Time `json:"created_at"`
 }
 
 func publicUser(user domain.User) publicUserResponse {
-	return publicUserResponse{ID: user.ID, Username: user.Username, Role: user.Role, CreatedAt: user.CreatedAt}
+	username := user.Username
+	if username == "" {
+		username = "旧版用户"
+	}
+	return publicUserResponse{ID: user.ID, Username: username, Role: user.Role, CreatedAt: user.CreatedAt}
 }
 
 func current(r *http.Request) (principal, bool) {

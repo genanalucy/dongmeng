@@ -19,33 +19,23 @@ import org.junit.Test
 class PhoneAuthenticationFormTest {
     @get:Rule val composeRule = createComposeRule()
 
-    @Test fun loginHasExactlyPhoneAndPasswordFieldsWithAccurateErrors() {
+    @Test fun loginHasNoErrorsUntilFieldsAreTouched() {
         setForm()
 
         assertEditableTags("phone", "password")
         assertForbiddenAuthenticationTermsAbsent()
-        assertError("phone", "请输入有效的中国大陆手机号。")
-        assertError("password", "请输入密码。")
-        composeRule.onNodeWithText("请输入有效的中国大陆手机号。", substring = true).assertExists()
-        composeRule.onNodeWithText("请输入密码。", substring = true).assertExists()
+        composeRule.onNodeWithText("请输入有效的中国大陆手机号。", substring = true).assertDoesNotExist()
+        composeRule.onNodeWithText("请输入密码。", substring = true).assertDoesNotExist()
     }
 
-    @Test fun registrationHasExactlyFourFieldsWithAccurateErrors() {
+    @Test fun registrationHasNoErrorsUntilFieldsAreTouchedAndUsesAutoLoginLabel() {
         setForm()
         composeRule.onNodeWithText("注册账户").performClick()
 
         assertEditableTags("username", "phone", "password", "confirmation")
         assertForbiddenAuthenticationTermsAbsent()
-        assertError("username", "用户名需要 3 至 32 个字符，仅支持字母、数字和下划线。")
-        assertError("phone", "请输入有效的中国大陆手机号。")
-        assertError("password", "密码至少需要 8 个字符。")
-        assertError("confirmation", "两次输入的密码不一致。")
-        listOf(
-            "用户名需要 3 至 32 个字符，仅支持字母、数字和下划线。",
-            "请输入有效的中国大陆手机号。",
-            "密码至少需要 8 个字符。",
-            "两次输入的密码不一致。",
-        ).forEach { composeRule.onNodeWithText(it, substring = true).assertExists() }
+        composeRule.onNodeWithText("用户名需要 3 至 32 个字符，仅支持字母、数字和下划线。", substring = true).assertDoesNotExist()
+        composeRule.onNodeWithText("注册并登录").assertExists()
     }
 
     @Test fun loginButtonDispatchesNormalizedPhoneAndPassword() {
@@ -68,7 +58,7 @@ class PhoneAuthenticationFormTest {
         composeRule.onNodeWithTag("phone").performTextInput("13800138000")
         composeRule.onNodeWithTag("password").performTextInput("Passw0rd")
         composeRule.onNodeWithTag("confirmation").performTextInput("Passw0rd")
-        composeRule.onNodeWithText("注册").performClick()
+        composeRule.onNodeWithText("注册并登录").performClick()
 
         assertEquals(Triple("alice_01", "+8613800138000", "Passw0rd"), submitted)
     }
