@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -8,6 +9,22 @@ import (
 
 	"github.com/google/uuid"
 )
+
+func TestUserSerializationNeverExposesPhoneOrInternalEmail(t *testing.T) {
+	user := User{ID: uuid.New(), Username: "alice_01", Phone: "+8613800138000", Email: "phone-internal@reserved.invalid", Role: string(RoleUser)}
+	encoded, err := json.Marshal(user)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, forbidden := range []string{`"phone"`, "+8613800138000"} {
+		if strings.Contains(string(encoded), forbidden) {
+			t.Fatalf("public user JSON contains forbidden identity field")
+		}
+	}
+	if !strings.Contains(string(encoded), `"username":"alice_01"`) {
+		t.Fatal("public user JSON lost username")
+	}
+}
 
 func TestParseCredentialsCanonicalizesEmail(t *testing.T) {
 	input, err := ParseCredentials("  User@Example.COM ", "correct horse battery")

@@ -255,7 +255,7 @@ func ParseCreateBatchInput(name string, count int) (CreateBatchInput, error) {
 type User struct {
 	ID        uuid.UUID `json:"id"`
 	Username  string    `json:"username,omitempty"`
-	Phone     string    `json:"phone,omitempty"`
+	Phone     string    `json:"-"`
 	Role      string    `json:"role"`
 	CreatedAt time.Time `json:"created_at"`
 	Email     string    `json:"email,omitempty"`

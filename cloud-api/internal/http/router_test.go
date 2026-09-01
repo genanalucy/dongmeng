@@ -11,7 +11,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dngmeng/cloud-api/internal/auth"
 	"github.com/dngmeng/cloud-api/internal/config"
+	"github.com/dngmeng/cloud-api/internal/domain"
+	"github.com/google/uuid"
 )
 
 type readinessFunc func(context.Context) error
@@ -143,6 +146,60 @@ func TestPhoneVerificationRoutesValidateFormatBeforeReturningDisabled(t *testing
 				}
 			})
 		}
+	}
+}
+
+func TestPhoneAuthHTTPContractIsStrictAndDoesNotExposePhone(t *testing.T) {
+	hash, err := auth.HashPassword("Aa123456")
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := &adminContractStore{enabled: true, phoneUser: domain.User{ID: uuid.New(), Username: "alice_01", Phone: "+8613800138000", Role: string(domain.RoleUser)}, phoneHash: hash}
+	router, issuer, now := newAdminContractRouter(t, store)
+	for _, test := range []struct {
+		name, path, body string
+		status           int
+	}{
+		{"register exact", "/api/v1/auth/register", `{"username":"Alice_01","phone":"13800138000","password":"Aa123456"}`, http.StatusCreated},
+		{"register rejects unknown", "/api/v1/auth/register", `{"username":"alice_01","phone":"13800138000","password":"Aa123456","email":"x@example.test"}`, http.StatusBadRequest},
+		{"login raw", "/api/v1/auth/login", `{"phone":"13800138000","password":"Aa123456"}`, http.StatusOK},
+		{"login canonical", "/api/v1/auth/login", `{"phone":"+8613800138000","password":"Aa123456"}`, http.StatusOK},
+		{"login email rejected", "/api/v1/auth/login", `{"phone":"x@example.test","password":"Aa123456"}`, http.StatusUnauthorized},
+		{"login username rejected", "/api/v1/auth/login", `{"phone":"alice_01","password":"Aa123456"}`, http.StatusUnauthorized},
+		{"login missing phone", "/api/v1/auth/login", `{"password":"Aa123456"}`, http.StatusUnauthorized},
+		{"login malformed", "/api/v1/auth/login", `{`, http.StatusBadRequest},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, test.path, strings.NewReader(test.body))
+			req.Header.Set("Content-Type", "application/json")
+			req.RemoteAddr = "127.0.0.1:12345"
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, req)
+			if response.Code != test.status {
+				t.Fatalf("status = %d", response.Code)
+			}
+			if strings.Contains(response.Body.String(), "+8613800138000") || strings.Contains(response.Body.String(), `"phone"`) {
+				t.Fatal("response exposed phone")
+			}
+		})
+	}
+	if store.phoneQuery != "+8613800138000" {
+		t.Fatal("phone was not canonicalized")
+	}
+	if store.register.Username != "alice_01" || store.register.Phone != "+8613800138000" {
+		t.Fatal("registration did not forward canonical identity")
+	}
+	access, err := issuer.AccessToken(store.phoneUser.ID, string(domain.RoleUser), time.Minute, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/users/me", nil)
+	req.Header.Set("Authorization", "Bearer "+access)
+	req.RemoteAddr = "127.0.0.1:12345"
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, req)
+	if response.Code != http.StatusOK || strings.Contains(response.Body.String(), "+8613800138000") || strings.Contains(response.Body.String(), `"phone"`) {
+		t.Fatal("me response exposed phone")
 	}
 }
 

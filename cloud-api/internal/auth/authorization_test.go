@@ -125,14 +125,14 @@ func TestAuthorizationServiceRegistersPhoneCredentialsWithThreeDayTrial(t *testi
 		t.Fatal(err)
 	}
 	if result.User.ID != userID || result.Trial.ID != trial.ID || result.User.Email != "" {
-		t.Fatalf("unexpected registration result: %+v", result)
+		t.Fatal("unexpected registration result")
 	}
 	if len(store.registerCalls) != 1 {
 		t.Fatalf("register calls = %d", len(store.registerCalls))
 	}
 	params := store.registerCalls[0]
 	if params.Username != "alice_01" || params.Phone != "+8613800138000" || params.PasswordHash != "encoded-password-hash" || !params.Now.Equal(storedAt) {
-		t.Fatalf("unexpected persisted registration: %+v", params)
+		t.Fatal("unexpected persisted registration")
 	}
 	if result.Trial.ExpiresAt.Sub(result.Trial.StartsAt) != domain.TrialDuration {
 		t.Fatalf("trial duration = %s", result.Trial.ExpiresAt.Sub(result.Trial.StartsAt))
@@ -185,7 +185,7 @@ func TestAuthorizationServiceRegisterRejectsInvalidOrUnpersistedTrial(t *testing
 				t.Fatal("invalid registration result accepted")
 			}
 			if result != (RegistrationResult{}) {
-				t.Fatalf("partial registration result leaked: %+v", result)
+				t.Fatal("partial registration result leaked")
 			}
 		})
 	}
@@ -197,10 +197,10 @@ func TestAuthorizationServiceDoesNotPersistEmptyPasswordHash(t *testing.T) {
 
 	result, err := service.Register(context.Background(), "alice_01", "13800138000", "Aa123456", time.Now())
 	if err == nil || result != (RegistrationResult{}) {
-		t.Fatalf("empty password hash accepted: result=%+v err=%v", result, err)
+		t.Fatal("empty password hash accepted")
 	}
 	if len(store.registerCalls) != 0 {
-		t.Fatalf("empty password hash reached persistence: %+v", store.registerCalls)
+		t.Fatal("empty password hash reached persistence")
 	}
 }
 

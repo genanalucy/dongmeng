@@ -48,6 +48,17 @@ type principal struct {
 	role domain.Role
 }
 
+type publicUserResponse struct {
+	ID        uuid.UUID `json:"id"`
+	Username  string    `json:"username,omitempty"`
+	Role      string    `json:"role"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+func publicUser(user domain.User) publicUserResponse {
+	return publicUserResponse{ID: user.ID, Username: user.Username, Role: user.Role, CreatedAt: user.CreatedAt}
+}
+
 func current(r *http.Request) (principal, bool) {
 	p, ok := r.Context().Value(principalKey{}).(principal)
 	return p, ok
@@ -151,7 +162,7 @@ func (a api) register(w http.ResponseWriter, r *http.Request) {
 		domainError(w, r, e)
 		return
 	}
-	writeJSON(w, http.StatusCreated, map[string]any{"user": v.User, "trial_entitlement": v.Trial})
+	writeJSON(w, http.StatusCreated, map[string]any{"user": publicUser(v.User), "trial_entitlement": v.Trial})
 }
 func (a api) login(w http.ResponseWriter, r *http.Request) {
 	var x struct {
@@ -253,7 +264,7 @@ func (a api) me(w http.ResponseWriter, r *http.Request) {
 		domainError(w, r, e)
 		return
 	}
-	writeJSON(w, 200, u)
+	writeJSON(w, 200, publicUser(u))
 }
 func (a api) devices(w http.ResponseWriter, r *http.Request) {
 	p, _ := current(r)

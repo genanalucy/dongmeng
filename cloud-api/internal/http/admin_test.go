@@ -30,6 +30,43 @@ type adminContractStore struct {
 	userOffset   int
 	auditLimit   int
 	auditOffset  int
+	phoneUser    domain.User
+	phoneHash    string
+	phoneQuery   string
+	register     domain.RegisterParams
+	registerErr  error
+	refreshes    []domain.RefreshToken
+}
+
+func (s *adminContractStore) UserByID(_ context.Context, id uuid.UUID) (domain.User, error) {
+	if s.phoneUser.ID == id {
+		return s.phoneUser, nil
+	}
+	return domain.User{}, domain.ErrNotFound
+}
+
+func (s *adminContractStore) CreateRefreshToken(_ context.Context, params domain.CreateRefreshParams) (domain.RefreshToken, error) {
+	token := domain.RefreshToken{ID: uuid.New(), UserID: params.UserID, FamilyID: params.FamilyID, TokenHash: params.Hash, ExpiresAt: params.ExpiresAt}
+	s.refreshes = append(s.refreshes, token)
+	return token, nil
+}
+
+func (s *adminContractStore) UserByPhone(_ context.Context, phone string) (domain.User, string, error) {
+	s.phoneQuery = phone
+	if s.phoneUser.ID == uuid.Nil {
+		return domain.User{}, "", domain.ErrNotFound
+	}
+	return s.phoneUser, s.phoneHash, nil
+}
+
+func (s *adminContractStore) Register(_ context.Context, params domain.RegisterParams) (domain.User, domain.Entitlement, error) {
+	s.register = params
+	if s.registerErr != nil {
+		return domain.User{}, domain.Entitlement{}, s.registerErr
+	}
+	user := domain.User{ID: uuid.New(), Username: params.Username, Phone: params.Phone, Role: string(domain.RoleUser), CreatedAt: params.Now}
+	trial, _ := domain.NewTrialEntitlement(uuid.New(), user.ID, params.Now)
+	return user, trial, nil
 }
 
 func (s *adminContractStore) UserEnabled(context.Context, uuid.UUID) (bool, error) {
