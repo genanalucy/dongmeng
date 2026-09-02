@@ -26,8 +26,13 @@ class EndpointSettings(
         if (webSocketUrl != storedWebSocketUrl) {
             preferences.edit().putString(WEBSOCKET_URL_KEY, webSocketUrl).apply()
         }
+        val storedHttpUrl = preferences.getString(HTTP_URL_KEY, defaults.httpUrl) ?: defaults.httpUrl
+        val httpUrl = migrateLegacyHttpUrl(storedHttpUrl, defaults.httpUrl)
+        if (httpUrl != storedHttpUrl) {
+            preferences.edit().putString(HTTP_URL_KEY, httpUrl).apply()
+        }
         return EndpointConfig(
-            httpUrl = preferences.getString(HTTP_URL_KEY, defaults.httpUrl) ?: defaults.httpUrl,
+            httpUrl = httpUrl,
             webSocketUrl = webSocketUrl,
         )
     }
@@ -84,10 +89,17 @@ class EndpointSettings(
             false
         }
 
-        internal fun migrateLegacyWebSocketUrl(storedUrl: String, defaultUrl: String): String =
-            if (storedUrl == LEGACY_TRANSLATION_WS_URL) defaultUrl else storedUrl
+        internal fun migrateLegacyHttpUrl(storedUrl: String, defaultUrl: String): String =
+            if (storedUrl == LEGACY_AGENT_HTTP_URL) defaultUrl else storedUrl
 
-        private const val LEGACY_TRANSLATION_WS_URL = "ws://114.132.83.144:18765/v1/translation"
+        internal fun migrateLegacyWebSocketUrl(storedUrl: String, defaultUrl: String): String =
+            if (storedUrl in LEGACY_TRANSLATION_WS_URLS) defaultUrl else storedUrl
+
+        private const val LEGACY_AGENT_HTTP_URL = "http://114.132.83.144:18765"
+        private val LEGACY_TRANSLATION_WS_URLS = setOf(
+            "ws://114.132.83.144:18765/v1/translation",
+            "ws://114.132.83.144:18765/ws/translate",
+        )
         private const val PREFERENCES_NAME = "endpoint_settings"
         private const val HTTP_URL_KEY = "http_url"
         private const val WEBSOCKET_URL_KEY = "websocket_url"

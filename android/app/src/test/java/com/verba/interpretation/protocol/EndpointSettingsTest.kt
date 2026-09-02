@@ -48,12 +48,26 @@ class EndpointSettingsTest {
         assertEquals("ws://114.132.83.144:18765/ws/translate", result.getOrThrow().webSocketUrl)
     }
 
-    @Test fun migratesExactLegacyTranslationWebSocketPath() {
+    @Test fun migratesHistoricalTencentAgentEndpoints() {
+        val ec2HttpUrl = "https://47-129-170-16.sslip.io"
+        val ec2WebSocketUrl = "wss://47-129-170-16.sslip.io/ws/translate"
+
         assertEquals(
-            "ws://114.132.83.144:18765/ws/translate",
+            ec2HttpUrl,
+            EndpointSettings.migrateLegacyHttpUrl("http://114.132.83.144:18765", ec2HttpUrl),
+        )
+        assertEquals(
+            ec2WebSocketUrl,
             EndpointSettings.migrateLegacyWebSocketUrl(
                 "ws://114.132.83.144:18765/v1/translation",
+                ec2WebSocketUrl,
+            ),
+        )
+        assertEquals(
+            ec2WebSocketUrl,
+            EndpointSettings.migrateLegacyWebSocketUrl(
                 "ws://114.132.83.144:18765/ws/translate",
+                ec2WebSocketUrl,
             ),
         )
     }
