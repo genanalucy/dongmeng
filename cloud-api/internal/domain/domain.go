@@ -113,6 +113,44 @@ func ParseUsername(value string) (Username, error) {
 
 func (u Username) String() string { return string(u) }
 
+type RegistrationVerificationInput struct {
+	Username Username
+	Email    Email
+	Password Password
+}
+
+// ParseRegistrationVerificationInput applies the current username, email, and
+// password policy before registration verification material is created.
+func ParseRegistrationVerificationInput(username, email, password string) (RegistrationVerificationInput, error) {
+	parsedUsername, err := ParseUsername(username)
+	if err != nil {
+		return RegistrationVerificationInput{}, err
+	}
+	parsedEmail, err := ParseEmail(email)
+	if err != nil {
+		return RegistrationVerificationInput{}, err
+	}
+	parsedPassword, err := ParsePassword(password)
+	if err != nil {
+		return RegistrationVerificationInput{}, err
+	}
+	var upper, lower, digit bool
+	for _, char := range password {
+		switch {
+		case char >= 'A' && char <= 'Z':
+			upper = true
+		case char >= 'a' && char <= 'z':
+			lower = true
+		case char >= '0' && char <= '9':
+			digit = true
+		}
+	}
+	if !upper || !lower || !digit {
+		return RegistrationVerificationInput{}, fmt.Errorf("%w: invalid password", ErrInvalid)
+	}
+	return RegistrationVerificationInput{Username: parsedUsername, Email: parsedEmail, Password: parsedPassword}, nil
+}
+
 type LoginIdentifierKind string
 
 const (
