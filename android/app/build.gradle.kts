@@ -16,28 +16,28 @@ android {
         versionName = "1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-        buildConfigField("String", "AGENT_HTTP_URL", "\"https://api.example.com\"")
+        buildConfigField("String", "AGENT_HTTP_URL", "\"https://47-129-170-16.sslip.io\"")
         buildConfigField("String", "CLOUD_API_URL", "\"https://47-129-170-16.sslip.io\"")
-        buildConfigField("String", "TRANSLATION_WS_URL", "\"wss://api.example.com/v1/translation\"")
-        buildConfigField("String", "TRANSLATION_ORIGIN", "\"\"")
+        buildConfigField("String", "TRANSLATION_WS_URL", "\"wss://47-129-170-16.sslip.io/ws/translate\"")
+        buildConfigField("String", "TRANSLATION_ORIGIN", "\"https://47-129-170-16.sslip.io\"")
     }
 
     buildTypes {
         debug {
             applicationIdSuffix = ".debug"
             versionNameSuffix = "-debug"
-            buildConfigField("String", "AGENT_HTTP_URL", "\"http://114.132.83.144:18765\"")
+            buildConfigField("String", "AGENT_HTTP_URL", "\"https://47-129-170-16.sslip.io\"")
             // Cloud API uses the EC2 HTTPS edge in both debug and release builds.
             buildConfigField("String", "CLOUD_API_URL", "\"https://47-129-170-16.sslip.io\"")
-            buildConfigField("String", "TRANSLATION_WS_URL", "\"ws://114.132.83.144:18765/ws/translate\"")
-            buildConfigField("String", "TRANSLATION_ORIGIN", "\"http://114.132.83.144:15173\"")
+            buildConfigField("String", "TRANSLATION_WS_URL", "\"wss://47-129-170-16.sslip.io/ws/translate\"")
+            buildConfigField("String", "TRANSLATION_ORIGIN", "\"https://47-129-170-16.sslip.io\"")
         }
         release {
             isMinifyEnabled = false
-            buildConfigField("String", "AGENT_HTTP_URL", "\"https://api.example.com\"")
+            buildConfigField("String", "AGENT_HTTP_URL", "\"https://47-129-170-16.sslip.io\"")
             buildConfigField("String", "CLOUD_API_URL", "\"https://47-129-170-16.sslip.io\"")
-            buildConfigField("String", "TRANSLATION_WS_URL", "\"wss://api.example.com/v1/translation\"")
-            buildConfigField("String", "TRANSLATION_ORIGIN", "\"\"")
+            buildConfigField("String", "TRANSLATION_WS_URL", "\"wss://47-129-170-16.sslip.io/ws/translate\"")
+            buildConfigField("String", "TRANSLATION_ORIGIN", "\"https://47-129-170-16.sslip.io\"")
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
     }

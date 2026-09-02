@@ -1,5 +1,6 @@
 package com.verba.interpretation.protocol
 
+import com.verba.interpretation.BuildConfig
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -14,6 +15,12 @@ class EndpointSettingsTest {
 
         assertTrue(result.isSuccess)
         assertEquals("http://127.0.0.1:18765", result.getOrThrow().httpUrl)
+    }
+
+    @Test fun debugBuildUsesEc2HttpsTranslationEndpoints() {
+        assertEquals("https://47-129-170-16.sslip.io", BuildConfig.CLOUD_API_URL)
+        assertEquals("wss://47-129-170-16.sslip.io/ws/translate", BuildConfig.TRANSLATION_WS_URL)
+        assertEquals("https://47-129-170-16.sslip.io", BuildConfig.TRANSLATION_ORIGIN)
     }
 
     @Test fun releaseRejectsCleartextEndpoints() {
