@@ -336,7 +336,7 @@ func TestRegistrationVerificationRequestIsStrictAndGenericForOperationalOutcomes
 			store := &registrationVerificationHTTPStore{
 				request: func(context.Context, domain.CreateRegistrationVerificationParams) (domain.RegistrationVerification, error) {
 					requests++
-					return domain.RegistrationVerification{ID: uuid.New()}, test.storeErr
+					return domain.RegistrationVerification{ID: uuid.New(), ReservationID: uuid.New()}, test.storeErr
 				},
 				confirm: func(context.Context, domain.ConfirmRegistrationVerificationParams) (domain.RegisterParams, error) {
 					return domain.RegisterParams{}, domain.ErrRegistrationVerificationFailed
@@ -384,7 +384,7 @@ func TestRegistrationVerificationUsesForwardedIPOnlyFromLoopbackCaddy(t *testing
 			store := &registrationVerificationHTTPStore{
 				request: func(_ context.Context, params domain.CreateRegistrationVerificationParams) (domain.RegistrationVerification, error) {
 					got = params
-					return domain.RegistrationVerification{ID: uuid.New()}, nil
+					return domain.RegistrationVerification{ID: uuid.New(), ReservationID: uuid.New()}, nil
 				},
 				confirm: func(context.Context, domain.ConfirmRegistrationVerificationParams) (domain.RegisterParams, error) {
 					return domain.RegisterParams{}, domain.ErrRegistrationVerificationFailed

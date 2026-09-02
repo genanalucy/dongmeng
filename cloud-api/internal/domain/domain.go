@@ -476,17 +476,18 @@ type RegisterParams struct {
 }
 
 type RegistrationVerification struct {
-	ID           uuid.UUID
-	Username     string
-	Email        string
-	PasswordHash string
-	CodeHash     []byte
-	CodeSalt     []byte
-	ExpiresAt    time.Time
-	AttemptCount int
-	SentAt       time.Time
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
+	ID            uuid.UUID
+	ReservationID uuid.UUID
+	Username      string
+	Email         string
+	PasswordHash  string
+	CodeHash      []byte
+	CodeSalt      []byte
+	ExpiresAt     time.Time
+	AttemptCount  int
+	SentAt        time.Time
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
 }
 
 type CreateRegistrationVerificationParams struct {
@@ -498,9 +499,9 @@ type CreateRegistrationVerificationParams struct {
 }
 
 type InvalidateRegistrationVerificationParams struct {
-	ID    uuid.UUID
-	Email string
-	Now   time.Time
+	ReservationID uuid.UUID
+	Email         string
+	Now           time.Time
 }
 
 type ConfirmRegistrationVerificationParams struct {

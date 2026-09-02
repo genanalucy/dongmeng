@@ -86,7 +86,7 @@ func (p *Postgres) Register(ctx context.Context, x domain.RegisterParams) (domai
 
 func scanRegistrationVerification(row pgx.Row) (domain.RegistrationVerification, error) {
 	var verification domain.RegistrationVerification
-	err := row.Scan(&verification.ID, &verification.Username, &verification.Email, &verification.PasswordHash, &verification.CodeHash, &verification.CodeSalt, &verification.ExpiresAt, &verification.AttemptCount, &verification.SentAt, &verification.CreatedAt, &verification.UpdatedAt)
+	err := row.Scan(&verification.ID, &verification.ReservationID, &verification.Username, &verification.Email, &verification.PasswordHash, &verification.CodeHash, &verification.CodeSalt, &verification.ExpiresAt, &verification.AttemptCount, &verification.SentAt, &verification.CreatedAt, &verification.UpdatedAt)
 	return verification, storeErr(err)
 }
 
@@ -155,10 +155,10 @@ func (p *Postgres) RequestRegistrationVerification(ctx context.Context, x domain
 		if exists {
 			return domain.ErrConflict
 		}
-		created, err := scanRegistrationVerification(t.QueryRow(ctx, `INSERT INTO registration_verifications(username,email,password_hash,code_hash,code_salt,expires_at,attempt_count,sent_at,created_at,updated_at)
-			VALUES($1,$2,$3,$4,$5,$6,0,$7,$7,$7)
-			ON CONFLICT(email) DO UPDATE SET username=EXCLUDED.username,password_hash=EXCLUDED.password_hash,code_hash=EXCLUDED.code_hash,code_salt=EXCLUDED.code_salt,expires_at=EXCLUDED.expires_at,attempt_count=0,sent_at=EXCLUDED.sent_at,updated_at=EXCLUDED.updated_at
-			RETURNING id,username,email,password_hash,code_hash,code_salt,expires_at,attempt_count,sent_at,created_at,updated_at`, username.String(), email.String(), x.PasswordHash, x.CodeHash, x.CodeSalt, x.ExpiresAt.UTC(), now))
+		created, err := scanRegistrationVerification(t.QueryRow(ctx, `INSERT INTO registration_verifications(reservation_id,username,email,password_hash,code_hash,code_salt,expires_at,attempt_count,sent_at,created_at,updated_at)
+			VALUES(gen_random_uuid(),$1,$2,$3,$4,$5,$6,0,$7,$7,$7)
+			ON CONFLICT(email) DO UPDATE SET reservation_id=gen_random_uuid(),username=EXCLUDED.username,password_hash=EXCLUDED.password_hash,code_hash=EXCLUDED.code_hash,code_salt=EXCLUDED.code_salt,expires_at=EXCLUDED.expires_at,attempt_count=0,sent_at=EXCLUDED.sent_at,updated_at=EXCLUDED.updated_at
+			RETURNING id,reservation_id,username,email,password_hash,code_hash,code_salt,expires_at,attempt_count,sent_at,created_at,updated_at`, username.String(), email.String(), x.PasswordHash, x.CodeHash, x.CodeSalt, x.ExpiresAt.UTC(), now))
 		verification = created
 		return err
 	})
@@ -187,7 +187,7 @@ func (p *Postgres) ConfirmRegistrationVerification(ctx context.Context, x domain
 	}
 	failed := false
 	err = p.tx(ctx, func(t pgx.Tx) error {
-		verification, err := scanRegistrationVerification(t.QueryRow(ctx, `SELECT id,username,email,password_hash,code_hash,code_salt,expires_at,attempt_count,sent_at,created_at,updated_at FROM registration_verifications WHERE email=$1 FOR UPDATE`, email.String()))
+		verification, err := scanRegistrationVerification(t.QueryRow(ctx, `SELECT id,reservation_id,username,email,password_hash,code_hash,code_salt,expires_at,attempt_count,sent_at,created_at,updated_at FROM registration_verifications WHERE email=$1 FOR UPDATE`, email.String()))
 		if err != nil {
 			failed = true
 			return nil
@@ -236,10 +236,10 @@ func (p *Postgres) ConfirmRegistrationVerification(ctx context.Context, x domain
 
 func (p *Postgres) InvalidateRegistrationVerification(ctx context.Context, x domain.InvalidateRegistrationVerificationParams) error {
 	parsedEmail, err := domain.ParseEmail(x.Email)
-	if err != nil || x.ID == uuid.Nil || x.Now.IsZero() {
+	if err != nil || x.ReservationID == uuid.Nil || x.Now.IsZero() {
 		return domain.ErrInvalid
 	}
-	_, err = p.pool.Exec(ctx, `DELETE FROM registration_verifications WHERE id=$1 AND email=$2`, x.ID, parsedEmail.String())
+	_, err = p.pool.Exec(ctx, `DELETE FROM registration_verifications WHERE reservation_id=$1 AND email=$2`, x.ReservationID, parsedEmail.String())
 	return storeErr(err)
 }
 

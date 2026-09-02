@@ -10,6 +10,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"strings"
@@ -440,6 +441,92 @@ func TestPostgresRegistrationVerification(t *testing.T) {
 	if err := raw.QueryRow(ctx, `SELECT count(*) FROM email_verification_rate_limits WHERE key_hash=$1`, []byte("confirm-ip")).Scan(&ipBuckets); err != nil || ipBuckets != 0 {
 		t.Fatalf("expired IP buckets after cleanup = %d, err = %v, want 0", ipBuckets, err)
 	}
+}
+
+func TestPostgresRegistrationVerificationLateSenderFailurePreservesNewerReservation(t *testing.T) {
+	url := isolatedPostgresTestDSN(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	if err := migrate.Run(ctx, migrate.Config{DatabaseURL: url, Directory: repositoryMigrationDirectory(t), Schema: "public"}); err != nil {
+		t.Fatal("apply reservation migration")
+	}
+	db, err := store.Open(ctx, url)
+	if err != nil {
+		t.Fatal("open reservation database")
+	}
+	defer db.Close()
+	pepper := []byte("late-sender-failure-pepper")
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	username, email := registrationVerificationIdentity()
+	passwordHash, err := auth.HashPassword("integration-password")
+	if err != nil {
+		t.Fatal("hash password")
+	}
+	var mu sync.Mutex
+	current := now
+	write := func(ctx context.Context, draft auth.RegistrationVerificationDraft) (uuid.UUID, error) {
+		mu.Lock()
+		at := current
+		mu.Unlock()
+		verification, err := db.RequestRegistrationVerification(ctx, domain.CreateRegistrationVerificationParams{Username: draft.Username, Email: draft.Email, PasswordHash: draft.PasswordHash, CodeHash: draft.CodeHash, CodeSalt: draft.Salt, EmailRateLimitKey: []byte("late-email-" + email), IPRateLimitKey: []byte("late-ip-" + email), Now: at, ExpiresAt: draft.ExpiresAt})
+		return verification.ReservationID, err
+	}
+	firstStarted := make(chan struct{})
+	releaseFirst := make(chan struct{})
+	calls := 0
+	service, err := auth.NewEmailRegistrationService(auth.EmailRegistrationService{
+		HashPasswordValue:  func(string) (string, error) { return passwordHash, nil },
+		GenerateCode:       func() (string, error) { return "012345", nil },
+		GenerateSalt:       func() ([]byte, error) { return []byte("late-salt"), nil },
+		CodePepper:         pepper,
+		RateLimitKeySecret: []byte("late-rate-key-secret"),
+		WriteVerification:  write,
+		Clock:              func() time.Time { mu.Lock(); defer mu.Unlock(); return current },
+		Sender: registrationCodeSenderFunc(func(context.Context, string, string, time.Time) error {
+			mu.Lock()
+			calls++
+			call := calls
+			mu.Unlock()
+			if call == 1 {
+				close(firstStarted)
+				<-releaseFirst
+				return errors.New("sender failed")
+			}
+			return nil
+		}),
+		InvalidateVerification: func(ctx context.Context, reservationID uuid.UUID, email string, at time.Time) error {
+			return db.InvalidateRegistrationVerification(ctx, domain.InvalidateRegistrationVerificationParams{ReservationID: reservationID, Email: email, Now: at})
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := auth.RegistrationVerificationRequest{Username: username, Email: email, Password: "integration-password", ClientIP: netip.MustParseAddr("203.0.113.10")}
+	firstDone := make(chan error, 1)
+	go func() { _, err := service.RequestVerification(context.Background(), request); firstDone <- err }()
+	<-firstStarted
+	mu.Lock()
+	current = current.Add(auth.RegistrationVerificationResendDelay)
+	mu.Unlock()
+	if _, err := service.RequestVerification(ctx, request); err != nil {
+		t.Fatalf("newer reservation request: %v", err)
+	}
+	close(releaseFirst)
+	if err := <-firstDone; err == nil {
+		t.Fatal("first request unexpectedly succeeded")
+	}
+	mu.Lock()
+	confirmNow := current.Add(time.Second)
+	mu.Unlock()
+	if _, err := db.ConfirmRegistrationVerification(ctx, domain.ConfirmRegistrationVerificationParams{Email: email, Code: "012345", CodePepper: pepper, EmailRateLimitKey: []byte("late-email-" + email), Now: confirmNow}); err != nil {
+		t.Fatalf("newer reservation confirmation: %v", err)
+	}
+}
+
+type registrationCodeSenderFunc func(context.Context, string, string, time.Time) error
+
+func (f registrationCodeSenderFunc) SendRegistrationCode(ctx context.Context, email, code string, expiresAt time.Time) error {
+	return f(ctx, email, code, expiresAt)
 }
 
 func registrationVerificationCodeHash(pepper, salt []byte, code string) []byte {

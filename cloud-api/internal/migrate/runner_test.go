@@ -100,15 +100,15 @@ func TestRepositoryMigrationsClassifyConcurrentIndexOutsideTransaction(t *testin
 	if err != nil {
 		t.Fatalf("discover repository migrations: %v", err)
 	}
-	if len(migrations) != 5 {
-		t.Fatalf("migration count = %d, want 5", len(migrations))
+	if len(migrations) != 6 {
+		t.Fatalf("migration count = %d, want 6", len(migrations))
 	}
-	for index, version := range []string{"000001", "000002", "000003", "000004", "000005"} {
+	for index, version := range []string{"000001", "000002", "000003", "000004", "000005", "000006"} {
 		if migrations[index].Version != version {
 			t.Fatalf("migration[%d].Version = %q, want %q", index, migrations[index].Version, version)
 		}
 	}
-	if migrations[0].OutsideTransaction || !migrations[1].OutsideTransaction || migrations[2].OutsideTransaction || migrations[3].OutsideTransaction || migrations[4].OutsideTransaction {
+	if migrations[0].OutsideTransaction || !migrations[1].OutsideTransaction || migrations[2].OutsideTransaction || migrations[3].OutsideTransaction || migrations[4].OutsideTransaction || migrations[5].OutsideTransaction {
 		t.Fatalf("repository migration transaction classification mismatch")
 	}
 	index := migrations[1].ConcurrentIndex
@@ -384,8 +384,8 @@ func TestRunRecordsRepositoryChecksumsIsIdempotentAndFailsBeforeLaterMigration(t
 	if err := conn.QueryRow(ctx, "SELECT count(*) FROM "+ledger).Scan(&count); err != nil {
 		t.Fatal("count repository migration ledger")
 	}
-	if count != 5 {
-		t.Fatalf("ledger count = %d, want 5", count)
+	if count != 6 {
+		t.Fatalf("ledger count = %d, want 6", count)
 	}
 	var valid bool
 	if err := conn.QueryRow(ctx, `SELECT i.indisvalid FROM pg_catalog.pg_index i JOIN pg_catalog.pg_class c ON c.oid=i.indexrelid JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=$1 AND c.relname='refresh_tokens_expiry_idx'`, schema).Scan(&valid); err != nil {
@@ -448,6 +448,7 @@ func copyRepositoryMigrations(t *testing.T) string {
 		"000003_business_lifecycle.up.sql",
 		"000004_phone_authentication.up.sql",
 		"000005_email_registration_verifications.up.sql",
+		"000006_registration_verification_reservations.up.sql",
 	} {
 		contents, err := os.ReadFile(filepath.Join(repositoryMigrationDirectory(t), name))
 		if err != nil {
