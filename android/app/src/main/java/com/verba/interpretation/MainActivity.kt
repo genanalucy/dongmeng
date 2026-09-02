@@ -1184,6 +1184,7 @@ private fun AccountPage(
                         onRequestVerification = accountViewModel::requestRegistrationVerification,
                         onConfirmVerification = accountViewModel::confirmRegistrationVerification,
                         onEditDetails = accountViewModel::returnToRegistrationDetails,
+                        onResend = accountViewModel::resendRegistrationVerification,
                     )
                 }
             } else {

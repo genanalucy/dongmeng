@@ -10,10 +10,13 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.delay
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.error
 import androidx.compose.ui.semantics.semantics
@@ -32,6 +35,7 @@ fun AuthenticationForm(
     onRequestVerification: (String, String, String) -> Unit,
     onConfirmVerification: (String, String) -> Unit,
     onEditDetails: () -> Unit,
+    onResend: (String, String, String) -> Unit,
 ) {
     var mode by remember { mutableStateOf(AuthenticationMode.LOGIN) }
     var username by remember { mutableStateOf("") }
@@ -52,12 +56,7 @@ fun AuthenticationForm(
                 loading, username, email, password, confirmation, details,
                 { username = it; touched += "username" }, { email = it; touched += "email" },
                 { password = it; touched += "password" }, { confirmation = it; touched += "confirmation" },
-                {
-                    if (AuthenticationSubmissionPolicy.submitRegistration(username, email, password, confirmation, onRequestVerification)) {
-                        password = ""
-                        confirmation = ""
-                    }
-                },
+                { AuthenticationSubmissionPolicy.submitRegistration(username, email, password, confirmation, onRequestVerification) },
                 { mode = AuthenticationMode.LOGIN },
             )
             is RegistrationUiState.Challenge -> VerificationForm(
@@ -65,6 +64,7 @@ fun AuthenticationForm(
                 { code = it.take(6).filter { character -> character in '0'..'9' }; touched += "verification-code" },
                 { AuthenticationSubmissionPolicy.submitVerification(registration.email, code, onConfirmVerification) },
                 onEditDetails,
+                { onResend(registration.username, registration.email, password) },
                 "verification-code" in touched,
             )
         }
@@ -92,15 +92,22 @@ private fun RegistrationDetailsForm(loading: Boolean, username: String, email: S
 }
 
 @Composable
-private fun VerificationForm(loading: Boolean, challenge: RegistrationUiState.Challenge, code: String, validation: VerificationCodeValidation, onCodeChange: (String) -> Unit, onConfirm: () -> Unit, onEditDetails: () -> Unit, codeTouched: Boolean) {
+private fun VerificationForm(loading: Boolean, challenge: RegistrationUiState.Challenge, code: String, validation: VerificationCodeValidation, onCodeChange: (String) -> Unit, onConfirm: () -> Unit, onEditDetails: () -> Unit, onResend: () -> Unit, codeTouched: Boolean) {
     Text("确认邮箱验证码", style = MaterialTheme.typography.titleMedium)
     Text("验证码已发送至 ${challenge.maskedEmail}")
     TextField(code, onCodeChange, "6 位数字验证码", validation.codeError.takeIf { codeTouched }, "verification-code", KeyboardType.NumberPassword, ImeAction.Done, false)
     Button(onClick = onConfirm, enabled = !loading && validation.isValid, modifier = actionModifier()) { Text(if (loading) "处理中…" else "确认注册") }
     TextButton(onClick = onEditDetails, enabled = !loading, modifier = fullWidthActionModifier()) { Text("返回编辑资料") }
-    val canResend = !loading && challenge.retryAfterSeconds <= 0
-    TextButton(onClick = onEditDetails, enabled = canResend, modifier = fullWidthActionModifier()) {
-        Text(if (canResend) "返回编辑资料以重新发送" else "${challenge.retryAfterSeconds} 秒后可重新发送")
+    var nowMillis by remember(challenge.resendAvailableAtMillis) { mutableLongStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(challenge.resendAvailableAtMillis) {
+        while (nowMillis < challenge.resendAvailableAtMillis) {
+            delay(1_000L)
+            nowMillis = System.currentTimeMillis()
+        }
+    }
+    val remainingSeconds = RegistrationResendPolicy.remainingSeconds(challenge.resendAvailableAtMillis, nowMillis)
+    TextButton(onClick = onResend, enabled = !loading && remainingSeconds == 0, modifier = fullWidthActionModifier()) {
+        Text(if (remainingSeconds == 0) "重新发送验证码" else "${remainingSeconds} 秒后可重新发送")
     }
 }
 

@@ -18,6 +18,7 @@ import com.verba.interpretation.cloud.KeystoreTokenStore
 import com.verba.interpretation.cloud.SharedPreferencesInstallationIdStore
 import com.verba.interpretation.cloud.UsagePage
 import com.verba.interpretation.ui.account.AccountIdentityFormPolicy
+import com.verba.interpretation.ui.account.RegistrationResendPolicy
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -28,7 +29,7 @@ import kotlinx.coroutines.withContext
 
 sealed interface RegistrationUiState {
     data object Details : RegistrationUiState
-    data class Challenge(val username: String, val email: String, val maskedEmail: String, val retryAfterSeconds: Int) : RegistrationUiState
+    data class Challenge(val username: String, val email: String, val maskedEmail: String, val resendAvailableAtMillis: Long) : RegistrationUiState
 }
 
 data class AccountUiState(
@@ -56,6 +57,7 @@ class AccountViewModel(
     application: Application,
     private val api: AccountApi = CloudApi(CloudEndpointSettings(application), KeystoreTokenStore(application), SharedPreferencesInstallationIdStore(application)),
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
+    private val clockMillis: () -> Long = System::currentTimeMillis,
 ) : AndroidViewModel(application) {
     companion object {
         private const val UsagePageSize = 20
@@ -117,12 +119,18 @@ class AccountViewModel(
                 }
                 mutableState.value = mutableState.value.copy(
                     loading = false,
-                    registration = RegistrationUiState.Challenge(username, email, email.maskedEmail(), retryAfterSeconds),
+                    registration = RegistrationUiState.Challenge(username, email, email.maskedEmail(), clockMillis() + retryAfterSeconds * 1_000L),
                 )
             } catch (_: Exception) {
                 mutableState.value = mutableState.value.copy(loading = false, message = SafeRequestError)
             }
         }
+    }
+
+    fun resendRegistrationVerification(username: String, email: String, password: String) {
+        val challenge = mutableState.value.registration as? RegistrationUiState.Challenge ?: return
+        if (challenge.username != username || challenge.email != email || RegistrationResendPolicy.remainingSeconds(challenge.resendAvailableAtMillis, clockMillis()) != 0) return
+        requestRegistrationVerification(username, email, password)
     }
 
     fun returnToRegistrationDetails() {

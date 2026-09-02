@@ -46,7 +46,7 @@ class AuthenticationFormTest {
     }
 
     @Test fun challengeShowsMaskedEmailSixDigitCodeAndDisabledResend() {
-        setForm(registration = RegistrationUiState.Challenge("alice_01", "alice@example.com", "a***e@example.com", 60))
+        setForm(registration = RegistrationUiState.Challenge("alice_01", "alice@example.com", "a***e@example.com", System.currentTimeMillis() + 60_000L))
 
         assertEditableTags("verification-code")
         composeRule.onNodeWithText("a***e@example.com").assertExists()
@@ -59,7 +59,7 @@ class AuthenticationFormTest {
         var confirmed: Pair<String, String>? = null
         var editCalls = 0
         setForm(
-            registration = RegistrationUiState.Challenge("alice_01", "alice@example.com", "a***e@example.com", 0),
+            registration = RegistrationUiState.Challenge("alice_01", "alice@example.com", "a***e@example.com", 0L),
             onConfirmVerification = { email, code -> confirmed = email to code },
             onEditDetails = { editCalls++ },
         )
@@ -77,6 +77,7 @@ class AuthenticationFormTest {
         onRequestVerification: (String, String, String) -> Unit = { _, _, _ -> },
         onConfirmVerification: (String, String) -> Unit = { _, _ -> },
         onEditDetails: () -> Unit = {},
+        onResend: (String, String, String) -> Unit = { _, _, _ -> },
     ) {
         composeRule.setContent {
             MaterialTheme {
@@ -87,6 +88,7 @@ class AuthenticationFormTest {
                     onRequestVerification = onRequestVerification,
                     onConfirmVerification = onConfirmVerification,
                     onEditDetails = onEditDetails,
+                    onResend = onResend,
                 )
             }
         }

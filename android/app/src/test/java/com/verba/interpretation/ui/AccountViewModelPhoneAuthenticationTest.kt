@@ -28,6 +28,7 @@ import org.junit.Test
 @OptIn(ExperimentalCoroutinesApi::class)
 class AccountViewModelPhoneAuthenticationTest {
     private val dispatcher = StandardTestDispatcher()
+    private var nowMillis = 1_000L
 
     @Before fun setUp() {
         Dispatchers.setMain(dispatcher)
@@ -56,22 +57,38 @@ class AccountViewModelPhoneAuthenticationTest {
 
     @Test fun requestRegistrationVerificationTransitionsToChallengeWithoutAutomaticLogin() {
         val api = RecordingAccountApi()
-        val viewModel = AccountViewModel(Application(), api, dispatcher)
+        val viewModel = AccountViewModel(Application(), api, dispatcher, { nowMillis })
 
         viewModel.requestRegistrationVerification("alice_01", "alice@example.com", "Passw0rd")
         dispatcher.scheduler.advanceUntilIdle()
 
         assertEquals(listOf("requestVerification:alice_01:alice@example.com"), api.calls)
         assertEquals(
-            RegistrationUiState.Challenge(username = "alice_01", email = "alice@example.com", maskedEmail = "a***e@example.com", retryAfterSeconds = 60),
+            RegistrationUiState.Challenge(username = "alice_01", email = "alice@example.com", maskedEmail = "a***e@example.com", resendAvailableAtMillis = 61_000L),
             viewModel.state.value.registration,
         )
         assertEquals(null, viewModel.state.value.user)
     }
 
+    @Test fun resendRegistrationVerificationCallsApiAfterCooldownExpiry() {
+        val api = RecordingAccountApi()
+        val viewModel = AccountViewModel(Application(), api, dispatcher, { nowMillis })
+
+        viewModel.requestRegistrationVerification("alice_01", "alice@example.com", "Passw0rd")
+        dispatcher.scheduler.advanceUntilIdle()
+        nowMillis = 61_000L
+        viewModel.resendRegistrationVerification("alice_01", "alice@example.com", "Passw0rd")
+        dispatcher.scheduler.advanceUntilIdle()
+
+        assertEquals(
+            listOf("requestVerification:alice_01:alice@example.com", "requestVerification:alice_01:alice@example.com"),
+            api.calls,
+        )
+    }
+
     @Test fun returningToRegistrationDetailsDiscardsChallengeEmail() {
         val api = RecordingAccountApi()
-        val viewModel = AccountViewModel(Application(), api, dispatcher)
+        val viewModel = AccountViewModel(Application(), api, dispatcher, { nowMillis })
 
         viewModel.requestRegistrationVerification("alice_01", "alice@example.com", "Passw0rd")
         dispatcher.scheduler.advanceUntilIdle()
@@ -82,7 +99,7 @@ class AccountViewModelPhoneAuthenticationTest {
 
     @Test fun confirmRegistrationVerificationUsesSuppliedEmailAndReturnsToDetails() {
         val api = RecordingAccountApi()
-        val viewModel = AccountViewModel(Application(), api, dispatcher)
+        val viewModel = AccountViewModel(Application(), api, dispatcher, { nowMillis })
 
         viewModel.confirmRegistrationVerification("alice@example.com", "012345")
         dispatcher.scheduler.advanceUntilIdle()
