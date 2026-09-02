@@ -106,35 +106,39 @@ class AccountViewModelPhoneAuthenticationTest {
         )
     }
 
-    @Test fun concurrentResendsDispatchExactlyOneRequest() {
+    @Test fun coordinatedNonAtomicGateDeterministicallyAllowsTwoResends() {
+        val gate = CoordinatedNonAtomicGate()
+        assertEquals(3, concurrentResendCallCount(gate) { gate.coordinateNextAcquisitions() })
+    }
+
+    @Test fun atomicGateAllowsOnlyOneConcurrentResend() {
+        assertEquals(2, concurrentResendCallCount(AtomicRegistrationRequestGate()) {})
+    }
+
+    private fun concurrentResendCallCount(gate: RegistrationRequestGate, beforeResend: () -> Unit): Int {
         val api = RecordingAccountApi()
         var now = 1_000L
-        var synchronizeClock = false
-        val clockBarrier = CyclicBarrier(2)
-        val viewModel = AccountViewModel(Application(), api, dispatcher, {
-            if (synchronizeClock) clockBarrier.await(5, TimeUnit.SECONDS)
-            now
-        })
+        val viewModel = AccountViewModel(Application(), api, dispatcher, { now }, gate)
         viewModel.requestRegistrationVerification("alice_01", "alice@example.com", "Passw0rd")
         dispatcher.scheduler.advanceUntilIdle()
         now = 61_000L
-        synchronizeClock = true
+        beforeResend()
         val callersReady = CountDownLatch(2)
         val start = CountDownLatch(1)
         val done = CountDownLatch(2)
-        fun resend() = Thread {
-            callersReady.countDown()
-            start.await(5, TimeUnit.SECONDS)
-            viewModel.resendRegistrationVerification("alice_01", "alice@example.com", "Passw0rd")
-            done.countDown()
-        }.start()
-        resend(); resend()
+        repeat(2) {
+            Thread {
+                callersReady.countDown()
+                start.await(5, TimeUnit.SECONDS)
+                viewModel.resendRegistrationVerification("alice_01", "alice@example.com", "Passw0rd")
+                done.countDown()
+            }.start()
+        }
         assertEquals(true, callersReady.await(5, TimeUnit.SECONDS))
         start.countDown()
         assertEquals(true, done.await(5, TimeUnit.SECONDS))
         dispatcher.scheduler.advanceUntilIdle()
-
-        assertEquals(2, api.calls.size)
+        return api.calls.size
     }
 
     @Test fun returningToRegistrationDetailsDiscardsChallengeEmail() {

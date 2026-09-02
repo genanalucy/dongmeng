@@ -26,7 +26,6 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.util.concurrent.atomic.AtomicBoolean
 
 sealed interface RegistrationUiState {
     data object Details : RegistrationUiState
@@ -59,6 +58,7 @@ class AccountViewModel(
     private val api: AccountApi = CloudApi(CloudEndpointSettings(application), KeystoreTokenStore(application), SharedPreferencesInstallationIdStore(application)),
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
     private val clockMillis: () -> Long = System::currentTimeMillis,
+    private val registrationRequestGate: RegistrationRequestGate = AtomicRegistrationRequestGate(),
 ) : AndroidViewModel(application) {
     companion object {
         private const val UsagePageSize = 20
@@ -74,7 +74,6 @@ class AccountViewModel(
     }
 
     private val mutableState = MutableStateFlow(AccountUiState())
-    private val registrationRequestInFlight = AtomicBoolean(false)
     val state: StateFlow<AccountUiState> = mutableState.asStateFlow()
 
     init { refresh() }
@@ -112,7 +111,7 @@ class AccountViewModel(
     }
 
     fun requestRegistrationVerification(username: String, email: String, password: String) {
-        if (!registrationRequestInFlight.compareAndSet(false, true)) return
+        if (!registrationRequestGate.tryAcquire()) return
         mutableState.value = mutableState.value.copy(loading = true, message = null)
         viewModelScope.launch {
             try {
@@ -127,7 +126,7 @@ class AccountViewModel(
             } catch (_: Exception) {
                 mutableState.value = mutableState.value.copy(loading = false, message = SafeRequestError)
             } finally {
-                registrationRequestInFlight.set(false)
+                registrationRequestGate.release()
             }
         }
     }
