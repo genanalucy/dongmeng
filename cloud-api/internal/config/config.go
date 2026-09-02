@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"net"
+	"net/mail"
 	"net/url"
 	"os"
 	"strconv"
@@ -14,58 +15,75 @@ import (
 )
 
 const (
-	defaultAddress           = ":8080"
-	defaultDatabaseTimeout   = 2 * time.Second
-	defaultShutdownTimeout   = 10 * time.Second
-	defaultReadTimeout       = 10 * time.Second
-	defaultReadHeaderTimeout = 5 * time.Second
-	defaultWriteTimeout      = 15 * time.Second
-	defaultIdleTimeout       = 60 * time.Second
-	defaultRateLimitRPS      = 10.0
-	defaultRateLimitBurst    = 20
+	defaultAddress            = ":8080"
+	defaultDatabaseTimeout    = 2 * time.Second
+	defaultShutdownTimeout    = 10 * time.Second
+	defaultReadTimeout        = 10 * time.Second
+	defaultReadHeaderTimeout  = 5 * time.Second
+	defaultWriteTimeout       = 15 * time.Second
+	defaultIdleTimeout        = 60 * time.Second
+	defaultRateLimitRPS       = 10.0
+	defaultRateLimitBurst     = 20
+	defaultSMTPHost           = "127.0.0.1"
+	defaultSMTPPort           = 25
+	defaultSMTPConnectTimeout = 5 * time.Second
+	defaultSMTPSendTimeout    = 10 * time.Second
 )
 
 // Config contains all runtime settings. Secret values must never be logged.
 type Config struct {
-	Environment       string
-	Address           string
-	DatabaseURL       string
-	AllowedOrigins    []string
-	DatabaseTimeout   time.Duration
-	ShutdownTimeout   time.Duration
-	ReadTimeout       time.Duration
-	ReadHeaderTimeout time.Duration
-	WriteTimeout      time.Duration
-	IdleTimeout       time.Duration
-	RateLimitRPS      float64
-	RateLimitBurst    int
-	TokenIssuer       string
-	AccessAudience    string
-	SessionAudience   string
-	AccessSecret      string
-	SessionSecret     string
+	Environment                      string
+	Address                          string
+	DatabaseURL                      string
+	AllowedOrigins                   []string
+	DatabaseTimeout                  time.Duration
+	ShutdownTimeout                  time.Duration
+	ReadTimeout                      time.Duration
+	ReadHeaderTimeout                time.Duration
+	WriteTimeout                     time.Duration
+	IdleTimeout                      time.Duration
+	RateLimitRPS                     float64
+	RateLimitBurst                   int
+	TokenIssuer                      string
+	AccessAudience                   string
+	SessionAudience                  string
+	AccessSecret                     string
+	SessionSecret                    string
+	EmailVerificationEnabled         bool
+	SMTPHost                         string
+	SMTPPort                         int
+	SMTPFrom                         string
+	SMTPConnectTimeout               time.Duration
+	SMTPSendTimeout                  time.Duration
+	EmailVerificationRateLimitSecret string
 }
 
 // Load reads environment variables and validates the resulting configuration.
 func Load() (Config, error) {
 	cfg := Config{
-		Environment:       envOrDefault("CLOUD_API_ENV", "development"),
-		Address:           envOrDefault("CLOUD_API_ADDR", defaultAddress),
-		DatabaseURL:       strings.TrimSpace(os.Getenv("DATABASE_URL")),
-		AllowedOrigins:    splitCSV(os.Getenv("CORS_ALLOWED_ORIGINS")),
-		DatabaseTimeout:   defaultDatabaseTimeout,
-		ShutdownTimeout:   defaultShutdownTimeout,
-		ReadTimeout:       defaultReadTimeout,
-		ReadHeaderTimeout: defaultReadHeaderTimeout,
-		WriteTimeout:      defaultWriteTimeout,
-		IdleTimeout:       defaultIdleTimeout,
-		RateLimitRPS:      defaultRateLimitRPS,
-		RateLimitBurst:    defaultRateLimitBurst,
-		TokenIssuer:       strings.TrimSpace(os.Getenv("TOKEN_ISSUER")),
-		AccessAudience:    strings.TrimSpace(os.Getenv("ACCESS_TOKEN_AUDIENCE")),
-		SessionAudience:   strings.TrimSpace(os.Getenv("TRANSLATION_SESSION_AUDIENCE")),
-		AccessSecret:      os.Getenv("ACCESS_TOKEN_HS256_KEY"),
-		SessionSecret:     os.Getenv("TRANSLATION_SESSION_HS256_KEY"),
+		Environment:                      envOrDefault("CLOUD_API_ENV", "development"),
+		Address:                          envOrDefault("CLOUD_API_ADDR", defaultAddress),
+		DatabaseURL:                      strings.TrimSpace(os.Getenv("DATABASE_URL")),
+		AllowedOrigins:                   splitCSV(os.Getenv("CORS_ALLOWED_ORIGINS")),
+		DatabaseTimeout:                  defaultDatabaseTimeout,
+		ShutdownTimeout:                  defaultShutdownTimeout,
+		ReadTimeout:                      defaultReadTimeout,
+		ReadHeaderTimeout:                defaultReadHeaderTimeout,
+		WriteTimeout:                     defaultWriteTimeout,
+		IdleTimeout:                      defaultIdleTimeout,
+		RateLimitRPS:                     defaultRateLimitRPS,
+		RateLimitBurst:                   defaultRateLimitBurst,
+		TokenIssuer:                      strings.TrimSpace(os.Getenv("TOKEN_ISSUER")),
+		AccessAudience:                   strings.TrimSpace(os.Getenv("ACCESS_TOKEN_AUDIENCE")),
+		SessionAudience:                  strings.TrimSpace(os.Getenv("TRANSLATION_SESSION_AUDIENCE")),
+		AccessSecret:                     os.Getenv("ACCESS_TOKEN_HS256_KEY"),
+		SessionSecret:                    os.Getenv("TRANSLATION_SESSION_HS256_KEY"),
+		SMTPHost:                         envOrDefault("SMTP_HOST", defaultSMTPHost),
+		SMTPPort:                         defaultSMTPPort,
+		SMTPFrom:                         strings.TrimSpace(os.Getenv("SMTP_FROM")),
+		SMTPConnectTimeout:               defaultSMTPConnectTimeout,
+		SMTPSendTimeout:                  defaultSMTPSendTimeout,
+		EmailVerificationRateLimitSecret: os.Getenv("EMAIL_VERIFICATION_RATE_LIMIT_SECRET"),
 	}
 
 	var err error
@@ -91,6 +109,18 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 	if cfg.RateLimitBurst, err = intEnv("RATE_LIMIT_BURST", cfg.RateLimitBurst); err != nil {
+		return Config{}, err
+	}
+	if cfg.EmailVerificationEnabled, err = boolEnv("EMAIL_VERIFICATION_ENABLED", false); err != nil {
+		return Config{}, err
+	}
+	if cfg.SMTPPort, err = intEnv("SMTP_PORT", cfg.SMTPPort); err != nil {
+		return Config{}, err
+	}
+	if cfg.SMTPConnectTimeout, err = durationEnv("SMTP_CONNECT_TIMEOUT", cfg.SMTPConnectTimeout); err != nil {
+		return Config{}, err
+	}
+	if cfg.SMTPSendTimeout, err = durationEnv("SMTP_SEND_TIMEOUT", cfg.SMTPSendTimeout); err != nil {
 		return Config{}, err
 	}
 
@@ -150,9 +180,41 @@ func (c Config) Validate() error {
 	if strings.TrimSpace(c.TokenIssuer) == "" || strings.TrimSpace(c.AccessAudience) == "" || strings.TrimSpace(c.SessionAudience) == "" || c.AccessAudience == c.SessionAudience || len(c.AccessSecret) < 32 || len(c.SessionSecret) < 32 || c.AccessSecret == c.SessionSecret {
 		problems = append(problems, "token issuer, distinct audiences, and distinct 32-byte token keys are required")
 	}
+	if c.EmailVerificationEnabled {
+		if err := validateSMTPHost(c.SMTPHost, c.Environment); err != nil {
+			problems = append(problems, err.Error())
+		}
+		if c.SMTPPort < 1 || c.SMTPPort > 65535 {
+			problems = append(problems, "SMTP_PORT must be between 1 and 65535")
+		}
+		sender, err := mail.ParseAddress(c.SMTPFrom)
+		if err != nil || sender.Address != c.SMTPFrom {
+			problems = append(problems, "SMTP_FROM must be a valid sender address")
+		}
+		if c.SMTPConnectTimeout <= 0 {
+			problems = append(problems, "SMTP_CONNECT_TIMEOUT must be positive")
+		}
+		if c.SMTPSendTimeout <= 0 {
+			problems = append(problems, "SMTP_SEND_TIMEOUT must be positive")
+		}
+		if len(c.EmailVerificationRateLimitSecret) < 32 {
+			problems = append(problems, "EMAIL_VERIFICATION_RATE_LIMIT_SECRET must be at least 32 bytes")
+		}
+	}
 
 	if len(problems) > 0 {
 		return errors.New(strings.Join(problems, "; "))
+	}
+	return nil
+}
+
+func validateSMTPHost(host, environment string) error {
+	host = strings.TrimSpace(host)
+	if host == "" {
+		return errors.New("SMTP_HOST is required")
+	}
+	if environment == "production" && host != "localhost" && host != "127.0.0.1" {
+		return errors.New("SMTP_HOST must be localhost or 127.0.0.1 in production")
 	}
 	return nil
 }
@@ -235,6 +297,18 @@ func durationEnv(name string, fallback time.Duration) (time.Duration, error) {
 	parsed, err := time.ParseDuration(value)
 	if err != nil {
 		return 0, fmt.Errorf("%s must be a duration: %w", name, err)
+	}
+	return parsed, nil
+}
+
+func boolEnv(name string, fallback bool) (bool, error) {
+	value := strings.TrimSpace(os.Getenv(name))
+	if value == "" {
+		return fallback, nil
+	}
+	parsed, err := strconv.ParseBool(value)
+	if err != nil {
+		return false, fmt.Errorf("%s must be true or false: %w", name, err)
 	}
 	return parsed, nil
 }

@@ -14,14 +14,15 @@ import (
 
 type Readiness interface{ Ping(context.Context) error }
 type RouterOptions struct {
-	Config       config.Config
-	Database     Readiness
-	Store        businessStore
-	Tokens       auth.TokenIssuer
-	Logger       *slog.Logger
-	Version      string
-	Now          func() time.Time
-	Verification PhoneVerificationService
+	Config                   config.Config
+	Database                 Readiness
+	Store                    businessStore
+	Tokens                   auth.TokenIssuer
+	Logger                   *slog.Logger
+	Version                  string
+	Now                      func() time.Time
+	Verification             PhoneVerificationService
+	RegistrationVerification *auth.EmailRegistrationService
 }
 
 func noStore(next http.Handler) http.Handler {

@@ -54,6 +54,62 @@ func TestLoadRejectsUnsafeValues(t *testing.T) {
 	}
 }
 
+func TestValidateRejectsNonLoopbackSMTPHostInProduction(t *testing.T) {
+	cfg := validConfig()
+	cfg.EmailVerificationEnabled = true
+	cfg.Environment = "production"
+	cfg.SMTPHost = "mail.example.com"
+
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("Validate() error = nil, want non-loopback SMTP host rejection")
+	}
+}
+
+func TestValidateRejectsUnsafeSMTPConfigurationWithoutLeakingSecret(t *testing.T) {
+	cfg := validConfig()
+	cfg.EmailVerificationEnabled = true
+	cfg.SMTPFrom = "not an email"
+	cfg.SMTPConnectTimeout = 0
+	cfg.SMTPSendTimeout = 0
+	cfg.EmailVerificationRateLimitSecret = "short"
+
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "SMTP_FROM") || !strings.Contains(err.Error(), "SMTP_CONNECT_TIMEOUT") || !strings.Contains(err.Error(), "SMTP_SEND_TIMEOUT") || !strings.Contains(err.Error(), "EMAIL_VERIFICATION_RATE_LIMIT_SECRET") {
+		t.Fatalf("Validate() error = %v", err)
+	}
+	if strings.Contains(err.Error(), cfg.EmailVerificationRateLimitSecret) {
+		t.Fatalf("Validate() exposed rate limit secret: %v", err)
+	}
+}
+
+func TestLoadAllowsExistingDeploymentWhenEmailVerificationIsDisabled(t *testing.T) {
+	setRequiredEnvironment(t)
+	t.Setenv("EMAIL_VERIFICATION_ENABLED", "false")
+	t.Setenv("SMTP_HOST", "")
+	t.Setenv("SMTP_PORT", "")
+	t.Setenv("SMTP_FROM", "")
+	t.Setenv("EMAIL_VERIFICATION_RATE_LIMIT_SECRET", "")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.EmailVerificationEnabled {
+		t.Fatal("EmailVerificationEnabled = true, want false")
+	}
+}
+
+func TestLoadRejectsEnabledEmailVerificationWithoutSafeConfiguration(t *testing.T) {
+	setRequiredEnvironment(t)
+	t.Setenv("EMAIL_VERIFICATION_ENABLED", "true")
+	t.Setenv("SMTP_FROM", "")
+
+	_, err := Load()
+	if err == nil || !strings.Contains(err.Error(), "SMTP_FROM") {
+		t.Fatalf("Load() error = %v", err)
+	}
+}
+
 func TestValidateRejectsProductionInsecureTransport(t *testing.T) {
 	cfg := validConfig()
 	cfg.Environment = "production"
@@ -85,26 +141,39 @@ func setRequiredEnvironment(t *testing.T) {
 	t.Setenv("TRANSLATION_SESSION_AUDIENCE", "translator-agent")
 	t.Setenv("ACCESS_TOKEN_HS256_KEY", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
 	t.Setenv("TRANSLATION_SESSION_HS256_KEY", "ssssssssssssssssssssssssssssssss")
+	t.Setenv("SMTP_HOST", "127.0.0.1")
+	t.Setenv("SMTP_PORT", "25")
+	t.Setenv("SMTP_FROM", "no-reply@verba.example")
+	t.Setenv("SMTP_CONNECT_TIMEOUT", "")
+	t.Setenv("SMTP_SEND_TIMEOUT", "")
+	t.Setenv("EMAIL_VERIFICATION_RATE_LIMIT_SECRET", "rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr")
 }
 
 func validConfig() Config {
 	return Config{
-		Environment:       "test",
-		Address:           "127.0.0.1:8080",
-		DatabaseURL:       "postgres://cloud:secret@127.0.0.1:5432/cloud?sslmode=disable",
-		AllowedOrigins:    []string{"http://127.0.0.1:5173"},
-		DatabaseTimeout:   time.Second,
-		ShutdownTimeout:   time.Second,
-		ReadTimeout:       time.Second,
-		ReadHeaderTimeout: time.Second,
-		WriteTimeout:      time.Second,
-		IdleTimeout:       time.Second,
-		RateLimitRPS:      10,
-		RateLimitBurst:    20,
-		TokenIssuer:       "cloud-api-test",
-		AccessAudience:    "cloud-api-clients",
-		SessionAudience:   "translator-agent",
-		AccessSecret:      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-		SessionSecret:     "ssssssssssssssssssssssssssssssss",
+		Environment:                      "test",
+		Address:                          "127.0.0.1:8080",
+		DatabaseURL:                      "postgres://cloud:secret@127.0.0.1:5432/cloud?sslmode=disable",
+		AllowedOrigins:                   []string{"http://127.0.0.1:5173"},
+		DatabaseTimeout:                  time.Second,
+		ShutdownTimeout:                  time.Second,
+		ReadTimeout:                      time.Second,
+		ReadHeaderTimeout:                time.Second,
+		WriteTimeout:                     time.Second,
+		IdleTimeout:                      time.Second,
+		RateLimitRPS:                     10,
+		RateLimitBurst:                   20,
+		TokenIssuer:                      "cloud-api-test",
+		AccessAudience:                   "cloud-api-clients",
+		SessionAudience:                  "translator-agent",
+		AccessSecret:                     "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		SessionSecret:                    "ssssssssssssssssssssssssssssssss",
+		EmailVerificationEnabled:         true,
+		SMTPHost:                         "127.0.0.1",
+		SMTPPort:                         25,
+		SMTPFrom:                         "no-reply@verba.example",
+		SMTPConnectTimeout:               time.Second,
+		SMTPSendTimeout:                  time.Second,
+		EmailVerificationRateLimitSecret: "rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr",
 	}
 }
