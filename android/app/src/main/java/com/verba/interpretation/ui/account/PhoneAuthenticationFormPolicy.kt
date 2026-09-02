@@ -3,23 +3,21 @@ package com.verba.interpretation.ui.account
 import java.nio.charset.StandardCharsets
 import java.util.Locale
 
-data class PhoneRegistrationFormValidation(
+data class RegistrationDetailsValidation(
     val normalizedUsername: String,
     val normalizedEmail: String,
-    val normalizedPhone: String,
     val usernameError: String?,
     val emailError: String?,
-    val phoneError: String?,
     val passwordError: String?,
     val confirmationError: String?,
 ) {
     val isValid: Boolean
-        get() = usernameError == null && emailError == null && phoneError == null && passwordError == null && confirmationError == null
+        get() = usernameError == null && emailError == null && passwordError == null && confirmationError == null
     val renderedErrors: List<String>
-        get() = listOfNotNull(usernameError, emailError, phoneError, passwordError, confirmationError)
+        get() = listOfNotNull(usernameError, emailError, passwordError, confirmationError)
 }
 
-data class PhoneLoginFormValidation(
+data class LoginFormValidation(
     val normalizedIdentifier: String,
     val identifierError: String?,
     val passwordError: String?,
@@ -28,10 +26,9 @@ data class PhoneLoginFormValidation(
     val renderedErrors: List<String> get() = listOfNotNull(identifierError, passwordError)
 }
 
-object PhoneAuthenticationFormPolicy {
+object AuthenticationFormPolicy {
     private const val InvalidUsernameMessage = "用户名需要 3 至 32 个字符，仅支持字母、数字和下划线，且不能全为数字。"
     private const val InvalidEmailMessage = "请输入有效的邮箱地址。"
-    private const val InvalidPhoneMessage = "请输入有效的中国大陆手机号。"
     private const val InvalidIdentifierMessage = "请输入有效的邮箱、手机号或用户名。"
     private const val EmptyPasswordMessage = "请输入密码。"
     private const val ShortPasswordMessage = "密码至少需要 8 个字符。"
@@ -41,25 +38,22 @@ object PhoneAuthenticationFormPolicy {
     private const val PasswordTooLongMessage = "密码不能超过 256 个字节。"
     private const val MismatchedPasswordMessage = "两次输入的密码不一致。"
 
-    fun register(username: String, email: String, phone: String, password: String, confirmation: String): PhoneRegistrationFormValidation {
+    fun register(username: String, email: String, password: String, confirmation: String): RegistrationDetailsValidation {
         val normalizedUsername = normalizeUsername(username)
         val normalizedEmail = normalizeEmail(email)
-        val normalizedPhone = normalizePhone(phone)
-        return PhoneRegistrationFormValidation(
+        return RegistrationDetailsValidation(
             normalizedUsername = normalizedUsername,
             normalizedEmail = normalizedEmail,
-            normalizedPhone = normalizedPhone,
             usernameError = if (isValidUsername(normalizedUsername)) null else InvalidUsernameMessage,
             emailError = if (normalizedEmail.isNotEmpty()) null else InvalidEmailMessage,
-            phoneError = if (normalizedPhone.isNotEmpty()) null else InvalidPhoneMessage,
             passwordError = registrationPasswordError(password),
             confirmationError = if (confirmation == password) null else MismatchedPasswordMessage,
         )
     }
 
-    fun login(identifier: String, password: String): PhoneLoginFormValidation {
+    fun login(identifier: String, password: String): LoginFormValidation {
         val normalizedIdentifier = normalizeIdentifier(identifier)
-        return PhoneLoginFormValidation(
+        return LoginFormValidation(
             normalizedIdentifier = normalizedIdentifier,
             identifierError = if (normalizedIdentifier.isNotEmpty()) null else InvalidIdentifierMessage,
             passwordError = if (password.isEmpty()) EmptyPasswordMessage else null,
@@ -79,18 +73,14 @@ object PhoneAuthenticationFormPolicy {
         return normalized.takeIf { isValidUtf8(it) && it.toByteArray(StandardCharsets.UTF_8).size <= 254 && emailPattern.matches(it) }.orEmpty()
     }
 
+    // Login remains compatible with pre-email-verification phone accounts.
     private fun normalizePhone(phone: String): String {
         val mainlandNumber = phone.trim().removePrefix("+86")
-        return if (mainlandNumber.length == 11 && mainlandNumber[0] == '1' && mainlandNumber[1] in '3'..'9' && mainlandNumber.all { it in '0'..'9' }) {
-            "+86$mainlandNumber"
-        } else {
-            ""
-        }
+        return if (mainlandNumber.length == 11 && mainlandNumber[0] == '1' && mainlandNumber[1] in '3'..'9' && mainlandNumber.all { it in '0'..'9' }) "+86$mainlandNumber" else ""
     }
 
     private fun registrationPasswordError(password: String): String? = when {
-        !isValidUtf8(password) -> PasswordTooLongMessage
-        password.toByteArray(StandardCharsets.UTF_8).size > 256 -> PasswordTooLongMessage
+        !isValidUtf8(password) || password.toByteArray(StandardCharsets.UTF_8).size > 256 -> PasswordTooLongMessage
         password.toByteArray(StandardCharsets.UTF_8).size < 8 -> ShortPasswordMessage
         password.none { it in 'A'..'Z' } -> MissingUppercaseMessage
         password.none { it in 'a'..'z' } -> MissingLowercaseMessage

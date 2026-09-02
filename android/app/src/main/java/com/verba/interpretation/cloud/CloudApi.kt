@@ -40,16 +40,6 @@ data class IdentityUpdateRequest(
         .toString()
 }
 
-@Deprecated("Legacy DTO retained until Task 7 removes its test")
-data class RegistrationRequest(val username: String, val email: String, val phone: String, val password: String) {
-    fun toJson(): String = JSONObject()
-        .put("username", username)
-        .put("email", email)
-        .put("phone", phone)
-        .put("password", password)
-        .toString()
-}
-
 data class RegistrationVerificationRequest(val username: String, val email: String, val password: String) {
     fun toJson(): String = JSONObject()
         .put("username", username)
@@ -90,9 +80,6 @@ interface AccountApi {
         throw UnsupportedOperationException("邮箱验证码注册未实现")
     fun confirmRegistrationVerification(email: String, code: String): RegistrationResponse =
         throw UnsupportedOperationException("邮箱验证码注册未实现")
-
-    @Deprecated("Task 7 removes the phone registration UI")
-    fun register(username: String, email: String, phone: String, password: String) = Unit
 
     fun login(identifier: String, password: String): AuthTokens
     fun logout()

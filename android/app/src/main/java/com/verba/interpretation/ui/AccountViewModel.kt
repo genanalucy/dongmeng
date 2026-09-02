@@ -28,7 +28,7 @@ import kotlinx.coroutines.withContext
 
 sealed interface RegistrationUiState {
     data object Details : RegistrationUiState
-    data class Challenge(val username: String, val maskedEmail: String, val retryAfterSeconds: Int) : RegistrationUiState
+    data class Challenge(val username: String, val email: String, val maskedEmail: String, val retryAfterSeconds: Int) : RegistrationUiState
 }
 
 data class AccountUiState(
@@ -117,12 +117,16 @@ class AccountViewModel(
                 }
                 mutableState.value = mutableState.value.copy(
                     loading = false,
-                    registration = RegistrationUiState.Challenge(username, email.maskedEmail(), retryAfterSeconds),
+                    registration = RegistrationUiState.Challenge(username, email, email.maskedEmail(), retryAfterSeconds),
                 )
             } catch (_: Exception) {
                 mutableState.value = mutableState.value.copy(loading = false, message = SafeRequestError)
             }
         }
+    }
+
+    fun returnToRegistrationDetails() {
+        mutableState.value = mutableState.value.copy(registration = RegistrationUiState.Details, message = null)
     }
 
     fun confirmRegistrationVerification(email: String, code: String) {
@@ -146,11 +150,6 @@ class AccountViewModel(
         }
     }
 
-    /** Transitional Task 7 bridge: registration now requires the email-verification UI. */
-    @Deprecated("Use requestRegistrationVerification without a phone number")
-    fun register(username: String, email: String, @Suppress("UNUSED_PARAMETER") phone: String, password: String) {
-        mutableState.value = mutableState.value.copy(message = "请使用邮箱验证码完成注册。")
-    }
 
     fun login(identifier: String, password: String) = runRequest {
         api.login(identifier, password)

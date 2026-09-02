@@ -1,9 +1,9 @@
 package com.verba.interpretation.ui.account
 
 /** Keeps Compose event handlers from dispatching malformed authentication requests. */
-object PhoneAuthenticationSubmissionPolicy {
+object AuthenticationSubmissionPolicy {
     fun submitLogin(identifier: String, password: String, onLogin: (String, String) -> Unit): Boolean {
-        val validation = PhoneAuthenticationFormPolicy.login(identifier, password)
+        val validation = AuthenticationFormPolicy.login(identifier, password)
         if (!validation.isValid) return false
         onLogin(validation.normalizedIdentifier, password)
         return true
@@ -12,14 +12,19 @@ object PhoneAuthenticationSubmissionPolicy {
     fun submitRegistration(
         username: String,
         email: String,
-        phone: String,
         password: String,
         confirmation: String,
-        onRegister: (String, String, String, String) -> Unit,
+        onRequestVerification: (String, String, String) -> Unit,
     ): Boolean {
-        val validation = PhoneAuthenticationFormPolicy.register(username, email, phone, password, confirmation)
+        val validation = AuthenticationFormPolicy.register(username, email, password, confirmation)
         if (!validation.isValid) return false
-        onRegister(validation.normalizedUsername, validation.normalizedEmail, validation.normalizedPhone, password)
+        onRequestVerification(validation.normalizedUsername, validation.normalizedEmail, password)
+        return true
+    }
+
+    fun submitVerification(email: String, code: String, onConfirmVerification: (String, String) -> Unit): Boolean {
+        if (!RegistrationFormPolicy.validateVerificationCode(code).isValid) return false
+        onConfirmVerification(email, code)
         return true
     }
 }

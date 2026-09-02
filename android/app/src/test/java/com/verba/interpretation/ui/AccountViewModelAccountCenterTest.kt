@@ -81,7 +81,6 @@ private class AccountCenterApi(
     private val identityFailure: Boolean = false,
 ) : AccountApi {
     var identityRequest: IdentityUpdateRequest? = null
-    override fun register(username: String, email: String, phone: String, password: String) = Unit
     override fun login(identifier: String, password: String): AuthTokens = AuthTokens("access", "refresh")
     override fun logout() = Unit
     override fun currentUser(): CloudUser = CloudUser("user-1", "alice_01", CloudRole.USER)

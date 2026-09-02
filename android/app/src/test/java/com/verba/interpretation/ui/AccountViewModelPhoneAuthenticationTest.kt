@@ -63,10 +63,21 @@ class AccountViewModelPhoneAuthenticationTest {
 
         assertEquals(listOf("requestVerification:alice_01:alice@example.com"), api.calls)
         assertEquals(
-            RegistrationUiState.Challenge(username = "alice_01", maskedEmail = "a***e@example.com", retryAfterSeconds = 60),
+            RegistrationUiState.Challenge(username = "alice_01", email = "alice@example.com", maskedEmail = "a***e@example.com", retryAfterSeconds = 60),
             viewModel.state.value.registration,
         )
         assertEquals(null, viewModel.state.value.user)
+    }
+
+    @Test fun returningToRegistrationDetailsDiscardsChallengeEmail() {
+        val api = RecordingAccountApi()
+        val viewModel = AccountViewModel(Application(), api, dispatcher)
+
+        viewModel.requestRegistrationVerification("alice_01", "alice@example.com", "Passw0rd")
+        dispatcher.scheduler.advanceUntilIdle()
+        viewModel.returnToRegistrationDetails()
+
+        assertEquals(RegistrationUiState.Details, viewModel.state.value.registration)
     }
 
     @Test fun confirmRegistrationVerificationUsesSuppliedEmailAndReturnsToDetails() {
@@ -81,16 +92,6 @@ class AccountViewModelPhoneAuthenticationTest {
         assertEquals("alice_01", viewModel.state.value.user?.username)
     }
 
-    @Test fun transitionalRegisterDoesNotCallApiOrSignIn() {
-        val api = RecordingAccountApi()
-        val viewModel = AccountViewModel(Application(), api, dispatcher)
-
-        viewModel.register("alice_01", "alice@example.com", "+8613800138000", "Passw0rd")
-
-        assertEquals(emptyList<String>(), api.calls)
-        assertEquals(null, viewModel.state.value.user)
-        assertEquals("请使用邮箱验证码完成注册。", viewModel.state.value.message)
-    }
 }
 
 private class RefreshTokenStore(private var tokens: AuthTokens?) : TokenStore {

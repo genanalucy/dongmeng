@@ -141,7 +141,7 @@ import com.verba.interpretation.ui.facetoface.FaceToFaceScreen
 import com.verba.interpretation.ui.account.AccountIdentitySettingsScreen
 import com.verba.interpretation.ui.account.AccountScreen
 import com.verba.interpretation.ui.account.AccountUsageScreen
-import com.verba.interpretation.ui.account.PhoneAuthenticationForm
+import com.verba.interpretation.ui.account.AuthenticationForm
 import com.verba.interpretation.ui.interpretation.InterpretationScreen
 import com.verba.interpretation.ui.interpretation.InterpretationUiMapper
 import com.verba.interpretation.ui.AccountViewModel
@@ -1177,10 +1177,13 @@ private fun AccountPage(
             }
             if (!state.signedIn) {
                 item {
-                    PhoneAuthenticationForm(
+                    AuthenticationForm(
                         loading = state.loading,
+                        registration = state.registration,
                         onLogin = accountViewModel::login,
-                        onRegister = accountViewModel::register,
+                        onRequestVerification = accountViewModel::requestRegistrationVerification,
+                        onConfirmVerification = accountViewModel::confirmRegistrationVerification,
+                        onEditDetails = accountViewModel::returnToRegistrationDetails,
                     )
                 }
             } else {

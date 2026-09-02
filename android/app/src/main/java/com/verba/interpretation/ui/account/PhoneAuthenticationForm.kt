@@ -22,63 +22,94 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import com.verba.interpretation.ui.RegistrationUiState
 
 @Composable
-fun PhoneAuthenticationForm(
+fun AuthenticationForm(
     loading: Boolean,
+    registration: RegistrationUiState,
     onLogin: (String, String) -> Unit,
-    onRegister: (String, String, String, String) -> Unit,
+    onRequestVerification: (String, String, String) -> Unit,
+    onConfirmVerification: (String, String) -> Unit,
+    onEditDetails: () -> Unit,
 ) {
     var mode by remember { mutableStateOf(AuthenticationMode.LOGIN) }
     var username by remember { mutableStateOf("") }
     var email by remember { mutableStateOf("") }
-    var phone by remember { mutableStateOf("") }
     var identifier by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
     var confirmation by remember { mutableStateOf("") }
+    var code by remember { mutableStateOf("") }
     var touched by remember { mutableStateOf(emptySet<String>()) }
-    val login = PhoneAuthenticationFormPolicy.login(identifier, password)
-    val registration = PhoneAuthenticationFormPolicy.register(username, email, phone, password, confirmation)
+    val login = AuthenticationFormPolicy.login(identifier, password)
+    val details = AuthenticationFormPolicy.register(username, email, password, confirmation)
+    val verification = RegistrationFormPolicy.validateVerificationCode(code)
     Column {
         if (mode == AuthenticationMode.LOGIN) {
-            Text("登录", style = MaterialTheme.typography.titleMedium)
-            TextField(identifier, { identifier = it; touched = touched + "identifier" }, "邮箱 / 手机号 / 用户名", login.identifierError.takeIf { "identifier" in touched }, "identifier", KeyboardType.Text, ImeAction.Next, false)
-            PasswordField(password, { password = it; touched = touched + "password" }, login.passwordError.takeIf { "password" in touched }, "password", ImeAction.Done)
-            Button(
-                onClick = { PhoneAuthenticationSubmissionPolicy.submitLogin(identifier, password, onLogin) },
-                enabled = !loading && login.isValid,
-                modifier = Modifier.fillMaxWidth().padding(top = 10.dp).heightIn(min = 48.dp),
-            ) { Text(if (loading) "处理中…" else "登录") }
-            TextButton(onClick = { mode = AuthenticationMode.REGISTER }, enabled = !loading, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("注册账户") }
-        } else {
-            Text("注册账户", style = MaterialTheme.typography.titleMedium)
-            TextField(username, { username = it; touched = touched + "username" }, "用户名", registration.usernameError.takeIf { "username" in touched }, "username", KeyboardType.Text, ImeAction.Next, false)
-            TextField(email, { email = it; touched = touched + "email" }, "邮箱", registration.emailError.takeIf { "email" in touched }, "email", KeyboardType.Email, ImeAction.Next, false)
-            PhoneField(phone, { phone = it; touched = touched + "phone" }, registration.phoneError.takeIf { "phone" in touched }, "phone", ImeAction.Next)
-            PasswordField(password, { password = it; touched = touched + "password" }, registration.passwordError.takeIf { "password" in touched }, "password", ImeAction.Next)
-            PasswordField(confirmation, { confirmation = it; touched = touched + "confirmation" }, registration.confirmationError.takeIf { "confirmation" in touched }, "confirmation", ImeAction.Done)
-            Button(
-                onClick = { PhoneAuthenticationSubmissionPolicy.submitRegistration(username, email, phone, password, confirmation, onRegister) },
-                enabled = !loading && registration.isValid,
-                modifier = Modifier.fillMaxWidth().padding(top = 10.dp).heightIn(min = 48.dp),
-            ) { Text(if (loading) "处理中…" else "注册并登录") }
-            TextButton(onClick = { mode = AuthenticationMode.LOGIN }, enabled = !loading, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("返回登录") }
+            LoginForm(loading, identifier, password, login, { identifier = it; touched += "identifier" }, { password = it; touched += "password" }, onLogin, { mode = AuthenticationMode.REGISTER })
+        } else when (registration) {
+            RegistrationUiState.Details -> RegistrationDetailsForm(
+                loading, username, email, password, confirmation, details,
+                { username = it; touched += "username" }, { email = it; touched += "email" },
+                { password = it; touched += "password" }, { confirmation = it; touched += "confirmation" },
+                {
+                    if (AuthenticationSubmissionPolicy.submitRegistration(username, email, password, confirmation, onRequestVerification)) {
+                        password = ""
+                        confirmation = ""
+                    }
+                },
+                { mode = AuthenticationMode.LOGIN },
+            )
+            is RegistrationUiState.Challenge -> VerificationForm(
+                loading, registration, code, verification,
+                { code = it.take(6).filter { character -> character in '0'..'9' }; touched += "verification-code" },
+                { AuthenticationSubmissionPolicy.submitVerification(registration.email, code, onConfirmVerification) },
+                onEditDetails,
+                "verification-code" in touched,
+            )
         }
     }
 }
 
-@Composable private fun PhoneField(value: String, onChange: (String) -> Unit, error: String?, tag: String, ime: ImeAction) =
-    TextField(value, onChange, "手机号", error, tag, KeyboardType.Phone, ime, false)
+@Composable
+private fun LoginForm(loading: Boolean, identifier: String, password: String, validation: LoginFormValidation, onIdentifierChange: (String) -> Unit, onPasswordChange: (String) -> Unit, onLogin: (String, String) -> Unit, onRegister: () -> Unit) {
+    Text("登录", style = MaterialTheme.typography.titleMedium)
+    TextField(identifier, onIdentifierChange, "邮箱 / 手机号 / 用户名", validation.identifierError, "identifier", KeyboardType.Text, ImeAction.Next, false)
+    PasswordField(password, onPasswordChange, validation.passwordError, "password", ImeAction.Done)
+    Button(onClick = { AuthenticationSubmissionPolicy.submitLogin(identifier, password, onLogin) }, enabled = !loading && validation.isValid, modifier = actionModifier()) { Text(if (loading) "处理中…" else "登录") }
+    TextButton(onClick = onRegister, enabled = !loading, modifier = fullWidthActionModifier()) { Text("注册账户") }
+}
+
+@Composable
+private fun RegistrationDetailsForm(loading: Boolean, username: String, email: String, password: String, confirmation: String, validation: RegistrationDetailsValidation, onUsernameChange: (String) -> Unit, onEmailChange: (String) -> Unit, onPasswordChange: (String) -> Unit, onConfirmationChange: (String) -> Unit, onSend: () -> Unit, onLogin: () -> Unit) {
+    Text("注册账户", style = MaterialTheme.typography.titleMedium)
+    TextField(username, onUsernameChange, "用户名", validation.usernameError, "username", KeyboardType.Text, ImeAction.Next, false)
+    TextField(email, onEmailChange, "邮箱", validation.emailError, "email", KeyboardType.Email, ImeAction.Next, false)
+    PasswordField(password, onPasswordChange, validation.passwordError, "password", ImeAction.Next)
+    PasswordField(confirmation, onConfirmationChange, validation.confirmationError, "confirmation", ImeAction.Done)
+    Button(onClick = onSend, enabled = !loading && validation.isValid, modifier = actionModifier()) { Text(if (loading) "处理中…" else "发送验证码") }
+    TextButton(onClick = onLogin, enabled = !loading, modifier = fullWidthActionModifier()) { Text("返回登录") }
+}
+
+@Composable
+private fun VerificationForm(loading: Boolean, challenge: RegistrationUiState.Challenge, code: String, validation: VerificationCodeValidation, onCodeChange: (String) -> Unit, onConfirm: () -> Unit, onEditDetails: () -> Unit, codeTouched: Boolean) {
+    Text("确认邮箱验证码", style = MaterialTheme.typography.titleMedium)
+    Text("验证码已发送至 ${challenge.maskedEmail}")
+    TextField(code, onCodeChange, "6 位数字验证码", validation.codeError.takeIf { codeTouched }, "verification-code", KeyboardType.NumberPassword, ImeAction.Done, false)
+    Button(onClick = onConfirm, enabled = !loading && validation.isValid, modifier = actionModifier()) { Text(if (loading) "处理中…" else "确认注册") }
+    TextButton(onClick = onEditDetails, enabled = !loading, modifier = fullWidthActionModifier()) { Text("返回编辑资料") }
+    val canResend = !loading && challenge.retryAfterSeconds <= 0
+    TextButton(onClick = onEditDetails, enabled = canResend, modifier = fullWidthActionModifier()) {
+        Text(if (canResend) "返回编辑资料以重新发送" else "${challenge.retryAfterSeconds} 秒后可重新发送")
+    }
+}
 
 @Composable private fun PasswordField(value: String, onChange: (String) -> Unit, error: String?, tag: String, ime: ImeAction) =
     TextField(value, onChange, if (tag == "confirmation") "确认密码" else "密码", error, tag, KeyboardType.Password, ime, true)
 
 @Composable private fun TextField(value: String, onChange: (String) -> Unit, label: String, errorText: String?, tag: String, keyboardType: KeyboardType, ime: ImeAction, password: Boolean) {
-    OutlinedTextField(
-        value = value, onValueChange = onChange, label = { Text(label) }, singleLine = true,
-        isError = errorText != null, supportingText = errorText?.let { { Text(it) } },
-        visualTransformation = if (password) PasswordVisualTransformation() else androidx.compose.ui.text.input.VisualTransformation.None,
-        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = keyboardType, imeAction = ime),
-        modifier = Modifier.fillMaxWidth().padding(top = 10.dp).heightIn(min = 48.dp).semantics { errorText?.let { error(it) }; testTag = tag },
-    )
+    OutlinedTextField(value = value, onValueChange = onChange, label = { Text(label) }, singleLine = true, isError = errorText != null, supportingText = errorText?.let { { Text(it) } }, visualTransformation = if (password) PasswordVisualTransformation() else androidx.compose.ui.text.input.VisualTransformation.None, keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = keyboardType, imeAction = ime), modifier = Modifier.fillMaxWidth().padding(top = 10.dp).heightIn(min = 48.dp).semantics { errorText?.let { error(it) }; testTag = tag })
 }
+
+private fun actionModifier(): Modifier = Modifier.fillMaxWidth().padding(top = 10.dp).heightIn(min = 48.dp)
+private fun fullWidthActionModifier(): Modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)
