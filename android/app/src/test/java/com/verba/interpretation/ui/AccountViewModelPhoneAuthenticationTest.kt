@@ -21,6 +21,9 @@ import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.setMain
 import org.junit.After
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.CyclicBarrier
+import java.util.concurrent.TimeUnit
 import org.junit.Assert.assertEquals
 import org.junit.Before
 import org.junit.Test
@@ -101,6 +104,37 @@ class AccountViewModelPhoneAuthenticationTest {
             listOf("requestVerification:alice_01:alice@example.com", "requestVerification:alice_01:alice@example.com"),
             api.calls,
         )
+    }
+
+    @Test fun concurrentResendsDispatchExactlyOneRequest() {
+        val api = RecordingAccountApi()
+        var now = 1_000L
+        var synchronizeClock = false
+        val clockBarrier = CyclicBarrier(2)
+        val viewModel = AccountViewModel(Application(), api, dispatcher, {
+            if (synchronizeClock) clockBarrier.await(5, TimeUnit.SECONDS)
+            now
+        })
+        viewModel.requestRegistrationVerification("alice_01", "alice@example.com", "Passw0rd")
+        dispatcher.scheduler.advanceUntilIdle()
+        now = 61_000L
+        synchronizeClock = true
+        val callersReady = CountDownLatch(2)
+        val start = CountDownLatch(1)
+        val done = CountDownLatch(2)
+        fun resend() = Thread {
+            callersReady.countDown()
+            start.await(5, TimeUnit.SECONDS)
+            viewModel.resendRegistrationVerification("alice_01", "alice@example.com", "Passw0rd")
+            done.countDown()
+        }.start()
+        resend(); resend()
+        assertEquals(true, callersReady.await(5, TimeUnit.SECONDS))
+        start.countDown()
+        assertEquals(true, done.await(5, TimeUnit.SECONDS))
+        dispatcher.scheduler.advanceUntilIdle()
+
+        assertEquals(2, api.calls.size)
     }
 
     @Test fun returningToRegistrationDetailsDiscardsChallengeEmail() {
