@@ -73,6 +73,7 @@ class AccountViewModel(
     }
 
     private val mutableState = MutableStateFlow(AccountUiState())
+    private var registrationRequestInFlight = false
     val state: StateFlow<AccountUiState> = mutableState.asStateFlow()
 
     init { refresh() }
@@ -110,8 +111,10 @@ class AccountViewModel(
     }
 
     fun requestRegistrationVerification(username: String, email: String, password: String) {
+        if (registrationRequestInFlight) return
+        registrationRequestInFlight = true
+        mutableState.value = mutableState.value.copy(loading = true, message = null)
         viewModelScope.launch {
-            mutableState.value = mutableState.value.copy(loading = true, message = null)
             try {
                 // This ViewModel never writes the password to state, SavedStateHandle, or storage.
                 val retryAfterSeconds = withContext(ioDispatcher) {
@@ -123,6 +126,8 @@ class AccountViewModel(
                 )
             } catch (_: Exception) {
                 mutableState.value = mutableState.value.copy(loading = false, message = SafeRequestError)
+            } finally {
+                registrationRequestInFlight = false
             }
         }
     }

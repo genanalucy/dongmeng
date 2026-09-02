@@ -36,6 +36,8 @@ fun AuthenticationForm(
     onConfirmVerification: (String, String) -> Unit,
     onEditDetails: () -> Unit,
     onResend: (String, String, String) -> Unit,
+    clockMillis: () -> Long = System::currentTimeMillis,
+    tickerMillis: Long = 1_000L,
 ) {
     var mode by remember { mutableStateOf(AuthenticationMode.LOGIN) }
     var username by remember { mutableStateOf("") }
@@ -65,6 +67,8 @@ fun AuthenticationForm(
                 { AuthenticationSubmissionPolicy.submitVerification(registration.email, code, onConfirmVerification) },
                 onEditDetails,
                 { onResend(registration.username, registration.email, password) },
+                clockMillis,
+                tickerMillis,
                 "verification-code" in touched,
             )
         }
@@ -92,17 +96,17 @@ private fun RegistrationDetailsForm(loading: Boolean, username: String, email: S
 }
 
 @Composable
-private fun VerificationForm(loading: Boolean, challenge: RegistrationUiState.Challenge, code: String, validation: VerificationCodeValidation, onCodeChange: (String) -> Unit, onConfirm: () -> Unit, onEditDetails: () -> Unit, onResend: () -> Unit, codeTouched: Boolean) {
+private fun VerificationForm(loading: Boolean, challenge: RegistrationUiState.Challenge, code: String, validation: VerificationCodeValidation, onCodeChange: (String) -> Unit, onConfirm: () -> Unit, onEditDetails: () -> Unit, onResend: () -> Unit, clockMillis: () -> Long, tickerMillis: Long, codeTouched: Boolean) {
     Text("确认邮箱验证码", style = MaterialTheme.typography.titleMedium)
     Text("验证码已发送至 ${challenge.maskedEmail}")
     TextField(code, onCodeChange, "6 位数字验证码", validation.codeError.takeIf { codeTouched }, "verification-code", KeyboardType.NumberPassword, ImeAction.Done, false)
     Button(onClick = onConfirm, enabled = !loading && validation.isValid, modifier = actionModifier()) { Text(if (loading) "处理中…" else "确认注册") }
     TextButton(onClick = onEditDetails, enabled = !loading, modifier = fullWidthActionModifier()) { Text("返回编辑资料") }
-    var nowMillis by remember(challenge.resendAvailableAtMillis) { mutableLongStateOf(System.currentTimeMillis()) }
-    LaunchedEffect(challenge.resendAvailableAtMillis) {
+    var nowMillis by remember(challenge.resendAvailableAtMillis) { mutableLongStateOf(clockMillis()) }
+    LaunchedEffect(challenge.resendAvailableAtMillis, tickerMillis) {
         while (nowMillis < challenge.resendAvailableAtMillis) {
-            delay(1_000L)
-            nowMillis = System.currentTimeMillis()
+            delay(tickerMillis)
+            nowMillis = clockMillis()
         }
     }
     val remainingSeconds = RegistrationResendPolicy.remainingSeconds(challenge.resendAvailableAtMillis, nowMillis)

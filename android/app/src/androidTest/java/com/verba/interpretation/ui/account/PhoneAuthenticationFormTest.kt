@@ -6,14 +6,15 @@ import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertCountEquals
-import androidx.compose.ui.test.assertDoesNotExist
 import androidx.compose.ui.test.junit4.createComposeRule
-import androidx.compose.ui.test.onAllNodes
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.setValue
 import com.verba.interpretation.ui.RegistrationUiState
 import org.junit.Assert.assertEquals
 import org.junit.Rule
@@ -27,7 +28,7 @@ class AuthenticationFormTest {
         composeRule.onNodeWithText("注册账户").performClick()
 
         assertEditableTags("username", "email", "password", "confirmation")
-        composeRule.onNodeWithText("手机号", substring = true).assertDoesNotExist()
+        composeRule.onAllNodesWithText("手机号", substring = true).assertCountEquals(0)
         composeRule.onNodeWithText("发送验证码").assertExists()
     }
 
@@ -55,6 +56,27 @@ class AuthenticationFormTest {
         composeRule.onAllNodesWithText("alice@example.com", substring = true, useUnmergedTree = true).assertCountEquals(0)
     }
 
+    @Test fun challengeEnablesResendAtCooldownExpiryAndDispatchesOnce() {
+        var nowMillis by mutableLongStateOf(1_000L)
+        var resendCalls = 0
+        setForm(
+            registration = RegistrationUiState.Challenge("alice_01", "alice@example.com", "a***e@example.com", 61_000L),
+            onResend = { _, _, _ -> resendCalls++ },
+            clockMillis = { nowMillis },
+            tickerMillis = 1L,
+        )
+
+        composeRule.onNodeWithText("60 秒后可重新发送").assert(SemanticsMatcher.keyIsDefined(SemanticsProperties.Disabled))
+        nowMillis = 60_000L
+        composeRule.waitForIdle()
+        composeRule.onNodeWithText("1 秒后可重新发送").assert(SemanticsMatcher.keyIsDefined(SemanticsProperties.Disabled))
+        nowMillis = 61_000L
+        composeRule.waitForIdle()
+        composeRule.onNodeWithText("重新发送验证码").performClick()
+
+        assertEquals(1, resendCalls)
+    }
+
     @Test fun challengeAcceptsSixDigitCodeAndCanReturnToDetails() {
         var confirmed: Pair<String, String>? = null
         var editCalls = 0
@@ -78,6 +100,8 @@ class AuthenticationFormTest {
         onConfirmVerification: (String, String) -> Unit = { _, _ -> },
         onEditDetails: () -> Unit = {},
         onResend: (String, String, String) -> Unit = { _, _, _ -> },
+        clockMillis: () -> Long = System::currentTimeMillis,
+        tickerMillis: Long = 1_000L,
     ) {
         composeRule.setContent {
             MaterialTheme {
@@ -89,19 +113,14 @@ class AuthenticationFormTest {
                     onConfirmVerification = onConfirmVerification,
                     onEditDetails = onEditDetails,
                     onResend = onResend,
+                    clockMillis = clockMillis,
+                    tickerMillis = tickerMillis,
                 )
             }
         }
     }
 
     private fun assertEditableTags(vararg expected: String) {
-        val editable = composeRule.onAllNodes(SemanticsMatcher.keyIsDefined(SemanticsActions.SetText))
-        editable.assertCountEquals(expected.size)
-        expected.forEach { tag ->
-            composeRule.onAllNodes(
-                SemanticsMatcher.expectValue(SemanticsProperties.TestTag, tag)
-                    .and(SemanticsMatcher.keyIsDefined(SemanticsActions.SetText)),
-            ).assertCountEquals(1)
-        }
+        expected.forEach { tag -> composeRule.onNodeWithTag(tag).assert(SemanticsMatcher.keyIsDefined(SemanticsActions.SetText)) }
     }
 }

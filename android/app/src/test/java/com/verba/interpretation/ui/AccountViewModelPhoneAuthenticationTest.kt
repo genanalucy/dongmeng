@@ -86,6 +86,23 @@ class AccountViewModelPhoneAuthenticationTest {
         )
     }
 
+    @Test fun duplicateResendBeforeQueuedDispatcherRunsDispatchesOnlyOneRequest() {
+        val api = RecordingAccountApi()
+        val viewModel = AccountViewModel(Application(), api, dispatcher, { nowMillis })
+
+        viewModel.requestRegistrationVerification("alice_01", "alice@example.com", "Passw0rd")
+        dispatcher.scheduler.advanceUntilIdle()
+        nowMillis = 61_000L
+        viewModel.resendRegistrationVerification("alice_01", "alice@example.com", "Passw0rd")
+        viewModel.resendRegistrationVerification("alice_01", "alice@example.com", "Passw0rd")
+        dispatcher.scheduler.advanceUntilIdle()
+
+        assertEquals(
+            listOf("requestVerification:alice_01:alice@example.com", "requestVerification:alice_01:alice@example.com"),
+            api.calls,
+        )
+    }
+
     @Test fun returningToRegistrationDetailsDiscardsChallengeEmail() {
         val api = RecordingAccountApi()
         val viewModel = AccountViewModel(Application(), api, dispatcher, { nowMillis })
