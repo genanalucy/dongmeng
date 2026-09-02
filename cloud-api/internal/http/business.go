@@ -236,6 +236,9 @@ func (a api) requestRegistrationVerification(ctx context.Context, service *auth.
 		})
 		return err
 	}
+	configured.InvalidateVerification = func(ctx context.Context, email string, now time.Time) error {
+		return a.store.InvalidateRegistrationVerification(ctx, email, now)
+	}
 	return configured.RequestVerification(ctx, request)
 }
 

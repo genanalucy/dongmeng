@@ -325,8 +325,8 @@ func TestRegistrationVerificationRequestIsStrictAndGenericForOperationalOutcomes
 		wantSends  int
 	}{
 		{name: "success", body: `{"username":"example_user","email":"user@example.com","password":"password1"}`, wantStatus: http.StatusAccepted, wantSends: 1},
-		{name: "registered email", body: `{"username":"example_user","email":"user@example.com","password":"password1"}`, storeErr: domain.ErrConflict, wantStatus: http.StatusAccepted, wantSends: 1},
-		{name: "rate limited", body: `{"username":"example_user","email":"user@example.com","password":"password1"}`, storeErr: domain.ErrRegistrationVerificationFailed, wantStatus: http.StatusAccepted, wantSends: 1},
+		{name: "registered email", body: `{"username":"example_user","email":"user@example.com","password":"password1"}`, storeErr: domain.ErrConflict, wantStatus: http.StatusAccepted},
+		{name: "rate limited", body: `{"username":"example_user","email":"user@example.com","password":"password1"}`, storeErr: domain.ErrRegistrationVerificationFailed, wantStatus: http.StatusAccepted},
 		{name: "smtp failure", body: `{"username":"example_user","email":"user@example.com","password":"password1"}`, senderErr: errors.New("smtp unavailable"), wantStatus: http.StatusAccepted, wantSends: 1},
 		{name: "missing field", body: `{"username":"example_user","email":"user@example.com"}`, wantStatus: http.StatusBadRequest},
 		{name: "unknown field", body: `{"username":"example_user","email":"user@example.com","password":"password1","extra":true}`, wantStatus: http.StatusBadRequest},
@@ -359,8 +359,8 @@ func TestRegistrationVerificationRequestIsStrictAndGenericForOperationalOutcomes
 			if sender.calls != test.wantSends {
 				t.Fatalf("sender calls = %d, want %d", sender.calls, test.wantSends)
 			}
-			if test.senderErr != nil && invalidations != 0 {
-				t.Fatalf("invalidations = %d, want 0 because persistence follows successful SMTP submission", invalidations)
+			if test.senderErr != nil && invalidations != 1 {
+				t.Fatalf("invalidations = %d, want 1 after SMTP failure", invalidations)
 			}
 			if test.wantStatus == http.StatusBadRequest && (requests != 0 || sender.calls != 0) {
 				t.Fatalf("invalid input reached operational dependencies: requests=%d sends=%d", requests, sender.calls)

@@ -103,6 +103,27 @@ func (s *fakeRegistrationCodeSender) SendRegistrationCode(_ context.Context, ema
 	return s.err
 }
 
+func TestEmailRegistrationServiceReservesVerificationBeforeSendingCode(t *testing.T) {
+	now := time.Date(2026, 9, 2, 12, 0, 0, 0, time.UTC)
+	events := make([]string, 0, 2)
+	sender := &fakeRegistrationCodeSender{}
+	writer := &fakeRegistrationVerificationWriter{}
+	service := newTestEmailRegistrationService(t, now, sender)
+	service.WriteVerification = func(ctx context.Context, draft RegistrationVerificationDraft) error {
+		events = append(events, "reserve")
+		return writer.WriteRegistrationVerification(ctx, draft)
+	}
+	senderWithOrder := RegistrationCodeSenderFunc(func(ctx context.Context, email, code string, expiresAt time.Time) error {
+		events = append(events, "send")
+		return sender.SendRegistrationCode(ctx, email, code, expiresAt)
+	})
+	service.Sender = senderWithOrder
+	_, err := service.RequestVerification(context.Background(), RegistrationVerificationRequest{Username: "example_user", Email: "user@example.com", Password: "password1", ClientIP: netip.MustParseAddr("203.0.113.10")})
+	if err != nil || len(events) != 2 || events[0] != "reserve" || events[1] != "send" {
+		t.Fatalf("request events = %v, err = %v; want reserve then send", events, err)
+	}
+}
+
 func TestEmailRegistrationServiceRequestSendsCode(t *testing.T) {
 	now := time.Date(2026, 9, 2, 12, 0, 0, 0, time.UTC)
 	sender := &fakeRegistrationCodeSender{}
@@ -136,11 +157,19 @@ func TestEmailRegistrationServiceRequestSendsCode(t *testing.T) {
 	}
 }
 
+type RegistrationCodeSenderFunc func(context.Context, string, string, time.Time) error
+
+func (f RegistrationCodeSenderFunc) SendRegistrationCode(ctx context.Context, email, code string, expiresAt time.Time) error {
+	return f(ctx, email, code, expiresAt)
+}
+
 func TestEmailRegistrationServiceRequestReturnsSenderFailure(t *testing.T) {
 	sender := &fakeRegistrationCodeSender{err: errors.New("delivery unavailable")}
 	writer := &fakeRegistrationVerificationWriter{}
+	invalidated := 0
 	service := newTestEmailRegistrationService(t, time.Now().UTC(), sender)
 	service.WriteVerification = writer.WriteRegistrationVerification
+	service.InvalidateVerification = func(context.Context, string, time.Time) error { invalidated++; return nil }
 
 	_, err := service.RequestVerification(context.Background(), RegistrationVerificationRequest{
 		Username: "example_user", Email: "user@example.com", Password: "password1", ClientIP: netip.MustParseAddr("203.0.113.10"),
@@ -148,8 +177,11 @@ func TestEmailRegistrationServiceRequestReturnsSenderFailure(t *testing.T) {
 	if err == nil || errors.Is(err, domain.ErrInvalid) {
 		t.Errorf("RequestVerification() error = %v, want sender failure", err)
 	}
-	if len(writer.drafts) != 0 {
-		t.Errorf("writer calls = %d, want 0 after sender failure", len(writer.drafts))
+	if len(writer.drafts) != 1 {
+		t.Errorf("writer calls = %d, want 1 reservation before sender failure", len(writer.drafts))
+	}
+	if invalidated != 1 {
+		t.Errorf("invalidations = %d, want 1 after sender failure", invalidated)
 	}
 }
 

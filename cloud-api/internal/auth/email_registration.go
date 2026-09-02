@@ -71,15 +71,16 @@ type RegistrationVerificationWriter func(context.Context, RegistrationVerificati
 // EmailRegistrationService dependencies are injected to keep crypto, time,
 // delivery, and lookup behavior testable without SMTP or persistence wiring.
 type EmailRegistrationService struct {
-	HashPasswordValue  func(string) (string, error)
-	GenerateCode       func() (string, error)
-	GenerateSalt       func() ([]byte, error)
-	CodePepper         []byte
-	RateLimitKeySecret []byte
-	Sender             RegistrationCodeSender
-	Clock              func() time.Time
-	WriteVerification  RegistrationVerificationWriter
-	LookupVerification RegistrationVerificationLookup
+	HashPasswordValue      func(string) (string, error)
+	GenerateCode           func() (string, error)
+	GenerateSalt           func() ([]byte, error)
+	CodePepper             []byte
+	RateLimitKeySecret     []byte
+	Sender                 RegistrationCodeSender
+	Clock                  func() time.Time
+	WriteVerification      RegistrationVerificationWriter
+	InvalidateVerification func(context.Context, string, time.Time) error
+	LookupVerification     RegistrationVerificationLookup
 }
 
 func NewEmailRegistrationService(service EmailRegistrationService) (EmailRegistrationService, error) {
@@ -133,11 +134,16 @@ func (s EmailRegistrationService) RequestVerification(ctx context.Context, reque
 	}
 	now := s.Clock().UTC()
 	expiresAt := now.Add(RegistrationVerificationCodeTTL)
-	if err := s.Sender.SendRegistrationCode(ctx, input.Email.String(), code, expiresAt); err != nil {
-		return RegistrationVerificationResult{}, fmt.Errorf("send registration verification code: %w", err)
-	}
 	if err := s.WriteVerification(ctx, RegistrationVerificationDraft{Username: input.Username.String(), Email: input.Email.String(), PasswordHash: passwordHash, Salt: salt, CodeHash: codeHash, ExpiresAt: expiresAt}); err != nil {
 		return RegistrationVerificationResult{}, fmt.Errorf("persist registration verification: %w", err)
+	}
+	if err := s.Sender.SendRegistrationCode(ctx, input.Email.String(), code, expiresAt); err != nil {
+		if s.InvalidateVerification != nil {
+			if invalidateErr := s.InvalidateVerification(ctx, input.Email.String(), now); invalidateErr != nil {
+				return RegistrationVerificationResult{}, fmt.Errorf("send registration verification code: %w; invalidate registration verification: %v", err, invalidateErr)
+			}
+		}
+		return RegistrationVerificationResult{}, fmt.Errorf("send registration verification code: %w", err)
 	}
 	return RegistrationVerificationResult{RetryAfterSeconds: int(RegistrationVerificationResendDelay.Seconds())}, nil
 }
