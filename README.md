@@ -4,6 +4,15 @@
 
 > **构建模式**：默认 Go 构建不依赖本地官方 protobuf，并安全返回 `AST_CODEC_UNAVAILABLE`；使用 `officialast` build tag 的构建会启用真实火山引擎 AST 2.0 WebSocket、字幕与 PCM TTS 链路。官方生成代码不纳入 Git，须先运行固定 URL 与 SHA256 校验的准备脚本。
 
+## 部署规划（中等预算）
+
+当前推荐采用混合部署：本地服务器虚拟机承载 Cloud API、翻译 Agent 与 PostgreSQL；AWS 新加坡（`ap-southeast-1`）仅承担全球 HTTPS 入口、WAF、监控和到本地的加密隧道转发。数据库、Agent 与 API 不直接暴露公网。
+
+- 本地虚拟机需求：[`docs/deployment/local-vm-requirements.md`](docs/deployment/local-vm-requirements.md)
+- AWS 新加坡入口需求：[`docs/deployment/aws-singapore-requirements.md`](docs/deployment/aws-singapore-requirements.md)
+
+第一期不部署 RDS、ECS、ALB、NAT Gateway、Redis、短信验证码或 AWS Cognito；手机号验证和全球 SMS 能力将在用户规模增长后单独设计。部署文档不包含密钥、DSN、真实公网地址或账号信息。
+
 ## 环境要求
 
 - macOS（本文的蓝牙和 Chrome 权限步骤以 macOS 为例；开发脚本也可在具有 Bash、Go、Node.js 的 Linux 环境使用）。
