@@ -327,10 +327,20 @@ func TestPostgresRegistrationVerification(t *testing.T) {
 		}
 	}
 
+	staleKey := []byte("stale-ip")
+	if _, err := raw.Exec(ctx, `INSERT INTO email_verification_rate_limits(key_type,key_hash,window_started_at,request_count,updated_at) VALUES('ip',$1,$2,1,$2)`, staleKey, now.Add(-time.Hour)); err != nil {
+		t.Fatal("create expired rate limit fixture")
+	}
+	rateLimitKeys = append(rateLimitKeys, staleKey)
+
 	cooldownUsername, cooldownEmail := registrationVerificationIdentity()
 	cooldown := request(cooldownUsername, cooldownEmail, []byte("cooldown-email"), []byte("cooldown-ip"), now)
 	if _, err := db.RequestRegistrationVerification(ctx, cooldown); err != nil {
 		t.Fatal("create cooldown verification")
+	}
+	var staleBuckets int
+	if err := raw.QueryRow(ctx, `SELECT count(*) FROM email_verification_rate_limits WHERE key_hash=$1`, staleKey).Scan(&staleBuckets); err != nil || staleBuckets != 0 {
+		t.Fatalf("request cleanup stale buckets = %d, err = %v, want 0", staleBuckets, err)
 	}
 	cooldown.Now = now.Add(59 * time.Second)
 	cooldown.ExpiresAt = cooldown.Now.Add(10 * time.Minute)

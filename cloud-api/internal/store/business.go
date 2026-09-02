@@ -123,6 +123,12 @@ func (p *Postgres) RequestRegistrationVerification(ctx context.Context, x domain
 		return verification, domain.ErrInvalid
 	}
 	err = p.tx(ctx, func(t pgx.Tx) error {
+		// Public request traffic performs bounded, idempotent cleanup for both
+		// hashed key types before it updates any rate-limit bucket. The expiry
+		// index keeps this transaction maintenance query efficient without a daemon.
+		if _, err := t.Exec(ctx, `DELETE FROM email_verification_rate_limits WHERE (key_type,key_hash) IN (SELECT key_type,key_hash FROM email_verification_rate_limits WHERE window_started_at <= $1::timestamptz - interval '1 hour' ORDER BY window_started_at LIMIT 100)`, now); err != nil {
+			return storeErr(err)
+		}
 		// The advisory lock covers the no-row case, where SELECT FOR UPDATE alone
 		// cannot serialize concurrent first requests for the same email.
 		if _, err := t.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, email.String()); err != nil {

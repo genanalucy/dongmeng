@@ -100,15 +100,15 @@ func TestRepositoryMigrationsClassifyConcurrentIndexOutsideTransaction(t *testin
 	if err != nil {
 		t.Fatalf("discover repository migrations: %v", err)
 	}
-	if len(migrations) != 4 {
-		t.Fatalf("migration count = %d, want 4", len(migrations))
+	if len(migrations) != 5 {
+		t.Fatalf("migration count = %d, want 5", len(migrations))
 	}
-	for index, version := range []string{"000001", "000002", "000003", "000004"} {
+	for index, version := range []string{"000001", "000002", "000003", "000004", "000005"} {
 		if migrations[index].Version != version {
 			t.Fatalf("migration[%d].Version = %q, want %q", index, migrations[index].Version, version)
 		}
 	}
-	if migrations[0].OutsideTransaction || !migrations[1].OutsideTransaction || migrations[2].OutsideTransaction || migrations[3].OutsideTransaction {
+	if migrations[0].OutsideTransaction || !migrations[1].OutsideTransaction || migrations[2].OutsideTransaction || migrations[3].OutsideTransaction || migrations[4].OutsideTransaction {
 		t.Fatalf("repository migration transaction classification mismatch")
 	}
 	index := migrations[1].ConcurrentIndex
@@ -384,8 +384,8 @@ func TestRunRecordsRepositoryChecksumsIsIdempotentAndFailsBeforeLaterMigration(t
 	if err := conn.QueryRow(ctx, "SELECT count(*) FROM "+ledger).Scan(&count); err != nil {
 		t.Fatal("count repository migration ledger")
 	}
-	if count != 3 {
-		t.Fatalf("ledger count = %d, want 3", count)
+	if count != 5 {
+		t.Fatalf("ledger count = %d, want 5", count)
 	}
 	var valid bool
 	if err := conn.QueryRow(ctx, `SELECT i.indisvalid FROM pg_catalog.pg_index i JOIN pg_catalog.pg_class c ON c.oid=i.indexrelid JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=$1 AND c.relname='refresh_tokens_expiry_idx'`, schema).Scan(&valid); err != nil {
@@ -410,7 +410,7 @@ func TestRunRecordsRepositoryChecksumsIsIdempotentAndFailsBeforeLaterMigration(t
 	}
 
 	directory := copyRepositoryMigrations(t)
-	if err := os.WriteFile(filepath.Join(directory, "000004_later.up.sql"), []byte("CREATE TABLE must_not_exist(id integer);\n"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(directory, "000006_later.up.sql"), []byte("CREATE TABLE must_not_exist(id integer);\n"), 0o600); err != nil {
 		t.Fatal("write later migration")
 	}
 	path := filepath.Join(directory, "000001_init.up.sql")
@@ -446,6 +446,8 @@ func copyRepositoryMigrations(t *testing.T) string {
 		"000001_init.up.sql",
 		"000002_refresh_tokens_expiry_idx.up.sql",
 		"000003_business_lifecycle.up.sql",
+		"000004_phone_authentication.up.sql",
+		"000005_email_registration_verifications.up.sql",
 	} {
 		contents, err := os.ReadFile(filepath.Join(repositoryMigrationDirectory(t), name))
 		if err != nil {
