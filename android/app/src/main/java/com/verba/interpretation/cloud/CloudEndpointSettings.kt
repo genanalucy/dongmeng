@@ -11,9 +11,8 @@ class CloudEndpointSettings(context: Context, private val policy: CloudEndpointS
 
     fun current(): String {
         val stored = preferences.getString(CLOUD_API_URL, null)
-        // Debug builds before Cloud API networking used this loopback placeholder. It cannot
-        // reach the development server from a device, so migrate that obsolete default only.
-        if (BuildConfig.DEBUG && stored == LEGACY_LOOPBACK_URL) {
+        // Migrate only historical built-in defaults. Other saved URLs remain explicit user choices.
+        if (stored in obsoleteCloudApiDefaults()) {
             preferences.edit().remove(CLOUD_API_URL).apply()
             return BuildConfig.CLOUD_API_URL
         }
@@ -32,8 +31,12 @@ class CloudEndpointSettings(context: Context, private val policy: CloudEndpointS
     private companion object {
         const val PREFERENCES = "cloud_endpoint_settings"
         const val CLOUD_API_URL = "cloud_api_url"
-        const val LEGACY_LOOPBACK_URL = "http://127.0.0.1:8080"
     }
+}
+
+internal fun obsoleteCloudApiDefaults(): Set<String> = buildSet {
+    if (BuildConfig.DEBUG) add("http://127.0.0.1:8080")
+    add("http://114.132.83.144:8080")
 }
 
 class CloudEndpointSecurityPolicy(private val allowInsecure: Boolean) {
