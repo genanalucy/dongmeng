@@ -274,6 +274,7 @@ type registrationVerificationHTTPStore struct {
 	invalidate func(context.Context, domain.InvalidateRegistrationVerificationParams) error
 	user       domain.User
 	trial      domain.Entitlement
+	refreshes  []domain.RefreshToken
 }
 
 func (s *registrationVerificationHTTPStore) RequestRegistrationVerification(ctx context.Context, params domain.CreateRegistrationVerificationParams) (domain.RegistrationVerification, error) {
@@ -290,6 +291,11 @@ func (s *registrationVerificationHTTPStore) UserByEmail(context.Context, string)
 }
 func (s *registrationVerificationHTTPStore) ActiveEntitlement(context.Context, uuid.UUID, time.Time) (domain.Entitlement, error) {
 	return s.trial, nil
+}
+func (s *registrationVerificationHTTPStore) CreateRefreshToken(_ context.Context, params domain.CreateRefreshParams) (domain.RefreshToken, error) {
+	token := domain.RefreshToken{ID: uuid.New(), UserID: params.UserID, FamilyID: params.FamilyID, TokenHash: params.Hash, ExpiresAt: params.ExpiresAt}
+	s.refreshes = append(s.refreshes, token)
+	return token, nil
 }
 
 type registrationCodeSenderSpy struct {
@@ -312,7 +318,11 @@ func newRegistrationVerificationRouter(t *testing.T, store *registrationVerifica
 		RateLimitKeySecret: []byte("test-rate-limit-secret"),
 		Sender:             sender,
 	}
-	return NewRouter(RouterOptions{Config: config.Config{Environment: "test", DatabaseTimeout: time.Second, RateLimitRPS: 1000, RateLimitBurst: 1000}, Store: store, RegistrationVerification: service, Now: func() time.Time { return time.Date(2026, 9, 2, 12, 0, 0, 0, time.UTC) }})
+	issuer := auth.TokenIssuer{
+		Issuer: "test-cloud-api", Audience: "test-clients", SessionAudience: "test-agent",
+		AccessSecret: bytes.Repeat([]byte("a"), auth.MinimumSecretBytes), SessionSecret: bytes.Repeat([]byte("s"), auth.MinimumSecretBytes),
+	}
+	return NewRouter(RouterOptions{Config: config.Config{Environment: "test", DatabaseTimeout: time.Second, RateLimitRPS: 1000, RateLimitBurst: 1000}, Store: store, Tokens: issuer, RegistrationVerification: service, Now: func() time.Time { return time.Date(2026, 9, 2, 12, 0, 0, 0, time.UTC) }})
 }
 
 func TestRegistrationVerificationRequestIsStrictAndGenericForOperationalOutcomes(t *testing.T) {
@@ -446,7 +456,7 @@ func TestRegistrationVerificationConfirmIsGenericOnFailureAndCreatesResponseOnce
 			if test.wantStatus == http.StatusBadRequest && !strings.Contains(response.Body.String(), "verification_failed") {
 				t.Fatalf("failure body = %s", response.Body.String())
 			}
-			if test.wantStatus == http.StatusCreated && (!strings.Contains(response.Body.String(), `"user"`) || !strings.Contains(response.Body.String(), `"trial_entitlement"`)) {
+			if test.wantStatus == http.StatusCreated && (!strings.Contains(response.Body.String(), `"user"`) || !strings.Contains(response.Body.String(), `"trial_entitlement"`) || !strings.Contains(response.Body.String(), `"access_token"`) || !strings.Contains(response.Body.String(), `"refresh_token"`)) {
 				t.Fatalf("success body = %s", response.Body.String())
 			}
 		})

@@ -40,6 +40,7 @@ data class IdentityUpdateRequest(
         .toString()
 }
 
+@Deprecated("Legacy DTO retained until Task 7 removes its test")
 data class RegistrationRequest(val username: String, val email: String, val phone: String, val password: String) {
     fun toJson(): String = JSONObject()
         .put("username", username)
@@ -48,6 +49,23 @@ data class RegistrationRequest(val username: String, val email: String, val phon
         .put("password", password)
         .toString()
 }
+
+data class RegistrationVerificationRequest(val username: String, val email: String, val password: String) {
+    fun toJson(): String = JSONObject()
+        .put("username", username)
+        .put("email", email)
+        .put("password", password)
+        .toString()
+}
+
+data class RegistrationVerificationConfirmation(val email: String, val code: String) {
+    fun toJson(): String = JSONObject()
+        .put("email", email)
+        .put("code", code)
+        .toString()
+}
+
+data class RegistrationResponse(val user: CloudUser, val trialEntitlement: CloudEntitlement, val tokens: AuthTokens)
 
 data class LoginRequest(val identifier: String, val password: String) {
     fun toJson(): String = JSONObject()
@@ -68,7 +86,14 @@ interface CloudTranslationSessionService {
 }
 
 interface AccountApi {
-    fun register(username: String, email: String, phone: String, password: String)
+    fun requestRegistrationVerification(username: String, email: String, password: String): Int =
+        throw UnsupportedOperationException("邮箱验证码注册未实现")
+    fun confirmRegistrationVerification(email: String, code: String): RegistrationResponse =
+        throw UnsupportedOperationException("邮箱验证码注册未实现")
+
+    @Deprecated("Task 7 removes the phone registration UI")
+    fun register(username: String, email: String, phone: String, password: String) = Unit
+
     fun login(identifier: String, password: String): AuthTokens
     fun logout()
     fun currentUser(): CloudUser
@@ -79,6 +104,7 @@ interface AccountApi {
     fun accountIdentityProfile(): AccountIdentityProfile
     fun usage(limit: Int, offset: Int): UsagePage
     fun updateIdentity(request: IdentityUpdateRequest)
+    fun storeTokens(tokens: AuthTokens) = Unit
 }
 
 class CloudApi private constructor(
@@ -101,13 +127,31 @@ class CloudApi private constructor(
         client: OkHttpClient = OkHttpClient(),
     ) : this({ endpoint }, tokenStore, installationIdStore, client)
 
-    override fun register(username: String, email: String, phone: String, password: String) {
-        try {
-            publicPost("auth/register", JSONObject(RegistrationRequest(username, email, phone, password).toJson()), expected = 201)
-        } catch (error: CloudApiException) {
-            if (error.statusCode == 409) throw CloudApiException("该用户名、邮箱或手机号暂不可用，请更换后重试。", 409)
-            throw error
-        }
+    override fun requestRegistrationVerification(username: String, email: String, password: String): Int = try {
+        publicPost(
+            "auth/registration-verifications",
+            JSONObject(RegistrationVerificationRequest(username, email, password).toJson()),
+            expected = 202,
+        ).requiredRetryAfterSeconds()
+    } catch (error: CloudApiException) {
+        if (error.statusCode == 409) throw CloudApiException("该用户名或邮箱暂不可用，请更换后重试。", 409)
+        throw error
+    }
+
+    override fun confirmRegistrationVerification(email: String, code: String): RegistrationResponse = try {
+        val response = publicPost(
+            "auth/registration-verifications/confirm",
+            JSONObject(RegistrationVerificationConfirmation(email, code).toJson()),
+            expected = 201,
+        )
+        RegistrationResponse(
+            user = parsePublicUser(response.requiredObject("user")),
+            trialEntitlement = parseEntitlement(response.requiredObject("trial_entitlement")),
+            tokens = parseTokens(response),
+        )
+    } catch (error: CloudApiException) {
+        if (error.statusCode == 409) throw CloudApiException("该用户名或邮箱暂不可用，请更换后重试。", 409)
+        throw error
     }
 
     override fun login(identifier: String, password: String): AuthTokens {
@@ -203,6 +247,14 @@ class CloudApi private constructor(
 
     override fun endTranslationSession(sessionId: String) { authorizedPost("translation-sessions/$sessionId/end", JSONObject()) }
     override fun hasCredentials(): Boolean = tokenStore.read() != null
+    override fun storeTokens(tokens: AuthTokens) = tokenStore.write(tokens)
+
+    private fun parsePublicUser(json: JSONObject): CloudUser = CloudUser(
+        id = json.requiredString("id"),
+        username = json.optString("username").trim().ifEmpty { "旧版用户" },
+        role = CloudRole.entries.firstOrNull { it.name.equals(json.requiredString("role"), ignoreCase = true) }
+            ?: throw CloudApiException("服务返回了不支持的账户角色。"),
+    )
 
     private fun parseEntitlement(json: JSONObject): CloudEntitlement = CloudEntitlement(
         kind = json.requiredString("kind"),
@@ -290,3 +342,9 @@ class CloudApi private constructor(
 
 private fun JSONObject.requiredString(name: String): String = optString(name).trim().takeIf(String::isNotEmpty)
     ?: throw CloudApiException("服务响应缺少 $name。")
+
+private fun JSONObject.requiredObject(name: String): JSONObject = optJSONObject(name)
+    ?: throw CloudApiException("服务响应缺少 $name。")
+
+private fun JSONObject.requiredRetryAfterSeconds(): Int = optInt("retry_after_seconds", -1).takeIf { it >= 0 }
+    ?: throw CloudApiException("服务响应缺少 retry_after_seconds。")

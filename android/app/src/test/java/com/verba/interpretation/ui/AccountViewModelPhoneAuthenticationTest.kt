@@ -4,6 +4,7 @@ import android.app.Application
 import com.verba.interpretation.cloud.AccountApi
 import com.verba.interpretation.cloud.AuthTokens
 import com.verba.interpretation.cloud.CloudEntitlement
+import com.verba.interpretation.cloud.RegistrationResponse
 import com.verba.interpretation.cloud.CloudRole
 import com.verba.interpretation.cloud.CloudUser
 import com.verba.interpretation.cloud.CloudApi
@@ -53,18 +54,42 @@ class AccountViewModelPhoneAuthenticationTest {
         assertEquals(listOf("/api/v1/users/me", "/api/v1/auth/refresh", "/api/v1/users/me", "/api/v1/entitlements/current"), transport.paths())
     }
 
-    @Test fun registerKeepsAutomaticLoginAndFetchSequence() {
+    @Test fun requestRegistrationVerificationTransitionsToChallengeWithoutAutomaticLogin() {
+        val api = RecordingAccountApi()
+        val viewModel = AccountViewModel(Application(), api, dispatcher)
+
+        viewModel.requestRegistrationVerification("alice_01", "alice@example.com", "Passw0rd")
+        dispatcher.scheduler.advanceUntilIdle()
+
+        assertEquals(listOf("requestVerification:alice_01:alice@example.com"), api.calls)
+        assertEquals(
+            RegistrationUiState.Challenge(username = "alice_01", maskedEmail = "a***e@example.com", retryAfterSeconds = 60),
+            viewModel.state.value.registration,
+        )
+        assertEquals(null, viewModel.state.value.user)
+    }
+
+    @Test fun confirmRegistrationVerificationUsesSuppliedEmailAndReturnsToDetails() {
+        val api = RecordingAccountApi()
+        val viewModel = AccountViewModel(Application(), api, dispatcher)
+
+        viewModel.confirmRegistrationVerification("alice@example.com", "012345")
+        dispatcher.scheduler.advanceUntilIdle()
+
+        assertEquals(listOf("confirmVerification:alice@example.com", "storeTokens"), api.calls)
+        assertEquals(RegistrationUiState.Details, viewModel.state.value.registration)
+        assertEquals("alice_01", viewModel.state.value.user?.username)
+    }
+
+    @Test fun transitionalRegisterDoesNotCallApiOrSignIn() {
         val api = RecordingAccountApi()
         val viewModel = AccountViewModel(Application(), api, dispatcher)
 
         viewModel.register("alice_01", "alice@example.com", "+8613800138000", "Passw0rd")
-        dispatcher.scheduler.advanceUntilIdle()
 
-        assertEquals(
-            listOf("register:alice_01:alice@example.com:+8613800138000", "login:+8613800138000", "currentUser", "currentEntitlement"),
-            api.calls,
-        )
-        assertEquals("alice_01", viewModel.state.value.user?.username)
+        assertEquals(emptyList<String>(), api.calls)
+        assertEquals(null, viewModel.state.value.user)
+        assertEquals("请使用邮箱验证码完成注册。", viewModel.state.value.message)
     }
 }
 
@@ -91,7 +116,18 @@ private class RefreshingHttp(private val responses: List<Pair<Int, String>>) {
 
 private class RecordingAccountApi : AccountApi {
     val calls = mutableListOf<String>()
-    override fun register(username: String, email: String, phone: String, password: String) { calls += "register:$username:$email:$phone" }
+    override fun requestRegistrationVerification(username: String, email: String, password: String): Int {
+        calls += "requestVerification:$username:$email"
+        return 60
+    }
+    override fun confirmRegistrationVerification(email: String, code: String): RegistrationResponse {
+        calls += "confirmVerification:$email"
+        return RegistrationResponse(
+            CloudUser("user-1", "alice_01", CloudRole.USER),
+            CloudEntitlement("trial", "2026-09-05T00:00:00Z", "2026-09-02T00:00:00Z"),
+            AuthTokens("access", "refresh"),
+        )
+    }
     override fun login(identifier: String, password: String): AuthTokens {
         calls += "login:$identifier"
         return AuthTokens("access", "refresh")
@@ -111,4 +147,5 @@ private class RecordingAccountApi : AccountApi {
     override fun accountIdentityProfile() = com.verba.interpretation.cloud.AccountIdentityProfile("alice_01", "alice@example.test", null)
     override fun usage(limit: Int, offset: Int) = com.verba.interpretation.cloud.UsagePage(emptyList(), 0)
     override fun updateIdentity(request: com.verba.interpretation.cloud.IdentityUpdateRequest) = Unit
+    override fun storeTokens(tokens: AuthTokens) { calls += "storeTokens" }
 }

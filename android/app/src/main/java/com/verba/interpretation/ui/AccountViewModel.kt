@@ -26,6 +26,11 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
+sealed interface RegistrationUiState {
+    data object Details : RegistrationUiState
+    data class Challenge(val username: String, val maskedEmail: String, val retryAfterSeconds: Int) : RegistrationUiState
+}
+
 data class AccountUiState(
     val loading: Boolean = false,
     val user: CloudUser? = null,
@@ -34,6 +39,7 @@ data class AccountUiState(
     val identityProfile: AccountIdentityProfile? = null,
     val usage: UsagePage? = null,
     val message: String? = null,
+    val registration: RegistrationUiState = RegistrationUiState.Details,
     val previewingUserExperience: Boolean = false,
 ) {
     val signedIn: Boolean get() = user != null
@@ -101,10 +107,49 @@ class AccountViewModel(
         }
     }
 
-    fun register(username: String, email: String, phone: String, password: String) = runRequest {
-        api.register(username, email, phone, password)
-        api.login(phone, password)
-        api.currentUser() to api.currentEntitlement()
+    fun requestRegistrationVerification(username: String, email: String, password: String) {
+        viewModelScope.launch {
+            mutableState.value = mutableState.value.copy(loading = true, message = null)
+            try {
+                // This ViewModel never writes the password to state, SavedStateHandle, or storage.
+                val retryAfterSeconds = withContext(ioDispatcher) {
+                    api.requestRegistrationVerification(username, email, password)
+                }
+                mutableState.value = mutableState.value.copy(
+                    loading = false,
+                    registration = RegistrationUiState.Challenge(username, email.maskedEmail(), retryAfterSeconds),
+                )
+            } catch (_: Exception) {
+                mutableState.value = mutableState.value.copy(loading = false, message = SafeRequestError)
+            }
+        }
+    }
+
+    fun confirmRegistrationVerification(email: String, code: String) {
+        viewModelScope.launch {
+            mutableState.value = mutableState.value.copy(loading = true, message = null)
+            try {
+                // This ViewModel never writes the code to state, SavedStateHandle, or storage.
+                val registration = withContext(ioDispatcher) {
+                    api.confirmRegistrationVerification(email, code)
+                }
+                withContext(ioDispatcher) { api.storeTokens(registration.tokens) }
+                mutableState.value = AccountUiState(
+                    user = registration.user,
+                    entitlement = registration.trialEntitlement,
+                    registration = RegistrationUiState.Details,
+                    previewingUserExperience = mutableState.value.previewingUserExperience && registration.user.role == CloudRole.ADMIN,
+                )
+            } catch (_: Exception) {
+                mutableState.value = mutableState.value.copy(loading = false, message = SafeRequestError)
+            }
+        }
+    }
+
+    /** Transitional Task 7 bridge: registration now requires the email-verification UI. */
+    @Deprecated("Use requestRegistrationVerification without a phone number")
+    fun register(username: String, email: String, @Suppress("UNUSED_PARAMETER") phone: String, password: String) {
+        mutableState.value = mutableState.value.copy(message = "请使用邮箱验证码完成注册。")
     }
 
     fun login(identifier: String, password: String) = runRequest {
@@ -185,4 +230,11 @@ class AccountViewModel(
         }
     }
 
+}
+
+private fun String.maskedEmail(): String {
+    val at = indexOf('@')
+    if (at <= 0) return "***"
+    val local = substring(0, at)
+    return "${local.first()}***${local.last()}${substring(at)}"
 }

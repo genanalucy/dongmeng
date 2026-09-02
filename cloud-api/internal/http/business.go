@@ -304,7 +304,20 @@ func (a api) registrationVerificationConfirm(w http.ResponseWriter, r *http.Requ
 		writeError(w, r, http.StatusInternalServerError, "internal_error")
 		return
 	}
-	writeJSON(w, http.StatusCreated, map[string]any{"user": publicUser(user), "trial_entitlement": trial})
+	access, err := a.tokens.AccessToken(user.ID, user.Role, 15*time.Minute, a.now())
+	if err != nil {
+		writeError(w, r, http.StatusInternalServerError, "internal_error")
+		return
+	}
+	refresh, err := (auth.RefreshManager{Store: a.store}).Issue(r.Context(), user.ID, 30*24*time.Hour, a.now())
+	if err != nil {
+		domainError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"user": publicUser(user), "trial_entitlement": trial,
+		"access_token": access, "refresh_token": refresh.Plaintext, "token_type": "Bearer", "expires_in": 900,
+	})
 }
 func invalidCredentials(w http.ResponseWriter, r *http.Request) {
 	writeError(w, r, http.StatusUnauthorized, "invalid_credentials")

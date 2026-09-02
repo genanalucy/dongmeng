@@ -87,7 +87,7 @@ func NewRouter(options RouterOptions) http.Handler {
 	router.Post("/api/v1/auth/phone-verifications", verificationAPI.phoneVerification)
 	router.Post("/api/v1/auth/phone-verifications/confirm", verificationAPI.phoneVerification)
 	registrationVerification := options.RegistrationVerification
-	registrationAPI := api{store: options.Store, registrationVerification: registrationVerification, logger: logger, now: now}
+	registrationAPI := api{store: options.Store, tokens: options.Tokens, registrationVerification: registrationVerification, logger: logger, now: now}
 	router.Post("/api/v1/auth/registration-verifications", registrationAPI.registrationVerificationRequest)
 	router.Post("/api/v1/auth/registration-verifications/confirm", registrationAPI.registrationVerificationConfirm)
 	if options.Store == nil {
