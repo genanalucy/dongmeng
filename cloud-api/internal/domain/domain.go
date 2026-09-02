@@ -134,20 +134,6 @@ func ParseRegistrationVerificationInput(username, email, password string) (Regis
 	if err != nil {
 		return RegistrationVerificationInput{}, err
 	}
-	var upper, lower, digit bool
-	for _, char := range password {
-		switch {
-		case char >= 'A' && char <= 'Z':
-			upper = true
-		case char >= 'a' && char <= 'z':
-			lower = true
-		case char >= '0' && char <= '9':
-			digit = true
-		}
-	}
-	if !upper || !lower || !digit {
-		return RegistrationVerificationInput{}, fmt.Errorf("%w: invalid password", ErrInvalid)
-	}
 	return RegistrationVerificationInput{Username: parsedUsername, Email: parsedEmail, Password: parsedPassword}, nil
 }
 
