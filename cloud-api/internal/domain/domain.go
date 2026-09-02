@@ -22,12 +22,13 @@ const (
 )
 
 var (
-	ErrNotFound      = errors.New("not found")
-	ErrConflict      = errors.New("conflict")
-	ErrUnauthorized  = errors.New("unauthorized")
-	ErrForbidden     = errors.New("forbidden")
-	ErrInvalid       = errors.New("invalid input")
-	ErrNoEntitlement = errors.New("no active entitlement")
+	ErrNotFound                       = errors.New("not found")
+	ErrConflict                       = errors.New("conflict")
+	ErrUnauthorized                   = errors.New("unauthorized")
+	ErrForbidden                      = errors.New("forbidden")
+	ErrInvalid                        = errors.New("invalid input")
+	ErrNoEntitlement                  = errors.New("no active entitlement")
+	ErrRegistrationVerificationFailed = errors.New("registration verification failed")
 )
 
 type Role string
@@ -474,6 +475,34 @@ type RegisterParams struct {
 	Now                                  time.Time
 }
 
+type RegistrationVerification struct {
+	ID           uuid.UUID
+	Username     string
+	Email        string
+	PasswordHash string
+	CodeHash     []byte
+	CodeSalt     []byte
+	ExpiresAt    time.Time
+	AttemptCount int
+	SentAt       time.Time
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
+}
+
+type CreateRegistrationVerificationParams struct {
+	Username, Email, PasswordHash     string
+	CodeHash, CodeSalt                []byte
+	EmailRateLimitKey, IPRateLimitKey []byte
+	Now                               time.Time
+	ExpiresAt                         time.Time
+}
+
+type ConfirmRegistrationVerificationParams struct {
+	Email, Code string
+	CodePepper  []byte
+	Now         time.Time
+}
+
 type CreateRefreshParams struct {
 	UserID, FamilyID uuid.UUID
 	Hash             []byte
@@ -512,6 +541,9 @@ type RefreshTokenStore interface {
 type Store interface {
 	RefreshTokenStore
 	Register(context.Context, RegisterParams) (User, Entitlement, error)
+	RequestRegistrationVerification(context.Context, CreateRegistrationVerificationParams) (RegistrationVerification, error)
+	ConfirmRegistrationVerification(context.Context, ConfirmRegistrationVerificationParams) (RegisterParams, error)
+	InvalidateRegistrationVerification(context.Context, string, time.Time) error
 	UserByEmail(context.Context, string) (User, string, error)
 	UserByPhone(context.Context, string) (User, string, error)
 	UserByUsername(context.Context, string) (User, string, error)

@@ -5,12 +5,15 @@ package integration_test
 import (
 	"bytes"
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
 	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -270,6 +273,160 @@ func TestPostgresBusinessLifecycle(t *testing.T) {
 	if err := raw.QueryRow(ctx, `SELECT count(*) FROM entitlements e JOIN users u ON u.id=e.user_id WHERE u.username=$1`, blockedTrialUsername).Scan(&failedUserEntitlements); err != nil || failedUserEntitlements != 0 {
 		t.Fatal("trial insert failure left an entitlement")
 	}
+}
+
+func TestPostgresRegistrationVerification(t *testing.T) {
+	url := isolatedPostgresTestDSN(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	if err := migrate.Run(ctx, migrate.Config{DatabaseURL: url, Directory: repositoryMigrationDirectory(t), Schema: "public"}); err != nil {
+		t.Fatal("apply registration verification migrations")
+	}
+	db, err := store.Open(ctx, url)
+	if err != nil {
+		t.Fatal("open isolated registration verification database")
+	}
+	t.Cleanup(db.Close)
+	raw, err := pgxpool.New(ctx, url)
+	if err != nil {
+		t.Fatal("open isolated registration verification fixture pool")
+	}
+	t.Cleanup(raw.Close)
+
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	pepper := []byte("registration-verification-integration-pepper")
+	passwordHash, err := auth.HashPassword("integration-password")
+	if err != nil {
+		t.Fatal("hash registration verification fixture password")
+	}
+	createdEmails := make([]string, 0, 32)
+	createdUsernames := make([]string, 0, 32)
+	rateLimitKeys := make([][]byte, 0, 64)
+	t.Cleanup(func() {
+		cleanupContext, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if len(createdEmails) > 0 {
+			_, _ = raw.Exec(cleanupContext, `DELETE FROM registration_verifications WHERE email = ANY($1)`, createdEmails)
+		}
+		if len(createdUsernames) > 0 {
+			_, _ = raw.Exec(cleanupContext, `DELETE FROM users WHERE username = ANY($1)`, createdUsernames)
+		}
+		for _, key := range rateLimitKeys {
+			_, _ = raw.Exec(cleanupContext, `DELETE FROM email_verification_rate_limits WHERE key_hash=$1`, key)
+		}
+	})
+
+	request := func(username, email string, emailKey, ipKey []byte, at time.Time) domain.CreateRegistrationVerificationParams {
+		createdEmails = append(createdEmails, email)
+		createdUsernames = append(createdUsernames, username)
+		rateLimitKeys = append(rateLimitKeys, emailKey, ipKey)
+		return domain.CreateRegistrationVerificationParams{
+			Username: username, Email: email, PasswordHash: passwordHash,
+			CodeHash: registrationVerificationCodeHash(pepper, []byte("salt"), "012345"), CodeSalt: []byte("salt"),
+			EmailRateLimitKey: emailKey, IPRateLimitKey: ipKey, Now: at, ExpiresAt: at.Add(10 * time.Minute),
+		}
+	}
+
+	cooldownUsername, cooldownEmail := registrationVerificationIdentity()
+	cooldown := request(cooldownUsername, cooldownEmail, []byte("cooldown-email"), []byte("cooldown-ip"), now)
+	if _, err := db.RequestRegistrationVerification(ctx, cooldown); err != nil {
+		t.Fatal("create cooldown verification")
+	}
+	cooldown.Now = now.Add(59 * time.Second)
+	cooldown.ExpiresAt = cooldown.Now.Add(10 * time.Minute)
+	if _, err := db.RequestRegistrationVerification(ctx, cooldown); !errors.Is(err, domain.ErrRegistrationVerificationFailed) {
+		t.Fatalf("resend before 60 seconds error = %v, want generic verification failure", err)
+	}
+
+	emailLimitUsername, emailLimitEmail := registrationVerificationIdentity()
+	emailLimit := request(emailLimitUsername, emailLimitEmail, []byte("email-limit"), []byte("email-limit-ip"), now)
+	for attempt := 0; attempt < 5; attempt++ {
+		emailLimit.Now = now.Add(time.Duration(attempt) * 61 * time.Second)
+		emailLimit.ExpiresAt = emailLimit.Now.Add(10 * time.Minute)
+		if _, err := db.RequestRegistrationVerification(ctx, emailLimit); err != nil {
+			t.Fatalf("email rate limit request %d: %v", attempt+1, err)
+		}
+	}
+	emailLimit.Now = now.Add(5 * 61 * time.Second)
+	emailLimit.ExpiresAt = emailLimit.Now.Add(10 * time.Minute)
+	if _, err := db.RequestRegistrationVerification(ctx, emailLimit); !errors.Is(err, domain.ErrRegistrationVerificationFailed) {
+		t.Fatalf("sixth email request error = %v, want generic verification failure", err)
+	}
+
+	sharedIPKey := []byte("ip-limit")
+	for attempt := 0; attempt < 20; attempt++ {
+		username, email := registrationVerificationIdentity()
+		params := request(username, email, []byte("ip-email-"+uuid.NewString()), sharedIPKey, now)
+		if _, err := db.RequestRegistrationVerification(ctx, params); err != nil {
+			t.Fatalf("IP rate limit request %d: %v", attempt+1, err)
+		}
+	}
+	username, email := registrationVerificationIdentity()
+	if _, err := db.RequestRegistrationVerification(ctx, request(username, email, []byte("ip-email-over"), sharedIPKey, now)); !errors.Is(err, domain.ErrRegistrationVerificationFailed) {
+		t.Fatalf("twenty-first IP request error = %v, want generic verification failure", err)
+	}
+
+	attemptUsername, attemptEmail := registrationVerificationIdentity()
+	attemptParams := request(attemptUsername, attemptEmail, []byte("attempt-email"), []byte("attempt-ip"), now)
+	if _, err := db.RequestRegistrationVerification(ctx, attemptParams); err != nil {
+		t.Fatal("create attempt limit verification")
+	}
+	for attempt := 0; attempt < 5; attempt++ {
+		if _, err := db.ConfirmRegistrationVerification(ctx, domain.ConfirmRegistrationVerificationParams{Email: attemptEmail, Code: "000000", CodePepper: pepper, Now: now.Add(time.Duration(attempt) * time.Second)}); !errors.Is(err, domain.ErrRegistrationVerificationFailed) {
+			t.Fatalf("incorrect attempt %d error = %v, want generic verification failure", attempt+1, err)
+		}
+	}
+	if _, err := db.ConfirmRegistrationVerification(ctx, domain.ConfirmRegistrationVerificationParams{Email: attemptEmail, Code: "012345", CodePepper: pepper, Now: now.Add(6 * time.Second)}); !errors.Is(err, domain.ErrRegistrationVerificationFailed) {
+		t.Fatalf("invalidated verification confirmation error = %v, want generic verification failure", err)
+	}
+
+	confirmUsername, confirmEmail := registrationVerificationIdentity()
+	confirmParams := request(confirmUsername, confirmEmail, []byte("confirm-email"), []byte("confirm-ip"), now)
+	if _, err := db.RequestRegistrationVerification(ctx, confirmParams); err != nil {
+		t.Fatal("create concurrent confirmation verification")
+	}
+	var confirmations sync.WaitGroup
+	confirmationErrors := make(chan error, 2)
+	for range 2 {
+		confirmations.Add(1)
+		go func() {
+			defer confirmations.Done()
+			_, err := db.ConfirmRegistrationVerification(context.Background(), domain.ConfirmRegistrationVerificationParams{Email: confirmEmail, Code: "012345", CodePepper: pepper, Now: now.Add(time.Second)})
+			confirmationErrors <- err
+		}()
+	}
+	confirmations.Wait()
+	close(confirmationErrors)
+	successes := 0
+	for err := range confirmationErrors {
+		if err == nil {
+			successes++
+		} else if !errors.Is(err, domain.ErrRegistrationVerificationFailed) {
+			t.Fatalf("concurrent confirmation error = %v", err)
+		}
+	}
+	if successes != 1 {
+		t.Fatalf("successful concurrent confirmations = %d, want 1", successes)
+	}
+	var users, entitlements int
+	if err := raw.QueryRow(ctx, `SELECT count(*) FROM users WHERE username=$1`, confirmUsername).Scan(&users); err != nil || users != 1 {
+		t.Fatalf("confirmed users = %d, err = %v, want 1", users, err)
+	}
+	if err := raw.QueryRow(ctx, `SELECT count(*) FROM entitlements e JOIN users u ON u.id=e.user_id WHERE u.username=$1 AND e.kind='trial'`, confirmUsername).Scan(&entitlements); err != nil || entitlements != 1 {
+		t.Fatalf("confirmed trial entitlements = %d, err = %v, want 1", entitlements, err)
+	}
+}
+
+func registrationVerificationCodeHash(pepper, salt []byte, code string) []byte {
+	mac := hmac.New(sha256.New, pepper)
+	_, _ = mac.Write(salt)
+	_, _ = mac.Write([]byte(code))
+	return mac.Sum(nil)
+}
+
+func registrationVerificationIdentity() (string, string) {
+	value := strings.ReplaceAll(uuid.NewString(), "-", "")
+	return "verify_" + value[:20], "verify-" + value + "@example.test"
 }
 
 func TestIsolatedPostgresTestDSNRejectsUnsafeFallbackAndOverridesBeforeConnecting(t *testing.T) {
