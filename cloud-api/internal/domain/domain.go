@@ -498,9 +498,10 @@ type CreateRegistrationVerificationParams struct {
 }
 
 type ConfirmRegistrationVerificationParams struct {
-	Email, Code string
-	CodePepper  []byte
-	Now         time.Time
+	Email, Code       string
+	CodePepper        []byte
+	EmailRateLimitKey []byte
+	Now               time.Time
 }
 
 type CreateRefreshParams struct {

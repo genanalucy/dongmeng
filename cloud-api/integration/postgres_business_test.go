@@ -334,6 +334,8 @@ func TestPostgresRegistrationVerification(t *testing.T) {
 	}
 	cooldown.Now = now.Add(59 * time.Second)
 	cooldown.ExpiresAt = cooldown.Now.Add(10 * time.Minute)
+	cooldown.Username = " OTHER_USER " // Case variants must share the canonical email record.
+	cooldown.Email = strings.ToUpper(cooldown.Email)
 	if _, err := db.RequestRegistrationVerification(ctx, cooldown); !errors.Is(err, domain.ErrRegistrationVerificationFailed) {
 		t.Fatalf("resend before 60 seconds error = %v, want generic verification failure", err)
 	}
@@ -372,11 +374,11 @@ func TestPostgresRegistrationVerification(t *testing.T) {
 		t.Fatal("create attempt limit verification")
 	}
 	for attempt := 0; attempt < 5; attempt++ {
-		if _, err := db.ConfirmRegistrationVerification(ctx, domain.ConfirmRegistrationVerificationParams{Email: attemptEmail, Code: "000000", CodePepper: pepper, Now: now.Add(time.Duration(attempt) * time.Second)}); !errors.Is(err, domain.ErrRegistrationVerificationFailed) {
+		if _, err := db.ConfirmRegistrationVerification(ctx, domain.ConfirmRegistrationVerificationParams{Email: attemptEmail, Code: "000000", CodePepper: pepper, EmailRateLimitKey: []byte("attempt-email"), Now: now.Add(time.Duration(attempt) * time.Second)}); !errors.Is(err, domain.ErrRegistrationVerificationFailed) {
 			t.Fatalf("incorrect attempt %d error = %v, want generic verification failure", attempt+1, err)
 		}
 	}
-	if _, err := db.ConfirmRegistrationVerification(ctx, domain.ConfirmRegistrationVerificationParams{Email: attemptEmail, Code: "012345", CodePepper: pepper, Now: now.Add(6 * time.Second)}); !errors.Is(err, domain.ErrRegistrationVerificationFailed) {
+	if _, err := db.ConfirmRegistrationVerification(ctx, domain.ConfirmRegistrationVerificationParams{Email: attemptEmail, Code: "012345", CodePepper: pepper, EmailRateLimitKey: []byte("attempt-email"), Now: now.Add(6 * time.Second)}); !errors.Is(err, domain.ErrRegistrationVerificationFailed) {
 		t.Fatalf("invalidated verification confirmation error = %v, want generic verification failure", err)
 	}
 
@@ -391,7 +393,7 @@ func TestPostgresRegistrationVerification(t *testing.T) {
 		confirmations.Add(1)
 		go func() {
 			defer confirmations.Done()
-			_, err := db.ConfirmRegistrationVerification(context.Background(), domain.ConfirmRegistrationVerificationParams{Email: confirmEmail, Code: "012345", CodePepper: pepper, Now: now.Add(time.Second)})
+			_, err := db.ConfirmRegistrationVerification(context.Background(), domain.ConfirmRegistrationVerificationParams{Email: strings.ToUpper(confirmEmail), Code: "012345", CodePepper: pepper, EmailRateLimitKey: []byte("confirm-email"), Now: now.Add(time.Second)})
 			confirmationErrors <- err
 		}()
 	}
@@ -414,6 +416,19 @@ func TestPostgresRegistrationVerification(t *testing.T) {
 	}
 	if err := raw.QueryRow(ctx, `SELECT count(*) FROM entitlements e JOIN users u ON u.id=e.user_id WHERE u.username=$1 AND e.kind='trial'`, confirmUsername).Scan(&entitlements); err != nil || entitlements != 1 {
 		t.Fatalf("confirmed trial entitlements = %d, err = %v, want 1", entitlements, err)
+	}
+	var emailBuckets, ipBuckets int
+	if err := raw.QueryRow(ctx, `SELECT count(*) FROM email_verification_rate_limits WHERE key_type='email' AND key_hash=$1`, []byte("confirm-email")).Scan(&emailBuckets); err != nil || emailBuckets != 0 {
+		t.Fatalf("completed email buckets = %d, err = %v, want 0", emailBuckets, err)
+	}
+	if err := raw.QueryRow(ctx, `SELECT count(*) FROM email_verification_rate_limits WHERE key_type='ip' AND key_hash=$1`, []byte("confirm-ip")).Scan(&ipBuckets); err != nil || ipBuckets != 1 {
+		t.Fatalf("completed IP buckets = %d, err = %v, want 1", ipBuckets, err)
+	}
+	if err := db.CleanupRegistrationVerificationRateLimits(ctx, now.Add(time.Hour)); err != nil {
+		t.Fatalf("clean up expired verification rate limits: %v", err)
+	}
+	if err := raw.QueryRow(ctx, `SELECT count(*) FROM email_verification_rate_limits WHERE key_hash=$1`, []byte("confirm-ip")).Scan(&ipBuckets); err != nil || ipBuckets != 0 {
+		t.Fatalf("expired IP buckets after cleanup = %d, err = %v, want 0", ipBuckets, err)
 	}
 }
 

@@ -22,6 +22,17 @@ func TestRegistrationVerificationStoreContract(t *testing.T) {
 	}
 }
 
+func TestRegistrationVerificationStoreCanonicalizesIdentity(t *testing.T) {
+	username, err := domain.ParseUsername(" Example_User ")
+	if err != nil || username.String() != "example_user" {
+		t.Fatalf("ParseUsername() = %q, %v", username, err)
+	}
+	email, err := domain.ParseEmail(" USER@Example.com ")
+	if err != nil || email.String() != "user@example.com" {
+		t.Fatalf("ParseEmail() = %q, %v", email, err)
+	}
+}
+
 func TestRegistrationVerificationFailuresRemainGeneric(t *testing.T) {
 	if domain.ErrRegistrationVerificationFailed.Error() != "registration verification failed" {
 		t.Fatal("verification failures must use a generic domain error")

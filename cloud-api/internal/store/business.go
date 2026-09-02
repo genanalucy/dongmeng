@@ -110,14 +110,22 @@ func updateRegistrationRateLimit(ctx context.Context, t pgx.Tx, keyType string, 
 
 func (p *Postgres) RequestRegistrationVerification(ctx context.Context, x domain.CreateRegistrationVerificationParams) (domain.RegistrationVerification, error) {
 	var verification domain.RegistrationVerification
+	username, err := domain.ParseUsername(x.Username)
+	if err != nil {
+		return verification, err
+	}
+	email, err := domain.ParseEmail(x.Email)
+	if err != nil {
+		return verification, err
+	}
 	now := x.Now.UTC()
-	if x.Username == "" || x.Email == "" || x.PasswordHash == "" || len(x.CodeHash) == 0 || len(x.CodeSalt) == 0 || len(x.EmailRateLimitKey) == 0 || len(x.IPRateLimitKey) == 0 || now.IsZero() || !x.ExpiresAt.After(now) {
+	if x.PasswordHash == "" || len(x.CodeHash) == 0 || len(x.CodeSalt) == 0 || len(x.EmailRateLimitKey) == 0 || len(x.IPRateLimitKey) == 0 || now.IsZero() || !x.ExpiresAt.After(now) {
 		return verification, domain.ErrInvalid
 	}
-	err := p.tx(ctx, func(t pgx.Tx) error {
+	err = p.tx(ctx, func(t pgx.Tx) error {
 		// The advisory lock covers the no-row case, where SELECT FOR UPDATE alone
 		// cannot serialize concurrent first requests for the same email.
-		if _, err := t.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, x.Email); err != nil {
+		if _, err := t.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, email.String()); err != nil {
 			return storeErr(err)
 		}
 		if err := updateRegistrationRateLimit(ctx, t, "email", x.EmailRateLimitKey, 5, now); err != nil {
@@ -127,7 +135,7 @@ func (p *Postgres) RequestRegistrationVerification(ctx context.Context, x domain
 			return err
 		}
 		var sentAt time.Time
-		err := t.QueryRow(ctx, `SELECT sent_at FROM registration_verifications WHERE email=$1 FOR UPDATE`, x.Email).Scan(&sentAt)
+		err := t.QueryRow(ctx, `SELECT sent_at FROM registration_verifications WHERE email=$1 FOR UPDATE`, email.String()).Scan(&sentAt)
 		if err == nil && sentAt.Add(time.Minute).After(now) {
 			return domain.ErrRegistrationVerificationFailed
 		}
@@ -135,7 +143,7 @@ func (p *Postgres) RequestRegistrationVerification(ctx context.Context, x domain
 			return storeErr(err)
 		}
 		var exists bool
-		if err := t.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM users WHERE (email=$1 OR username=$2) AND disabled_at IS NULL)`, x.Email, x.Username).Scan(&exists); err != nil {
+		if err := t.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM users WHERE (email=$1 OR username=$2) AND disabled_at IS NULL)`, email.String(), username.String()).Scan(&exists); err != nil {
 			return storeErr(err)
 		}
 		if exists {
@@ -144,7 +152,7 @@ func (p *Postgres) RequestRegistrationVerification(ctx context.Context, x domain
 		created, err := scanRegistrationVerification(t.QueryRow(ctx, `INSERT INTO registration_verifications(username,email,password_hash,code_hash,code_salt,expires_at,attempt_count,sent_at,created_at,updated_at)
 			VALUES($1,$2,$3,$4,$5,$6,0,$7,$7,$7)
 			ON CONFLICT(email) DO UPDATE SET username=EXCLUDED.username,password_hash=EXCLUDED.password_hash,code_hash=EXCLUDED.code_hash,code_salt=EXCLUDED.code_salt,expires_at=EXCLUDED.expires_at,attempt_count=0,sent_at=EXCLUDED.sent_at,updated_at=EXCLUDED.updated_at
-			RETURNING id,username,email,password_hash,code_hash,code_salt,expires_at,attempt_count,sent_at,created_at,updated_at`, x.Username, x.Email, x.PasswordHash, x.CodeHash, x.CodeSalt, x.ExpiresAt.UTC(), now))
+			RETURNING id,username,email,password_hash,code_hash,code_salt,expires_at,attempt_count,sent_at,created_at,updated_at`, username.String(), email.String(), x.PasswordHash, x.CodeHash, x.CodeSalt, x.ExpiresAt.UTC(), now))
 		verification = created
 		return err
 	})
@@ -163,13 +171,17 @@ func verificationCodeMatches(pepper, salt, expected []byte, code string) bool {
 
 func (p *Postgres) ConfirmRegistrationVerification(ctx context.Context, x domain.ConfirmRegistrationVerificationParams) (domain.RegisterParams, error) {
 	var registration domain.RegisterParams
+	email, err := domain.ParseEmail(x.Email)
+	if err != nil {
+		return registration, domain.ErrRegistrationVerificationFailed
+	}
 	now := x.Now.UTC()
-	if x.Email == "" || x.Code == "" || len(x.CodePepper) == 0 || now.IsZero() {
+	if x.Code == "" || len(x.CodePepper) == 0 || len(x.EmailRateLimitKey) == 0 || now.IsZero() {
 		return registration, domain.ErrRegistrationVerificationFailed
 	}
 	failed := false
-	err := p.tx(ctx, func(t pgx.Tx) error {
-		verification, err := scanRegistrationVerification(t.QueryRow(ctx, `SELECT id,username,email,password_hash,code_hash,code_salt,expires_at,attempt_count,sent_at,created_at,updated_at FROM registration_verifications WHERE email=$1 FOR UPDATE`, x.Email))
+	err = p.tx(ctx, func(t pgx.Tx) error {
+		verification, err := scanRegistrationVerification(t.QueryRow(ctx, `SELECT id,username,email,password_hash,code_hash,code_salt,expires_at,attempt_count,sent_at,created_at,updated_at FROM registration_verifications WHERE email=$1 FOR UPDATE`, email.String()))
 		if err != nil {
 			failed = true
 			return nil
@@ -200,6 +212,11 @@ func (p *Postgres) ConfirmRegistrationVerification(ctx context.Context, x domain
 		if _, err := t.Exec(ctx, `DELETE FROM registration_verifications WHERE id=$1`, verification.ID); err != nil {
 			return storeErr(err)
 		}
+		// A completed email is no longer rate-limited. The IP bucket is deliberately
+		// retained until fixed-window cleanup so confirmation cannot bypass IP limits.
+		if _, err := t.Exec(ctx, `DELETE FROM email_verification_rate_limits WHERE key_type='email' AND key_hash=$1`, x.EmailRateLimitKey); err != nil {
+			return storeErr(err)
+		}
 		return nil
 	})
 	if err != nil {
@@ -212,10 +229,20 @@ func (p *Postgres) ConfirmRegistrationVerification(ctx context.Context, x domain
 }
 
 func (p *Postgres) InvalidateRegistrationVerification(ctx context.Context, email string, now time.Time) error {
-	if email == "" || now.IsZero() {
+	parsedEmail, err := domain.ParseEmail(email)
+	if err != nil || now.IsZero() {
 		return domain.ErrInvalid
 	}
-	_, err := p.pool.Exec(ctx, `DELETE FROM registration_verifications WHERE email=$1`, email)
+	_, err = p.pool.Exec(ctx, `DELETE FROM registration_verifications WHERE email=$1`, parsedEmail.String())
+	return storeErr(err)
+}
+
+func (p *Postgres) CleanupRegistrationVerificationRateLimits(ctx context.Context, now time.Time) error {
+	if now.IsZero() {
+		return domain.ErrInvalid
+	}
+	// Both hashed key types share the same fixed one-hour retention period.
+	_, err := p.pool.Exec(ctx, `DELETE FROM email_verification_rate_limits WHERE window_started_at <= $1::timestamptz - interval '1 hour'`, now.UTC())
 	return storeErr(err)
 }
 func (p *Postgres) UserByEmail(ctx context.Context, email string) (domain.User, string, error) {

@@ -11,7 +11,17 @@ CREATE TABLE registration_verifications (
     attempt_count integer NOT NULL DEFAULT 0 CHECK (attempt_count BETWEEN 0 AND 5),
     sent_at timestamptz NOT NULL,
     created_at timestamptz NOT NULL DEFAULT now(),
-    updated_at timestamptz NOT NULL DEFAULT now()
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    CONSTRAINT registration_verifications_username_normalized CHECK (
+        username = lower(btrim(username))
+        AND length(username) BETWEEN 3 AND 32
+        AND username ~ '^[a-z0-9_]+$'
+        AND username !~ '^[0-9]+$'
+    ),
+    CONSTRAINT registration_verifications_email_normalized CHECK (
+        email = lower(btrim(email))
+        AND length(email) BETWEEN 3 AND 254
+    )
 );
 
 CREATE INDEX registration_verifications_expires_at_idx ON registration_verifications (expires_at);
@@ -24,5 +34,10 @@ CREATE TABLE email_verification_rate_limits (
     updated_at timestamptz NOT NULL DEFAULT now(),
     PRIMARY KEY (key_type, key_hash)
 );
+
+-- Both email and IP buckets expire one hour after their fixed window starts;
+-- this index supports bounded cleanup without retaining long-lived key hashes.
+CREATE INDEX email_verification_rate_limits_expiry_idx
+    ON email_verification_rate_limits (window_started_at);
 
 COMMIT;
