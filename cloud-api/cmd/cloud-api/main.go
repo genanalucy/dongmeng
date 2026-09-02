@@ -10,6 +10,8 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/google/uuid"
+
 	"github.com/dngmeng/cloud-api/internal/auth"
 	"github.com/dngmeng/cloud-api/internal/config"
 	httpapi "github.com/dngmeng/cloud-api/internal/http"
@@ -37,8 +39,8 @@ func newRegistrationVerificationDependencies(cfg config.Config) (registrationVer
 		CodePepper:         []byte(cfg.EmailVerificationRateLimitSecret),
 		RateLimitKeySecret: []byte(cfg.EmailVerificationRateLimitSecret),
 		Sender:             sender,
-		WriteVerification: func(context.Context, auth.RegistrationVerificationDraft) error {
-			return errors.New("registration verification persistence is not wired")
+		WriteVerification: func(context.Context, auth.RegistrationVerificationDraft) (uuid.UUID, error) {
+			return uuid.Nil, errors.New("registration verification persistence is not wired")
 		},
 	})
 	if err != nil {

@@ -497,6 +497,12 @@ type CreateRegistrationVerificationParams struct {
 	ExpiresAt                         time.Time
 }
 
+type InvalidateRegistrationVerificationParams struct {
+	ID    uuid.UUID
+	Email string
+	Now   time.Time
+}
+
 type ConfirmRegistrationVerificationParams struct {
 	Email, Code       string
 	CodePepper        []byte
@@ -544,7 +550,7 @@ type Store interface {
 	Register(context.Context, RegisterParams) (User, Entitlement, error)
 	RequestRegistrationVerification(context.Context, CreateRegistrationVerificationParams) (RegistrationVerification, error)
 	ConfirmRegistrationVerification(context.Context, ConfirmRegistrationVerificationParams) (RegisterParams, error)
-	InvalidateRegistrationVerification(context.Context, string, time.Time) error
+	InvalidateRegistrationVerification(context.Context, InvalidateRegistrationVerificationParams) error
 	UserByEmail(context.Context, string) (User, string, error)
 	UserByPhone(context.Context, string) (User, string, error)
 	UserByUsername(context.Context, string) (User, string, error)

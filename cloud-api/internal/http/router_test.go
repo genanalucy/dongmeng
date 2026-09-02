@@ -271,7 +271,7 @@ type registrationVerificationHTTPStore struct {
 	businessStore
 	request    func(context.Context, domain.CreateRegistrationVerificationParams) (domain.RegistrationVerification, error)
 	confirm    func(context.Context, domain.ConfirmRegistrationVerificationParams) (domain.RegisterParams, error)
-	invalidate func(context.Context, string, time.Time) error
+	invalidate func(context.Context, domain.InvalidateRegistrationVerificationParams) error
 	user       domain.User
 	trial      domain.Entitlement
 }
@@ -282,8 +282,8 @@ func (s *registrationVerificationHTTPStore) RequestRegistrationVerification(ctx 
 func (s *registrationVerificationHTTPStore) ConfirmRegistrationVerification(ctx context.Context, params domain.ConfirmRegistrationVerificationParams) (domain.RegisterParams, error) {
 	return s.confirm(ctx, params)
 }
-func (s *registrationVerificationHTTPStore) InvalidateRegistrationVerification(ctx context.Context, email string, now time.Time) error {
-	return s.invalidate(ctx, email, now)
+func (s *registrationVerificationHTTPStore) InvalidateRegistrationVerification(ctx context.Context, params domain.InvalidateRegistrationVerificationParams) error {
+	return s.invalidate(ctx, params)
 }
 func (s *registrationVerificationHTTPStore) UserByEmail(context.Context, string) (domain.User, string, error) {
 	return s.user, "", nil
@@ -336,12 +336,15 @@ func TestRegistrationVerificationRequestIsStrictAndGenericForOperationalOutcomes
 			store := &registrationVerificationHTTPStore{
 				request: func(context.Context, domain.CreateRegistrationVerificationParams) (domain.RegistrationVerification, error) {
 					requests++
-					return domain.RegistrationVerification{}, test.storeErr
+					return domain.RegistrationVerification{ID: uuid.New()}, test.storeErr
 				},
 				confirm: func(context.Context, domain.ConfirmRegistrationVerificationParams) (domain.RegisterParams, error) {
 					return domain.RegisterParams{}, domain.ErrRegistrationVerificationFailed
 				},
-				invalidate: func(context.Context, string, time.Time) error { invalidations++; return nil },
+				invalidate: func(context.Context, domain.InvalidateRegistrationVerificationParams) error {
+					invalidations++
+					return nil
+				},
 			}
 			sender := &registrationCodeSenderSpy{err: test.senderErr}
 			req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/registration-verifications", strings.NewReader(test.body))
@@ -381,12 +384,12 @@ func TestRegistrationVerificationUsesForwardedIPOnlyFromLoopbackCaddy(t *testing
 			store := &registrationVerificationHTTPStore{
 				request: func(_ context.Context, params domain.CreateRegistrationVerificationParams) (domain.RegistrationVerification, error) {
 					got = params
-					return domain.RegistrationVerification{}, nil
+					return domain.RegistrationVerification{ID: uuid.New()}, nil
 				},
 				confirm: func(context.Context, domain.ConfirmRegistrationVerificationParams) (domain.RegisterParams, error) {
 					return domain.RegisterParams{}, domain.ErrRegistrationVerificationFailed
 				},
-				invalidate: func(context.Context, string, time.Time) error { return nil },
+				invalidate: func(context.Context, domain.InvalidateRegistrationVerificationParams) error { return nil },
 			}
 			req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/registration-verifications", strings.NewReader(`{"username":"example_user","email":"user@example.com","password":"password1"}`))
 			req.Header.Set("Content-Type", "application/json")
@@ -430,7 +433,7 @@ func TestRegistrationVerificationConfirmIsGenericOnFailureAndCreatesResponseOnce
 				confirm: func(context.Context, domain.ConfirmRegistrationVerificationParams) (domain.RegisterParams, error) {
 					return domain.RegisterParams{Email: "user@example.com"}, test.confirmErr
 				},
-				invalidate: func(context.Context, string, time.Time) error { return nil },
+				invalidate: func(context.Context, domain.InvalidateRegistrationVerificationParams) error { return nil },
 				user:       domain.User{ID: userID, Username: "example_user", Role: string(domain.RoleUser), CreatedAt: time.Date(2026, 9, 2, 12, 0, 0, 0, time.UTC)}, trial: trial,
 			}
 			req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/registration-verifications/confirm", strings.NewReader(`{"email":"user@example.com","code":"012345"}`))
@@ -466,7 +469,7 @@ func TestRegistrationVerificationConfirmAllowsOnlyOneConcurrentSuccess(t *testin
 			confirmed = true
 			return domain.RegisterParams{Email: "user@example.com"}, nil
 		},
-		invalidate: func(context.Context, string, time.Time) error { return nil },
+		invalidate: func(context.Context, domain.InvalidateRegistrationVerificationParams) error { return nil },
 		user:       domain.User{ID: uuid.New(), Username: "example_user", Role: string(domain.RoleUser), CreatedAt: time.Now()},
 	}
 	router := newRegistrationVerificationRouter(t, store, &registrationCodeSenderSpy{})
@@ -505,7 +508,7 @@ func TestLegacyRegisterRequiresEmailVerification(t *testing.T) {
 		confirm: func(context.Context, domain.ConfirmRegistrationVerificationParams) (domain.RegisterParams, error) {
 			return domain.RegisterParams{}, domain.ErrRegistrationVerificationFailed
 		},
-		invalidate: func(context.Context, string, time.Time) error { return nil },
+		invalidate: func(context.Context, domain.InvalidateRegistrationVerificationParams) error { return nil },
 	}
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/register", strings.NewReader(`{"username":"example_user","email":"user@example.com","phone":"13800138000","password":"password1"}`))
 	req.Header.Set("Content-Type", "application/json")

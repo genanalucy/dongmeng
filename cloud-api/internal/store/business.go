@@ -234,12 +234,12 @@ func (p *Postgres) ConfirmRegistrationVerification(ctx context.Context, x domain
 	return registration, nil
 }
 
-func (p *Postgres) InvalidateRegistrationVerification(ctx context.Context, email string, now time.Time) error {
-	parsedEmail, err := domain.ParseEmail(email)
-	if err != nil || now.IsZero() {
+func (p *Postgres) InvalidateRegistrationVerification(ctx context.Context, x domain.InvalidateRegistrationVerificationParams) error {
+	parsedEmail, err := domain.ParseEmail(x.Email)
+	if err != nil || x.ID == uuid.Nil || x.Now.IsZero() {
 		return domain.ErrInvalid
 	}
-	_, err = p.pool.Exec(ctx, `DELETE FROM registration_verifications WHERE email=$1`, parsedEmail.String())
+	_, err = p.pool.Exec(ctx, `DELETE FROM registration_verifications WHERE id=$1 AND email=$2`, x.ID, parsedEmail.String())
 	return storeErr(err)
 }
 

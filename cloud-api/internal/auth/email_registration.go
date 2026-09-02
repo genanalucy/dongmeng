@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/dngmeng/cloud-api/internal/domain"
+	"github.com/google/uuid"
 )
 
 const (
@@ -66,7 +67,7 @@ type RegistrationVerificationDraft struct {
 	ExpiresAt    time.Time
 }
 
-type RegistrationVerificationWriter func(context.Context, RegistrationVerificationDraft) error
+type RegistrationVerificationWriter func(context.Context, RegistrationVerificationDraft) (uuid.UUID, error)
 
 // EmailRegistrationService dependencies are injected to keep crypto, time,
 // delivery, and lookup behavior testable without SMTP or persistence wiring.
@@ -79,7 +80,7 @@ type EmailRegistrationService struct {
 	Sender                 RegistrationCodeSender
 	Clock                  func() time.Time
 	WriteVerification      RegistrationVerificationWriter
-	InvalidateVerification func(context.Context, string, time.Time) error
+	InvalidateVerification func(context.Context, uuid.UUID, string, time.Time) error
 	LookupVerification     RegistrationVerificationLookup
 }
 
@@ -134,12 +135,16 @@ func (s EmailRegistrationService) RequestVerification(ctx context.Context, reque
 	}
 	now := s.Clock().UTC()
 	expiresAt := now.Add(RegistrationVerificationCodeTTL)
-	if err := s.WriteVerification(ctx, RegistrationVerificationDraft{Username: input.Username.String(), Email: input.Email.String(), PasswordHash: passwordHash, Salt: salt, CodeHash: codeHash, ExpiresAt: expiresAt}); err != nil {
+	verificationID, err := s.WriteVerification(ctx, RegistrationVerificationDraft{Username: input.Username.String(), Email: input.Email.String(), PasswordHash: passwordHash, Salt: salt, CodeHash: codeHash, ExpiresAt: expiresAt})
+	if err != nil {
 		return RegistrationVerificationResult{}, fmt.Errorf("persist registration verification: %w", err)
+	}
+	if verificationID == uuid.Nil {
+		return RegistrationVerificationResult{}, errors.New("persist registration verification returned an empty ID")
 	}
 	if err := s.Sender.SendRegistrationCode(ctx, input.Email.String(), code, expiresAt); err != nil {
 		if s.InvalidateVerification != nil {
-			if invalidateErr := s.InvalidateVerification(ctx, input.Email.String(), now); invalidateErr != nil {
+			if invalidateErr := s.InvalidateVerification(ctx, verificationID, input.Email.String(), now); invalidateErr != nil {
 				return RegistrationVerificationResult{}, fmt.Errorf("send registration verification code: %w; invalidate registration verification: %v", err, invalidateErr)
 			}
 		}

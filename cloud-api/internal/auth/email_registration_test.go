@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"net/netip"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/dngmeng/cloud-api/internal/domain"
+	"github.com/google/uuid"
 )
 
 func TestParseRegistrationVerificationCode(t *testing.T) {
@@ -82,9 +84,9 @@ type fakeRegistrationVerificationWriter struct {
 	err    error
 }
 
-func (w *fakeRegistrationVerificationWriter) WriteRegistrationVerification(_ context.Context, draft RegistrationVerificationDraft) error {
+func (w *fakeRegistrationVerificationWriter) WriteRegistrationVerification(_ context.Context, draft RegistrationVerificationDraft) (uuid.UUID, error) {
 	w.drafts = append(w.drafts, draft)
-	return w.err
+	return uuid.New(), w.err
 }
 
 type fakeRegistrationCodeSender struct {
@@ -109,7 +111,7 @@ func TestEmailRegistrationServiceReservesVerificationBeforeSendingCode(t *testin
 	sender := &fakeRegistrationCodeSender{}
 	writer := &fakeRegistrationVerificationWriter{}
 	service := newTestEmailRegistrationService(t, now, sender)
-	service.WriteVerification = func(ctx context.Context, draft RegistrationVerificationDraft) error {
+	service.WriteVerification = func(ctx context.Context, draft RegistrationVerificationDraft) (uuid.UUID, error) {
 		events = append(events, "reserve")
 		return writer.WriteRegistrationVerification(ctx, draft)
 	}
@@ -121,6 +123,69 @@ func TestEmailRegistrationServiceReservesVerificationBeforeSendingCode(t *testin
 	_, err := service.RequestVerification(context.Background(), RegistrationVerificationRequest{Username: "example_user", Email: "user@example.com", Password: "password1", ClientIP: netip.MustParseAddr("203.0.113.10")})
 	if err != nil || len(events) != 2 || events[0] != "reserve" || events[1] != "send" {
 		t.Fatalf("request events = %v, err = %v; want reserve then send", events, err)
+	}
+}
+
+func TestEmailRegistrationServiceLateSenderFailureDoesNotInvalidateNewerReservation(t *testing.T) {
+	var mu sync.Mutex
+	now := time.Date(2026, 9, 2, 12, 0, 0, 0, time.UTC)
+	currentID := uuid.Nil
+	currentEmail := ""
+	firstSenderStarted := make(chan struct{})
+	releaseFirstSender := make(chan struct{})
+	senderCalls := 0
+	service := newTestEmailRegistrationService(t, now, RegistrationCodeSenderFunc(func(context.Context, string, string, time.Time) error {
+		mu.Lock()
+		senderCalls++
+		call := senderCalls
+		mu.Unlock()
+		if call == 1 {
+			close(firstSenderStarted)
+			<-releaseFirstSender
+			return errors.New("delivery unavailable")
+		}
+		return nil
+	}))
+	service.Clock = func() time.Time { mu.Lock(); defer mu.Unlock(); return now }
+	service.WriteVerification = func(_ context.Context, draft RegistrationVerificationDraft) (uuid.UUID, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		currentID, currentEmail = uuid.New(), draft.Email
+		return currentID, nil
+	}
+	service.InvalidateVerification = func(_ context.Context, id uuid.UUID, email string, _ time.Time) error {
+		mu.Lock()
+		defer mu.Unlock()
+		if currentID == id && currentEmail == email {
+			currentID, currentEmail = uuid.Nil, ""
+		}
+		return nil
+	}
+
+	firstDone := make(chan error, 1)
+	go func() {
+		_, err := service.RequestVerification(context.Background(), RegistrationVerificationRequest{Username: "example_user", Email: "user@example.com", Password: "password1", ClientIP: netip.MustParseAddr("203.0.113.10")})
+		firstDone <- err
+	}()
+	<-firstSenderStarted
+	mu.Lock()
+	now = now.Add(RegistrationVerificationResendDelay)
+	mu.Unlock()
+	secondResult, err := service.RequestVerification(context.Background(), RegistrationVerificationRequest{Username: "example_user", Email: "user@example.com", Password: "password1", ClientIP: netip.MustParseAddr("203.0.113.10")})
+	if err != nil || secondResult.RetryAfterSeconds != 60 {
+		t.Fatalf("newer request result = %#v, err = %v", secondResult, err)
+	}
+	mu.Lock()
+	secondID := currentID
+	mu.Unlock()
+	close(releaseFirstSender)
+	if err := <-firstDone; err == nil {
+		t.Fatal("first sender failure did not reach caller")
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if currentID != secondID || currentID == uuid.Nil || currentEmail != "user@example.com" {
+		t.Fatalf("late failure removed newer reservation: id=%s email=%q", currentID, currentEmail)
 	}
 }
 
@@ -169,7 +234,7 @@ func TestEmailRegistrationServiceRequestReturnsSenderFailure(t *testing.T) {
 	invalidated := 0
 	service := newTestEmailRegistrationService(t, time.Now().UTC(), sender)
 	service.WriteVerification = writer.WriteRegistrationVerification
-	service.InvalidateVerification = func(context.Context, string, time.Time) error { invalidated++; return nil }
+	service.InvalidateVerification = func(context.Context, uuid.UUID, string, time.Time) error { invalidated++; return nil }
 
 	_, err := service.RequestVerification(context.Background(), RegistrationVerificationRequest{
 		Username: "example_user", Email: "user@example.com", Password: "password1", ClientIP: netip.MustParseAddr("203.0.113.10"),
@@ -222,7 +287,7 @@ func newTestEmailRegistrationService(t *testing.T, now time.Time, sender Registr
 		GenerateSalt:      func() ([]byte, error) { return []byte("salt"), nil },
 		CodePepper:        []byte("test-only-pepper"),
 		Sender:            sender,
-		WriteVerification: func(context.Context, RegistrationVerificationDraft) error { return nil },
+		WriteVerification: func(context.Context, RegistrationVerificationDraft) (uuid.UUID, error) { return uuid.New(), nil },
 		Clock:             func() time.Time { return now },
 	})
 	if err != nil {

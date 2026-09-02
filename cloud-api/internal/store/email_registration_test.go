@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"testing"
-	"time"
 
 	"github.com/dngmeng/cloud-api/internal/domain"
 )
@@ -15,7 +14,7 @@ func TestRegistrationVerificationStoreContract(t *testing.T) {
 	var verificationStore interface {
 		RequestRegistrationVerification(context.Context, domain.CreateRegistrationVerificationParams) (domain.RegistrationVerification, error)
 		ConfirmRegistrationVerification(context.Context, domain.ConfirmRegistrationVerificationParams) (domain.RegisterParams, error)
-		InvalidateRegistrationVerification(context.Context, string, time.Time) error
+		InvalidateRegistrationVerification(context.Context, domain.InvalidateRegistrationVerificationParams) error
 	} = (*Postgres)(nil)
 	if verificationStore == nil {
 		t.Fatal("Postgres must implement the registration verification store contract")

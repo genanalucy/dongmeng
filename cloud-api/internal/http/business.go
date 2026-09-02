@@ -228,16 +228,16 @@ func (a api) registrationVerificationRequest(w http.ResponseWriter, r *http.Requ
 func (a api) requestRegistrationVerification(ctx context.Context, service *auth.EmailRegistrationService, request auth.RegistrationVerificationRequest) (auth.RegistrationVerificationResult, error) {
 	configured := *service
 	configured.Clock = a.now
-	configured.WriteVerification = func(ctx context.Context, draft auth.RegistrationVerificationDraft) error {
-		_, err := a.store.RequestRegistrationVerification(ctx, domain.CreateRegistrationVerificationParams{
+	configured.WriteVerification = func(ctx context.Context, draft auth.RegistrationVerificationDraft) (uuid.UUID, error) {
+		verification, err := a.store.RequestRegistrationVerification(ctx, domain.CreateRegistrationVerificationParams{
 			Username: draft.Username, Email: draft.Email, PasswordHash: draft.PasswordHash, CodeHash: draft.CodeHash, CodeSalt: draft.Salt,
 			EmailRateLimitKey: registrationRateLimitKey(configured.RateLimitKeySecret, "email:"+draft.Email), IPRateLimitKey: registrationRateLimitKey(configured.RateLimitKeySecret, "ip:"+request.ClientIP.String()),
 			Now: a.now().UTC(), ExpiresAt: draft.ExpiresAt,
 		})
-		return err
+		return verification.ID, err
 	}
-	configured.InvalidateVerification = func(ctx context.Context, email string, now time.Time) error {
-		return a.store.InvalidateRegistrationVerification(ctx, email, now)
+	configured.InvalidateVerification = func(ctx context.Context, id uuid.UUID, email string, now time.Time) error {
+		return a.store.InvalidateRegistrationVerification(ctx, domain.InvalidateRegistrationVerificationParams{ID: id, Email: email, Now: now})
 	}
 	return configured.RequestVerification(ctx, request)
 }
