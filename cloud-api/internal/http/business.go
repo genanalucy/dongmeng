@@ -2,10 +2,15 @@ package httpapi
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
+	"net"
 	"net/http"
+	"net/netip"
 	"strconv"
 	"strings"
 	"time"
@@ -49,11 +54,13 @@ func (disabledPhoneVerificationService) Verify(context.Context, string) error {
 var errVerificationNotEnabled = errors.New("verification not enabled")
 
 type api struct {
-	store        businessStore
-	tokens       auth.TokenIssuer
-	authorizer   authService
-	verification PhoneVerificationService
-	now          func() time.Time
+	store                    businessStore
+	tokens                   auth.TokenIssuer
+	authorizer               authService
+	verification             PhoneVerificationService
+	registrationVerification *auth.EmailRegistrationService
+	logger                   *slog.Logger
+	now                      func() time.Time
 }
 type principalKey struct{}
 type principal struct {
@@ -164,23 +171,137 @@ func domainError(w http.ResponseWriter, r *http.Request, err error) {
 		writeError(w, r, http.StatusInternalServerError, "internal_error")
 	}
 }
-func (a api) register(w http.ResponseWriter, r *http.Request) {
+func (a api) registerDeprecated(w http.ResponseWriter, r *http.Request) {
+	writeError(w, r, http.StatusGone, "registration_verification_required")
+}
+
+func trustedClientIP(r *http.Request) netip.Addr {
+	remoteHost, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return netip.Addr{}
+	}
+	remoteIP, err := netip.ParseAddr(remoteHost)
+	if err != nil {
+		return netip.Addr{}
+	}
+	if remoteIP.IsLoopback() {
+		forwarded := r.Header.Values("X-Forwarded-For")
+		if len(forwarded) == 1 && strings.TrimSpace(forwarded[0]) == forwarded[0] && !strings.Contains(forwarded[0], ",") {
+			if clientIP, err := netip.ParseAddr(forwarded[0]); err == nil && clientIP.IsValid() {
+				return clientIP.Unmap()
+			}
+		}
+	}
+	return remoteIP.Unmap()
+}
+
+func (a api) registrationVerificationRequest(w http.ResponseWriter, r *http.Request) {
 	var x struct {
 		Username string `json:"username"`
 		Email    string `json:"email"`
-		Phone    string `json:"phone"`
 		Password string `json:"password"`
 	}
-	if decode(w, r, &x) != nil {
+	if decode(w, r, &x) != nil || x.Username == "" || x.Email == "" || x.Password == "" {
 		inputError(w, r)
 		return
 	}
-	v, e := a.authorizer.Register(r.Context(), x.Username, x.Email, x.Phone, x.Password, a.now())
-	if e != nil {
-		domainError(w, r, e)
+	service := a.registrationVerification
+	if service == nil {
+		writeError(w, r, http.StatusServiceUnavailable, "registration_verification_not_enabled")
 		return
 	}
-	writeJSON(w, http.StatusCreated, map[string]any{"user": publicUser(v.User), "trial_entitlement": v.Trial})
+	result, err := a.requestRegistrationVerification(r.Context(), service, auth.RegistrationVerificationRequest{Username: x.Username, Email: x.Email, Password: x.Password, ClientIP: trustedClientIP(r)})
+	if err == nil {
+		writeJSON(w, http.StatusAccepted, map[string]int{"retry_after_seconds": result.RetryAfterSeconds})
+		return
+	}
+	if errors.Is(err, domain.ErrInvalid) {
+		inputError(w, r)
+		return
+	}
+	if a.logger != nil {
+		a.logger.Warn("registration verification request did not complete", "request_id", RequestIDFromContext(r.Context()), "reason", registrationVerificationReason(err))
+	}
+	writeJSON(w, http.StatusAccepted, map[string]int{"retry_after_seconds": int(auth.RegistrationVerificationResendDelay.Seconds())})
+}
+
+func (a api) requestRegistrationVerification(ctx context.Context, service *auth.EmailRegistrationService, request auth.RegistrationVerificationRequest) (auth.RegistrationVerificationResult, error) {
+	configured := *service
+	configured.Clock = a.now
+	configured.WriteVerification = func(ctx context.Context, draft auth.RegistrationVerificationDraft) error {
+		_, err := a.store.RequestRegistrationVerification(ctx, domain.CreateRegistrationVerificationParams{
+			Username: draft.Username, Email: draft.Email, PasswordHash: draft.PasswordHash, CodeHash: draft.CodeHash, CodeSalt: draft.Salt,
+			EmailRateLimitKey: registrationRateLimitKey(configured.RateLimitKeySecret, "email:"+draft.Email), IPRateLimitKey: registrationRateLimitKey(configured.RateLimitKeySecret, "ip:"+request.ClientIP.String()),
+			Now: a.now().UTC(), ExpiresAt: draft.ExpiresAt,
+		})
+		return err
+	}
+	return configured.RequestVerification(ctx, request)
+}
+
+func (a api) confirmRegistrationVerification(ctx context.Context, service *auth.EmailRegistrationService, confirmation auth.RegistrationVerificationConfirmation) (domain.RegisterParams, error) {
+	email, err := domain.ParseEmail(confirmation.Email)
+	if err != nil {
+		return domain.RegisterParams{}, auth.ErrRegistrationVerificationFailed
+	}
+	code, err := auth.ParseRegistrationVerificationCode(confirmation.Code)
+	if err != nil {
+		return domain.RegisterParams{}, auth.ErrRegistrationVerificationFailed
+	}
+	return a.store.ConfirmRegistrationVerification(ctx, domain.ConfirmRegistrationVerificationParams{Email: email.String(), Code: code, CodePepper: service.CodePepper, EmailRateLimitKey: registrationRateLimitKey(service.RateLimitKeySecret, "email:"+email.String()), Now: a.now().UTC()})
+}
+
+func registrationRateLimitKey(secret []byte, value string) []byte {
+	mac := hmac.New(sha256.New, secret)
+	_, _ = mac.Write([]byte(value))
+	return mac.Sum(nil)
+}
+
+func registrationVerificationReason(err error) string {
+	switch {
+	case errors.Is(err, domain.ErrConflict):
+		return "conflict"
+	case errors.Is(err, domain.ErrRegistrationVerificationFailed):
+		return "limited"
+	default:
+		return "delivery_or_storage"
+	}
+}
+
+func (a api) registrationVerificationConfirm(w http.ResponseWriter, r *http.Request) {
+	var x struct {
+		Email string `json:"email"`
+		Code  string `json:"code"`
+	}
+	if decode(w, r, &x) != nil || x.Email == "" || x.Code == "" {
+		inputError(w, r)
+		return
+	}
+	service := a.registrationVerification
+	if service == nil {
+		writeError(w, r, http.StatusServiceUnavailable, "registration_verification_not_enabled")
+		return
+	}
+	registration, err := a.confirmRegistrationVerification(r.Context(), service, auth.RegistrationVerificationConfirmation{Email: x.Email, Code: x.Code})
+	if err != nil {
+		if errors.Is(err, domain.ErrConflict) {
+			domainError(w, r, err)
+			return
+		}
+		writeError(w, r, http.StatusBadRequest, "verification_failed")
+		return
+	}
+	user, _, err := a.store.UserByEmail(r.Context(), registration.Email)
+	if err != nil {
+		writeError(w, r, http.StatusInternalServerError, "internal_error")
+		return
+	}
+	trial, err := a.store.ActiveEntitlement(r.Context(), user.ID, a.now())
+	if err != nil {
+		writeError(w, r, http.StatusInternalServerError, "internal_error")
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{"user": publicUser(user), "trial_entitlement": trial})
 }
 func invalidCredentials(w http.ResponseWriter, r *http.Request) {
 	writeError(w, r, http.StatusUnauthorized, "invalid_credentials")

@@ -86,12 +86,16 @@ func NewRouter(options RouterOptions) http.Handler {
 	verificationAPI := api{verification: verification, now: now}
 	router.Post("/api/v1/auth/phone-verifications", verificationAPI.phoneVerification)
 	router.Post("/api/v1/auth/phone-verifications/confirm", verificationAPI.phoneVerification)
+	registrationVerification := options.RegistrationVerification
+	registrationAPI := api{store: options.Store, registrationVerification: registrationVerification, logger: logger, now: now}
+	router.Post("/api/v1/auth/registration-verifications", registrationAPI.registrationVerificationRequest)
+	router.Post("/api/v1/auth/registration-verifications/confirm", registrationAPI.registrationVerificationConfirm)
 	if options.Store == nil {
 		return router
 	}
 	service := auth.AuthorizationService{Store: options.Store, EntitlementLifecycle: options.Store, Tokens: options.Tokens, MaxConcurrentSessions: auth.SingleActiveTranslationSessionLimit}
-	api := api{store: options.Store, tokens: options.Tokens, authorizer: service, verification: verification, now: now}
-	router.Post("/api/v1/auth/register", api.register)
+	api := api{store: options.Store, tokens: options.Tokens, authorizer: service, verification: verification, registrationVerification: registrationVerification, logger: logger, now: now}
+	router.Post("/api/v1/auth/register", api.registerDeprecated)
 	router.Post("/api/v1/auth/login", api.login)
 	router.Post("/api/v1/auth/refresh", api.refresh)
 	router.Group(func(r chi.Router) {
