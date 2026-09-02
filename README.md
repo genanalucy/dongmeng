@@ -191,6 +191,12 @@ make smoke-local
 (cd agent && go test -race ./...)
 ```
 
+## Cloud API 邮箱验证码 SMTP 运维
+
+EC2 上的 Cloud API 邮箱验证码注册通过本机 Postfix 提交；Postfix 只监听 loopback，公网不开放 SMTP `25`、`465`、`587`，Caddy 仍只公开 `80`、`443`。生产部署、数据库迁移、回滚、Postfix open-relay 检查、日志脱敏、无域名/IP-only 投递限制及 SPF/DKIM/DMARC/PTR 上线步骤见 [邮箱验证码 SMTP 运维手册](docs/operations/email-registration-smtp.md)。
+
+不要将 `/etc/dngmeng/cloud-api.env`、Postfix 配置/队列/日志、数据库备份或任何验证码、邮件地址、DSN、token、密码提交到 Git 或粘贴到终端记录中。
+
 ## 故障排查
 
 | 现象 | 检查与处理 |
