@@ -22,6 +22,20 @@ ALWAYS prefer MCP graph tools over grep/glob/file-search for code discovery.
 - Read source: `get_code_snippet(qualified_name="pkg/orders.OrderHandler")`
 <!-- codebase-memory-mcp:end -->
 
+## Agent skills
+
+### Issue tracker
+
+工作项使用本地 Markdown，位于 `.scratch/<feature>/`。见 `docs/agents/issue-tracker.md`。
+
+### Triage labels
+
+使用默认五个 triage 标签。见 `docs/agents/triage-labels.md`。
+
+### Domain docs
+
+采用单一上下文：根目录 `CONTEXT.md` 与 `docs/adr/`。见 `docs/agents/domain.md`。
+
 ## superpowers skills overrides
 
 ### subagent-driven-development
