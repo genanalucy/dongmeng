@@ -14,7 +14,11 @@ internal data class FaceToFacePresentation(
     val timelinePlaceholder: String,
     val canChangeLanguages: Boolean,
     val isContinuous: Boolean,
+    val showRecoveryAction: Boolean,
 )
+
+/** 错误恢复按钮的显式文案：点击后取消在途工作并清除错误，保留已完成的对话轮次。 */
+internal const val FACE_TO_FACE_RECOVERY_ACTION_LABEL = "恢复翻译"
 
 internal fun faceToFacePresentation(state: FaceToFaceState): FaceToFacePresentation = FaceToFacePresentation(
     activeMic = state.activeSide.takeIf {
@@ -24,6 +28,7 @@ internal fun faceToFacePresentation(state: FaceToFaceState): FaceToFacePresentat
     timelinePlaceholder = if (state.activeSourceLanguage() == "zh") "听取中…" else "Listening…",
     canChangeLanguages = state.phase == FaceToFacePhase.IDLE && !state.captureActive,
     isContinuous = state.mode == FaceToFaceMode.AUTO,
+    showRecoveryAction = state.phase == FaceToFacePhase.ERROR,
 )
 
 internal fun faceToFaceTurnAlignment(turn: FaceToFaceTurn): FaceToFaceTurnAlignment =

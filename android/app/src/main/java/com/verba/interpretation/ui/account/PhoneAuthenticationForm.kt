@@ -38,11 +38,13 @@ fun AuthenticationForm(
     onResend: (String, String, String) -> Unit,
     clockMillis: () -> Long = System::currentTimeMillis,
     tickerMillis: Long = 1_000L,
+    initialIdentifier: String = "",
 ) {
     var mode by remember { mutableStateOf(AuthenticationMode.LOGIN) }
     var username by remember { mutableStateOf("") }
     var email by remember { mutableStateOf("") }
-    var identifier by remember { mutableStateOf("") }
+    // 仅预填最近登录标识（用户名/邮箱/手机号），密码绝不预填。
+    var identifier by remember(initialIdentifier) { mutableStateOf(initialIdentifier) }
     var password by remember { mutableStateOf("") }
     var confirmation by remember { mutableStateOf("") }
     var code by remember { mutableStateOf("") }

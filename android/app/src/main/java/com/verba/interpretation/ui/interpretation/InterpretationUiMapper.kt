@@ -38,6 +38,7 @@ data class InterpretationScreenModel(
 
 object InterpretationUiMapper {
     const val SAFE_ERROR_MESSAGE = "翻译服务暂时不可用，请重试或重新开始。"
+    const val RECOVERY_ACTION_LABEL = "恢复翻译"
 
     fun map(state: InterpretationUiState): InterpretationScreenModel {
         val latest = state.turns.lastOrNull()
@@ -70,4 +71,13 @@ object InterpretationUiMapper {
         SessionPhase.ERROR -> listOf(InterpretationAction.RESET)
         SessionPhase.STOPPING -> emptyList()
     }
+}
+
+/** 错误恢复按钮的显式文案：点击后取消在途工作并清除错误，保留已完成的字幕轮次。 */
+internal fun interpretationActionLabel(action: InterpretationAction): String = when (action) {
+    InterpretationAction.START -> "开始"
+    InterpretationAction.PAUSE -> "暂停"
+    InterpretationAction.RESUME -> "继续"
+    InterpretationAction.RESET -> InterpretationUiMapper.RECOVERY_ACTION_LABEL
+    InterpretationAction.FINISH -> error("结束同传使用独立操作按钮")
 }

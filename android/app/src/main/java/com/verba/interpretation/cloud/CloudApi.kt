@@ -66,7 +66,7 @@ data class LoginRequest(val identifier: String, val password: String) {
 data class TranslationSessionGrant(val sessionId: String, val userId: String, val installId: String, val token: String)
 data class TranslationSession(val sessionId: String, val installId: String, val expiresAt: String)
 
-class CloudApiException(message: String, val statusCode: Int? = null) : IOException(message)
+class CloudApiException(message: String, val statusCode: Int? = null, val sessionExpired: Boolean = false) : IOException(message)
 
 /** Synchronous transport; invoke from Dispatchers.IO. Token values are deliberately never logged. */
 interface CloudTranslationSessionService {
@@ -277,7 +277,7 @@ class CloudApi private constructor(
         } catch (error: CloudApiException) {
             if (error.statusCode != 401) throw error
         }
-        val refreshed = refresh(tokens.refreshToken)
+        val refreshed = refreshAfterExpiry(tokens)
         tokenStore.write(refreshed)
         return execute(path, body, refreshed.accessToken, expected, method, query)
     }
@@ -285,9 +285,20 @@ class CloudApi private constructor(
     private fun authorizedRequestNoContent(path: String, body: JSONObject, expected: Int) {
         val tokens = tokenStore.read() ?: throw CloudApiException("请先登录账户。", 401)
         try { executeNoContent(path, body, tokens.accessToken, expected); return } catch (error: CloudApiException) { if (error.statusCode != 401) throw error }
-        val refreshed = refresh(tokens.refreshToken)
+        val refreshed = refreshAfterExpiry(tokens)
         tokenStore.write(refreshed)
         executeNoContent(path, body, refreshed.accessToken, expected)
+    }
+
+    /** Refresh token 失效时立即清除本机令牌，并标记会话过期，调用方据此回到安全的重新登录状态。 */
+    private fun refreshAfterExpiry(tokens: AuthTokens): AuthTokens = try {
+        refresh(tokens.refreshToken)
+    } catch (error: CloudApiException) {
+        if (error.statusCode == 401) {
+            tokenStore.clear()
+            throw CloudApiException(error.message ?: "登录状态已过期，请重新登录。", 401, sessionExpired = true)
+        }
+        throw error
     }
 
     private fun refresh(refreshToken: String): AuthTokens = parseTokens(publicPost("auth/refresh", JSONObject().put("refresh_token", refreshToken)))

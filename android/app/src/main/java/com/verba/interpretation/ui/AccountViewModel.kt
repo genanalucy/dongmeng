@@ -10,14 +10,18 @@ import com.verba.interpretation.cloud.AccountOverview
 import com.verba.interpretation.cloud.CloudApi
 import com.verba.interpretation.cloud.CloudEndpointSettings
 import com.verba.interpretation.cloud.CloudEntitlement
+import com.verba.interpretation.cloud.CloudApiException
 import com.verba.interpretation.cloud.CloudRole
 import com.verba.interpretation.cloud.CloudUsage
 import com.verba.interpretation.cloud.CloudUser
 import com.verba.interpretation.cloud.IdentityUpdateRequest
 import com.verba.interpretation.cloud.KeystoreTokenStore
+import com.verba.interpretation.cloud.LoginIdentifierStore
 import com.verba.interpretation.cloud.SharedPreferencesInstallationIdStore
+import com.verba.interpretation.cloud.SharedPreferencesLoginIdentifierStore
 import com.verba.interpretation.cloud.UsagePage
 import com.verba.interpretation.ui.account.AccountIdentityFormPolicy
+import com.verba.interpretation.ui.account.LatestLoginIdentifierPolicy
 import com.verba.interpretation.ui.account.RegistrationResendPolicy
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
@@ -59,10 +63,12 @@ class AccountViewModel(
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
     private val clockMillis: () -> Long = System::currentTimeMillis,
     private val registrationRequestGate: RegistrationRequestGate = AtomicRegistrationRequestGate(),
+    private val loginIdentifierStore: LoginIdentifierStore = SharedPreferencesLoginIdentifierStore(application),
 ) : AndroidViewModel(application) {
     companion object {
         private const val UsagePageSize = 20
         private const val SafeRequestError = "账户状态暂时无法更新，请稍后重试。"
+        private const val SessionExpiredMessage = "登录已过期，请重新登录。"
 
         fun factory(application: Application): ViewModelProvider.Factory = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
@@ -75,6 +81,10 @@ class AccountViewModel(
 
     private val mutableState = MutableStateFlow(AccountUiState())
     val state: StateFlow<AccountUiState> = mutableState.asStateFlow()
+    private val mutableLatestLoginIdentifier = MutableStateFlow(loginIdentifierStore.read().orEmpty())
+
+    /** 最近登录标识：仅用于登录表单预填，退出登录后保留。 */
+    val latestLoginIdentifier: StateFlow<String> = mutableLatestLoginIdentifier.asStateFlow()
 
     init { refresh() }
 
@@ -91,8 +101,8 @@ class AccountViewModel(
             try {
                 val identityProfile = withContext(ioDispatcher) { api.accountIdentityProfile() }
                 mutableState.value = mutableState.value.copy(loading = false, identityProfile = identityProfile)
-            } catch (_: Exception) {
-                mutableState.value = mutableState.value.copy(loading = false, message = SafeRequestError)
+            } catch (error: Exception) {
+                handleRequestFailure(error)
             }
         }
     }
@@ -104,8 +114,8 @@ class AccountViewModel(
             try {
                 val usage = withContext(ioDispatcher) { api.usage(limit, offset) }
                 mutableState.value = mutableState.value.copy(loading = false, usage = usage)
-            } catch (_: Exception) {
-                mutableState.value = mutableState.value.copy(loading = false, message = SafeRequestError)
+            } catch (error: Exception) {
+                handleRequestFailure(error)
             }
         }
     }
@@ -123,8 +133,8 @@ class AccountViewModel(
                     loading = false,
                     registration = RegistrationUiState.Challenge(username, email, email.maskedEmail(), clockMillis() + retryAfterSeconds * 1_000L),
                 )
-            } catch (_: Exception) {
-                mutableState.value = mutableState.value.copy(loading = false, message = SafeRequestError)
+            } catch (error: Exception) {
+                handleRequestFailure(error)
             } finally {
                 registrationRequestGate.release()
             }
@@ -150,14 +160,15 @@ class AccountViewModel(
                     api.confirmRegistrationVerification(email, code)
                 }
                 withContext(ioDispatcher) { api.storeTokens(registration.tokens) }
+                LatestLoginIdentifierPolicy.registrationIdentifier(registration.user.username)?.let(::rememberLoginIdentifier)
                 mutableState.value = AccountUiState(
                     user = registration.user,
                     entitlement = registration.trialEntitlement,
                     registration = RegistrationUiState.Details,
                     previewingUserExperience = mutableState.value.previewingUserExperience && registration.user.role == CloudRole.ADMIN,
                 )
-            } catch (_: Exception) {
-                mutableState.value = mutableState.value.copy(loading = false, message = SafeRequestError)
+            } catch (error: Exception) {
+                handleRequestFailure(error)
             }
         }
     }
@@ -165,6 +176,7 @@ class AccountViewModel(
 
     fun login(identifier: String, password: String) = runRequest {
         api.login(identifier, password)
+        LatestLoginIdentifierPolicy.loginIdentifier(identifier)?.let(::rememberLoginIdentifier)
         api.currentUser() to api.currentEntitlement()
     }
 
@@ -183,8 +195,8 @@ class AccountViewModel(
                 }.also { overview ->
                     mutableState.value = mutableState.value.copy(loading = false, overview = overview, message = "账户设置已更新。")
                 }
-            } catch (_: Exception) {
-                mutableState.value = mutableState.value.copy(loading = false, message = SafeRequestError)
+            } catch (error: Exception) {
+                handleRequestFailure(error)
             }
         }
     }
@@ -200,8 +212,8 @@ class AccountViewModel(
             try {
                 withContext(ioDispatcher) { api.logout() }
                 mutableState.value = AccountUiState(message = "已退出登录。")
-            } catch (_: Exception) {
-                mutableState.value = mutableState.value.copy(loading = false, message = SafeRequestError)
+            } catch (error: Exception) {
+                handleRequestFailure(error)
             }
         }
     }
@@ -219,8 +231,8 @@ class AccountViewModel(
             try {
                 val overview = withContext(ioDispatcher) { block() }
                 mutableState.value = mutableState.value.copy(loading = false, overview = overview)
-            } catch (_: Exception) {
-                mutableState.value = mutableState.value.copy(loading = false, message = SafeRequestError)
+            } catch (error: Exception) {
+                handleRequestFailure(error)
             }
         }
     }
@@ -235,10 +247,25 @@ class AccountViewModel(
                     entitlement = entitlement,
                     previewingUserExperience = mutableState.value.previewingUserExperience && user.role == CloudRole.ADMIN,
                 )
-            } catch (_: Exception) {
-                mutableState.value = mutableState.value.copy(loading = false, message = SafeRequestError)
+            } catch (error: Exception) {
+                handleRequestFailure(error)
             }
         }
+    }
+
+    /** 会话过期时清除登录态并提示重新登录；其余失败维持原状态并给出安全提示。 */
+    private fun handleRequestFailure(error: Exception) {
+        if (error is CloudApiException && error.sessionExpired) {
+            mutableState.value = AccountUiState(message = SessionExpiredMessage)
+            return
+        }
+        mutableState.value = mutableState.value.copy(loading = false, message = SafeRequestError)
+    }
+
+    /** 仅记住登录标识用于预填，不保存密码；最近一次成功登录覆盖旧值。 */
+    private fun rememberLoginIdentifier(identifier: String) {
+        loginIdentifierStore.write(identifier)
+        mutableLatestLoginIdentifier.value = identifier
     }
 
 }

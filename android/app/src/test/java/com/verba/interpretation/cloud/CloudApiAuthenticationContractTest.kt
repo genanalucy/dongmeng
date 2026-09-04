@@ -9,6 +9,7 @@ import okio.Buffer
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -144,6 +145,35 @@ class CloudApiAuthenticationContractTest {
 
         assertEquals("登录状态已过期，请重新登录。", error.message)
         assertTrue(error.message != "账号或密码错误。")
+    }
+
+    @Test fun authenticatedRefreshFailureClearsTokensAndMarksSessionExpired() {
+        val fake = ChainedHttp(listOf(
+            401 to "{\"error\":\"unauthorized\"}",
+            401 to "{\"error\":\"unauthorized\"}",
+        ))
+        val store = MemoryTokenStore(AuthTokens("old", "previous"))
+        val api = CloudApi("https://cloud.example", store, FixedInstallationIdStore(), fake.client)
+
+        val error = assertThrows(CloudApiException::class.java) { api.currentUser() }
+
+        assertEquals(401, error.statusCode)
+        assertTrue(error.sessionExpired)
+        assertNull(store.read())
+    }
+
+    @Test fun nonUnauthorizedRefreshFailureKeepsTokens() {
+        val fake = ChainedHttp(listOf(
+            401 to "{\"error\":\"unauthorized\"}",
+            500 to "{\"error\":\"internal\"}",
+        ))
+        val store = MemoryTokenStore(AuthTokens("old", "previous"))
+        val api = CloudApi("https://cloud.example", store, FixedInstallationIdStore(), fake.client)
+
+        val error = assertThrows(CloudApiException::class.java) { api.currentUser() }
+
+        assertEquals(false, error.sessionExpired)
+        assertEquals(AuthTokens("old", "previous"), store.read())
     }
 
     @Test fun confirmationConflictUsesAvailabilityMessageWithoutPhone() {

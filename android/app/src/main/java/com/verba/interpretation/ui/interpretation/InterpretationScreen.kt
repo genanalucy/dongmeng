@@ -434,7 +434,7 @@ private fun ActionButton(action: InterpretationAction, onClick: () -> Unit) {
         InterpretationAction.START -> "开始" to Icons.Filled.Mic
         InterpretationAction.PAUSE -> "暂停" to Icons.Filled.Pause
         InterpretationAction.RESUME -> "继续" to Icons.Filled.PlayArrow
-        InterpretationAction.RESET -> "重试" to Icons.Filled.Refresh
+        InterpretationAction.RESET -> interpretationActionLabel(action) to Icons.Filled.Refresh
         InterpretationAction.FINISH -> error("结束同传使用独立操作按钮")
     }
     Button(
@@ -444,7 +444,7 @@ private fun ActionButton(action: InterpretationAction, onClick: () -> Unit) {
                 InterpretationAction.START -> "开始同传"
                 InterpretationAction.PAUSE -> "暂停同传"
                 InterpretationAction.RESUME -> "继续同传"
-                InterpretationAction.RESET -> "重新开始同传"
+                InterpretationAction.RESET -> "恢复翻译"
                 InterpretationAction.FINISH -> "结束同传"
             }
         },

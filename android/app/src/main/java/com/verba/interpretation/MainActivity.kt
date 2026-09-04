@@ -1136,6 +1136,7 @@ private fun AccountPage(
     accountViewModel: AccountViewModel,
 ) {
     val state by accountViewModel.state.collectAsStateWithLifecycle()
+    val latestLoginIdentifier by accountViewModel.latestLoginIdentifier.collectAsStateWithLifecycle()
     var redemptionCode by remember { mutableStateOf("") }
     if (state.signedIn) {
         AccountScreen(
@@ -1185,6 +1186,7 @@ private fun AccountPage(
                         onConfirmVerification = accountViewModel::confirmRegistrationVerification,
                         onEditDetails = accountViewModel::returnToRegistrationDetails,
                         onResend = accountViewModel::resendRegistrationVerification,
+                        initialIdentifier = latestLoginIdentifier,
                     )
                 }
             } else {

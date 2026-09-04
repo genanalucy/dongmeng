@@ -126,4 +126,11 @@ class InterpretationUiMapperTest {
         assertFalse(model.errorMessage!!.contains("secret", ignoreCase = true))
         assertFalse(model.errorMessage.contains("token", ignoreCase = true))
     }
+
+    @Test fun resetActionIsLabeledAsRecoveryTranslation() {
+        assertEquals("恢复翻译", interpretationActionLabel(InterpretationAction.RESET))
+        assertEquals("开始", interpretationActionLabel(InterpretationAction.START))
+        assertEquals("暂停", interpretationActionLabel(InterpretationAction.PAUSE))
+        assertEquals("继续", interpretationActionLabel(InterpretationAction.RESUME))
+    }
 }

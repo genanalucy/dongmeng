@@ -27,6 +27,28 @@ class FaceToFaceUiMapperTest {
     }
 
     @Test
+    fun errorPhaseExposesTheRecoveryAction() {
+        assertTrue(
+            faceToFacePresentation(
+                FaceToFaceState(mode = FaceToFaceMode.AUTO, phase = FaceToFacePhase.ERROR, error = "连接中断"),
+            ).showRecoveryAction,
+        )
+        assertFalse(
+            faceToFacePresentation(FaceToFaceState(mode = FaceToFaceMode.AUTO, phase = FaceToFacePhase.IDLE)).showRecoveryAction,
+        )
+        assertFalse(
+            faceToFacePresentation(
+                FaceToFaceState(
+                    mode = FaceToFaceMode.MANUAL,
+                    phase = FaceToFacePhase.LISTENING,
+                    captureActive = true,
+                    activeSide = FaceToFaceSide.LEFT,
+                ),
+            ).showRecoveryAction,
+        )
+    }
+
+    @Test
     fun manualListeningShowsOnlyActiveSideRippleAndLocalizedPlaceholder() {
         val base = FaceToFaceState(
             mode = FaceToFaceMode.MANUAL,

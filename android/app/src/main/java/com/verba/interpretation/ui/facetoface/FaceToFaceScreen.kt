@@ -7,6 +7,11 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material3.Button
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
@@ -67,7 +72,26 @@ internal fun FaceToFaceScreen(
             )
         }
         LanguageChips(state, presentation.canChangeLanguages, viewModel::setLanguages)
-        state.error?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) }
+        if (presentation.showRecoveryAction) {
+            state.error?.let { message ->
+                Surface(
+                    shape = RoundedCornerShape(14.dp),
+                    color = MaterialTheme.colorScheme.errorContainer,
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+                ) {
+                    Column(Modifier.padding(12.dp)) {
+                        Text(message, color = MaterialTheme.colorScheme.onErrorContainer, style = MaterialTheme.typography.bodySmall)
+                        Button(
+                            onClick = viewModel::cancel,
+                            modifier = Modifier.padding(top = 10.dp).heightIn(min = 48.dp),
+                        ) {
+                            Icon(Icons.Filled.Refresh, contentDescription = null)
+                            Text(FACE_TO_FACE_RECOVERY_ACTION_LABEL, modifier = Modifier.padding(start = 6.dp))
+                        }
+                    }
+                }
+            }
+        }
         ConversationTimeline(
             turns = state.turns,
             activeMic = presentation.activeMic,

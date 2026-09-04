@@ -203,6 +203,27 @@ class FaceToFaceCoordinatorTest {
         assertEquals(FaceToFacePhase.IDLE, coordinator.state().phase)
     }
 
+    @Test fun errorKeepsCompletedTurnsAndRecoveryClearsErrorWithoutLosingTranscript() {
+        val coordinator = FaceToFaceCoordinator<String>()
+        coordinator.setMode(FaceToFaceMode.AUTO)
+        coordinator.startAuto(1, "left")
+        coordinator.updateSubtitle(1, SubtitleKind.SOURCE_FINAL, "左侧")
+
+        coordinator.cancelAll("连接中断")
+
+        assertEquals(FaceToFacePhase.ERROR, coordinator.state().phase)
+        assertEquals("连接中断", coordinator.state().error)
+        assertEquals(1, coordinator.state().turns.size)
+
+        // 恢复翻译按钮走 FaceToFaceViewModel.cancel()：取消所有在途工作并清除错误，但保留已完成轮次。
+        val recovery = coordinator.cancelAll()
+
+        assertTrue(recovery.accepted)
+        assertEquals(FaceToFacePhase.IDLE, coordinator.state().phase)
+        assertNull(coordinator.state().error)
+        assertEquals(1, coordinator.state().turns.size)
+    }
+
     @Test fun multipleFinalSubtitlesAggregatePerTurn() {
         val coordinator = FaceToFaceCoordinator<String>()
         coordinator.manualPress(1, FaceToFaceSide.LEFT, "left")
