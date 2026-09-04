@@ -33,6 +33,18 @@ var (
 	ErrRateLimited                    = errors.New("rate limited")
 )
 
+// RateLimitedError reports a rejected fixed-window rate limit together with
+// the whole seconds callers should wait before the current window can admit
+// another request. It satisfies errors.Is(err, ErrRateLimited) so existing
+// generic mappings keep working while HTTP layers can emit an accurate
+// Retry-After instead of a fixed guess.
+type RateLimitedError struct {
+	RetryAfterSeconds int
+}
+
+func (e RateLimitedError) Error() string { return ErrRateLimited.Error() }
+func (e RateLimitedError) Unwrap() error { return ErrRateLimited }
+
 type Role string
 
 const (
@@ -515,7 +527,6 @@ type ConfirmRegistrationVerificationParams struct {
 
 type CreateRegistrationCaptchaParams struct {
 	AnswerHash, AnswerSalt []byte
-	IPRateLimitKey         []byte
 	Now, ExpiresAt         time.Time
 }
 
@@ -528,8 +539,18 @@ type RegisterWithCaptchaParams struct {
 	Username, Email, PasswordHash string
 	CaptchaID                     uuid.UUID
 	CaptchaAnswer                 string
-	AnswerPepper, IPRateLimitKey  []byte
+	AnswerPepper                  []byte
 	Now                           time.Time
+}
+
+// ReserveRegistrationCaptchaParams carries only the material needed to
+// validate and reserve one challenge answer before any password hashing
+// costs are paid.
+type ReserveRegistrationCaptchaParams struct {
+	CaptchaID     uuid.UUID
+	CaptchaAnswer string
+	AnswerPepper  []byte
+	Now           time.Time
 }
 
 type CreateRefreshParams struct {
@@ -573,13 +594,29 @@ type Store interface {
 	RequestRegistrationVerification(context.Context, CreateRegistrationVerificationParams) (RegistrationVerification, error)
 	ConfirmRegistrationVerification(context.Context, ConfirmRegistrationVerificationParams) (RegisterParams, error)
 	InvalidateRegistrationVerification(context.Context, InvalidateRegistrationVerificationParams) error
-	// CreateRegistrationCaptcha persists only the salted answer hash and
-	// enforces the per-IP captcha issue window.
+	// ChargeCaptchaIssueWindow independently commits one increment of the
+	// per trusted client IP fixed window guarding captcha issuance. It always
+	// persists, including when the subsequent challenge insert fails.
+	ChargeCaptchaIssueWindow(context.Context, []byte, time.Time) error
+	// CreateRegistrationCaptcha persists only the salted answer hash; the
+	// issue rate window is charged separately through ChargeCaptchaIssueWindow.
 	CreateRegistrationCaptcha(context.Context, CreateRegistrationCaptchaParams) (RegistrationCaptcha, error)
-	// RegisterWithCaptcha atomically verifies one captcha answer and, on match,
-	// creates the user, password credential, and trial entitlement in a single
-	// transaction. The captcha is consumed only by the committed success,
-	// expiry, attempt exhaustion, or a matching verification.
+	// ChargeCaptchaRegisterWindow independently commits one increment of the
+	// per trusted client IP fixed window guarding registration attempts. It
+	// must be charged for every validly formatted register request before any
+	// expensive work and survives later transaction rollbacks such as identity
+	// conflicts, so conflicts cannot bypass the persistent per-IP limit.
+	ChargeCaptchaRegisterWindow(context.Context, []byte, time.Time) error
+	// ReserveRegistrationCaptcha validates one captcha answer before any
+	// expensive password hashing runs; only wrong answers mutate state, and
+	// the challenge itself stays consumable exclusively through the committed
+	// registration below so identity conflicts never consume it.
+	ReserveRegistrationCaptcha(context.Context, ReserveRegistrationCaptchaParams) error
+	// RegisterWithCaptcha atomically re-verifies and consumes one captcha
+	// answer and, on match, creates the user, password credential, and trial
+	// entitlement in a single transaction. The captcha is consumed only by the
+	// committed success, expiry, attempt exhaustion, or a matching
+	// verification; a rolled back registration leaves it in place.
 	RegisterWithCaptcha(context.Context, RegisterWithCaptchaParams) (User, Entitlement, error)
 	UserByEmail(context.Context, string) (User, string, error)
 	UserByPhone(context.Context, string) (User, string, error)

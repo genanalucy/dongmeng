@@ -119,31 +119,84 @@ func TestParseCaptchaAnswerRejectsMalformedInput(t *testing.T) {
 	}
 }
 
-func TestRenderCaptchaSVGEscapesNothingUnsafeAndContainsChallenge(t *testing.T) {
-	svg := RenderCaptchaSVG("AB3CD")
+func TestRenderCaptchaSVGDoesNotDiscloseTheAnswer(t *testing.T) {
+	const challenge = "AB3CD"
+	svg := RenderCaptchaSVG(challenge)
 	if !strings.HasPrefix(svg, "<svg") || !strings.HasSuffix(svg, "</svg>") {
 		t.Fatalf("svg envelope = %q", svg[:min(32, len(svg))])
 	}
-	for _, char := range "AB3CD" {
-		if !strings.ContainsRune(svg, char) {
-			t.Fatalf("svg missing challenge character %q", char)
-		}
-	}
-	for _, forbidden := range []string{"script", "href", "javascript", "xlink"} {
+	// The answer must not be machine-recoverable: no text nodes, no
+	// title/description metadata, and no contiguous challenge characters in
+	// any case, neither in markup nor in path data or accessibility labels.
+	for _, forbidden := range []string{"<text", "</text", "<title", "<desc", "<glyph", "font-family", "script", "href", "javascript", "xlink"} {
 		if strings.Contains(svg, forbidden) {
 			t.Fatalf("svg contains forbidden content %q", forbidden)
 		}
 	}
+	if strings.Contains(svg, challenge) || strings.Contains(svg, strings.ToLower(challenge)) {
+		t.Fatal("svg discloses the challenge answer as contiguous characters")
+	}
+	if label := `aria-label="captcha image"`; !strings.Contains(svg, label) {
+		t.Fatalf("svg must carry only the generic accessibility label %q", label)
+	}
+	// One stroke path per character keeps the render self-contained geometry.
+	if got := strings.Count(svg, "<path"); got != len(challenge) {
+		t.Fatalf("stroke paths = %d, want %d", got, len(challenge))
+	}
 	if size := len(svg); size > 4096 {
 		t.Fatalf("svg size = %d bytes, want bounded", size)
 	}
-	if RenderCaptchaSVG("AB3 D") != "" || RenderCaptchaSVG("AB3CDE") != "" {
+	if RenderCaptchaSVG("AB3 D") != "" || RenderCaptchaSVG("AB3CDE") != "" || RenderCaptchaSVG("AIO01") != "" {
 		t.Fatal("renderer accepted a malformed challenge")
 	}
-	for range 8 {
-		if again := RenderCaptchaSVG("AB3CD"); again == svg && len(svg) > 0 {
-			// Jitter is random; identical renders are unlikely but not fatal.
-			_ = again
+}
+
+func TestRenderCaptchaSVGStrokeGlyphsCoverTheWholeAlphabet(t *testing.T) {
+	if len(captchaGlyphs) != len(captchaAlphabet) {
+		t.Fatalf("glyph table covers %d characters, alphabet has %d", len(captchaGlyphs), len(captchaAlphabet))
+	}
+	for index := 0; index < len(captchaAlphabet); index++ {
+		char := captchaAlphabet[index]
+		glyph, ok := captchaGlyphs[char]
+		if !ok || len(glyph) == 0 {
+			t.Fatalf("alphabet character %q has no stroke glyph", char)
+		}
+		for _, stroke := range glyph {
+			if len(stroke) < 2 {
+				t.Fatalf("glyph %q has a degenerate stroke", char)
+			}
+			for _, point := range stroke {
+				if point.X < 0 || point.X > captchaGlyphGridW || point.Y < 0 || point.Y > captchaGlyphGridH {
+					t.Fatalf("glyph %q point %.1f,%.1f escapes the authoring grid", char, point.X, point.Y)
+				}
+			}
+		}
+		// Rendering any challenge made of this character stays non-empty,
+		// geometry-only, and free of the repeated answer sequence.
+		challenge := strings.Repeat(string(char), CaptchaChallengeLength)
+		svg := RenderCaptchaSVG(challenge)
+		if svg == "" {
+			t.Fatalf("render of %q failed", challenge)
+		}
+		if strings.Contains(svg, challenge) || strings.Count(svg, "<path") != CaptchaChallengeLength {
+			t.Fatalf("render of %q disclosed the answer or lost glyph paths", challenge)
+		}
+	}
+}
+
+func TestRenderCaptchaSVGRandomChallengesNeverCarryAnswerText(t *testing.T) {
+	service := newTestCaptchaService(t)
+	for range 32 {
+		challenge, err := service.GenerateChallenge()
+		if err != nil {
+			t.Fatalf("GenerateChallenge() error = %v", err)
+		}
+		svg := RenderCaptchaSVG(challenge)
+		if svg == "" {
+			t.Fatalf("render of %q failed", challenge)
+		}
+		if strings.Contains(svg, challenge) || strings.Contains(svg, strings.ToLower(challenge)) || strings.Contains(svg, "<text") {
+			t.Fatalf("render of %q disclosed the answer", challenge)
 		}
 	}
 }

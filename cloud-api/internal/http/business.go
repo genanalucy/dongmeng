@@ -188,6 +188,22 @@ func (a api) warnCaptcha(r *http.Request, stage string) {
 	}
 }
 
+// rateLimitedRetryAfter derives the Retry-After header from the rejected
+// window's remaining seconds when the store reports them, and otherwise falls
+// back to the historical conservative default.
+func rateLimitedRetryAfter(err error) string {
+	var limited domain.RateLimitedError
+	if errors.As(err, &limited) && limited.RetryAfterSeconds >= 1 {
+		return strconv.Itoa(limited.RetryAfterSeconds)
+	}
+	return "60"
+}
+
+func writeRateLimited(w http.ResponseWriter, r *http.Request, err error) {
+	w.Header().Set("Retry-After", rateLimitedRetryAfter(err))
+	writeError(w, r, http.StatusTooManyRequests, "rate_limited")
+}
+
 func (a api) captchaIssue(w http.ResponseWriter, r *http.Request) {
 	if a.captcha == nil {
 		writeError(w, r, http.StatusServiceUnavailable, "captcha_not_enabled")
@@ -196,6 +212,17 @@ func (a api) captchaIssue(w http.ResponseWriter, r *http.Request) {
 	clientIP := trustedClientIP(r)
 	if !clientIP.IsValid() {
 		inputError(w, r)
+		return
+	}
+	// The issue window is charged in its own committed transaction before any
+	// challenge material is produced, so internal failures cannot dodge it.
+	if err := a.store.ChargeCaptchaIssueWindow(r.Context(), registrationRateLimitKey(a.captcha.RateLimitKeySecret, "captcha:issue:"+clientIP.String()), a.now().UTC()); err != nil {
+		if errors.Is(err, domain.ErrRateLimited) {
+			writeRateLimited(w, r, err)
+			return
+		}
+		a.warnCaptcha(r, "rate_limit")
+		writeError(w, r, http.StatusInternalServerError, "internal_error")
 		return
 	}
 	draft, err := a.captcha.Issue()
@@ -211,18 +238,12 @@ func (a api) captchaIssue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	captcha, err := a.store.CreateRegistrationCaptcha(r.Context(), domain.CreateRegistrationCaptchaParams{
-		AnswerHash:     draft.AnswerHash,
-		AnswerSalt:     draft.AnswerSalt,
-		IPRateLimitKey: registrationRateLimitKey(a.captcha.RateLimitKeySecret, "captcha:issue:"+clientIP.String()),
-		Now:            a.now().UTC(),
-		ExpiresAt:      draft.ExpiresAt,
+		AnswerHash: draft.AnswerHash,
+		AnswerSalt: draft.AnswerSalt,
+		Now:        a.now().UTC(),
+		ExpiresAt:  draft.ExpiresAt,
 	})
 	if err != nil {
-		if errors.Is(err, domain.ErrRateLimited) {
-			w.Header().Set("Retry-After", "60")
-			writeError(w, r, http.StatusTooManyRequests, "rate_limited")
-			return
-		}
 		a.warnCaptcha(r, "storage")
 		writeError(w, r, http.StatusInternalServerError, "internal_error")
 		return
@@ -270,28 +291,57 @@ func (a api) register(w http.ResponseWriter, r *http.Request) {
 		inputError(w, r)
 		return
 	}
+	now := a.now().UTC()
+	// Order is a security contract: the cheap committed per trusted client IP
+	// registration window first (charged for every validly formatted request
+	// regardless of the registration outcome), then the one-time captcha
+	// reservation, and only afterwards the expensive Argon2id password hash.
+	if err := a.store.ChargeCaptchaRegisterWindow(r.Context(), registrationRateLimitKey(a.captcha.RateLimitKeySecret, "captcha:register:"+clientIP.String()), now); err != nil {
+		if errors.Is(err, domain.ErrRateLimited) {
+			writeRateLimited(w, r, err)
+			return
+		}
+		a.warnCaptcha(r, "rate_limit")
+		writeError(w, r, http.StatusInternalServerError, "internal_error")
+		return
+	}
+	if err := a.store.ReserveRegistrationCaptcha(r.Context(), domain.ReserveRegistrationCaptchaParams{
+		CaptchaID:     captchaID,
+		CaptchaAnswer: x.CaptchaAnswer,
+		AnswerPepper:  a.captcha.AnswerPepper,
+		Now:           now,
+	}); err != nil {
+		switch {
+		case errors.Is(err, domain.ErrCaptchaFailed):
+			writeError(w, r, http.StatusBadRequest, "captcha_failed")
+		case errors.Is(err, domain.ErrInvalid):
+			inputError(w, r)
+		default:
+			a.warnCaptcha(r, "reserve")
+			writeError(w, r, http.StatusInternalServerError, "internal_error")
+		}
+		return
+	}
 	passwordHash, err := auth.HashPassword(input.Password.String())
 	if err != nil {
 		inputError(w, r)
 		return
 	}
 	user, trial, err := a.store.RegisterWithCaptcha(r.Context(), domain.RegisterWithCaptchaParams{
-		Username:       input.Username.String(),
-		Email:          input.Email.String(),
-		PasswordHash:   passwordHash,
-		CaptchaID:      captchaID,
-		CaptchaAnswer:  x.CaptchaAnswer,
-		AnswerPepper:   a.captcha.AnswerPepper,
-		IPRateLimitKey: registrationRateLimitKey(a.captcha.RateLimitKeySecret, "captcha:register:"+clientIP.String()),
-		Now:            a.now().UTC(),
+		Username:      input.Username.String(),
+		Email:         input.Email.String(),
+		PasswordHash:  passwordHash,
+		CaptchaID:     captchaID,
+		CaptchaAnswer: x.CaptchaAnswer,
+		AnswerPepper:  a.captcha.AnswerPepper,
+		Now:           now,
 	})
 	if err != nil {
 		switch {
 		case errors.Is(err, domain.ErrCaptchaFailed):
 			writeError(w, r, http.StatusBadRequest, "captcha_failed")
 		case errors.Is(err, domain.ErrRateLimited):
-			w.Header().Set("Retry-After", "60")
-			writeError(w, r, http.StatusTooManyRequests, "rate_limited")
+			writeRateLimited(w, r, err)
 		case errors.Is(err, domain.ErrInvalid):
 			inputError(w, r)
 		case errors.Is(err, domain.ErrConflict):

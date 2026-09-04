@@ -30,6 +30,25 @@ variable is absent. Once it is set, an unsafe or malformed target fails before
 opening a connection; do not use the migration runner or test suite against
 `127.0.0.1:5432`.
 
+Run the captcha registration contract (lifecycle, conflict rollback charging
+the per trusted IP window, one-time concurrent consumption, and migration
+rollback idempotency) against real PostgreSQL:
+
+```bash
+docker compose up -d postgres   # isolated 127.0.0.1:15432 listener
+cd cloud-api
+CLOUD_API_TEST_DATABASE_URL='postgres://cloud:cloud-dev-only@127.0.0.1:15432/cloud?sslmode=disable' \
+  go test -tags=integration -count=1 -v \
+    -run 'TestCaptchaRegistrationLifecycleIntegration|TestCaptchaMigrationDownIsIdempotentIntegration' \
+    ./integration
+```
+
+CI must provide this same isolated listener and treat a skip of these tests
+as a failure: the PostgreSQL-backed contract (captcha consumption semantics,
+conflict rollback versus committed rate windows, and migration rollback
+idempotency) must never silently drop out of verification. A local run
+without the variable exercises only the unit suites.
+
 Existing volumes created by the former `docker-entrypoint-initdb.d` setup have
 Cloud tables but no migration ledger. The runner deliberately fails closed
 instead of replaying `000001` over them. For disposable development data,

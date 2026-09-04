@@ -18,16 +18,38 @@ import (
 	"github.com/google/uuid"
 )
 
+type captchaChargeCall struct {
+	key []byte
+	now time.Time
+}
+
 type captchaHTTPStore struct {
 	businessStore
-	create      func(context.Context, domain.CreateRegistrationCaptchaParams) (domain.RegistrationCaptcha, error)
-	register    func(context.Context, domain.RegisterWithCaptchaParams) (domain.User, domain.Entitlement, error)
-	created     []domain.CreateRegistrationCaptchaParams
-	registrants []domain.RegisterWithCaptchaParams
-	refreshes   []domain.RefreshToken
+	chargeIssue     func(context.Context, []byte, time.Time) error
+	create          func(context.Context, domain.CreateRegistrationCaptchaParams) (domain.RegistrationCaptcha, error)
+	chargeRegister  func(context.Context, []byte, time.Time) error
+	reserve         func(context.Context, domain.ReserveRegistrationCaptchaParams) error
+	register        func(context.Context, domain.RegisterWithCaptchaParams) (domain.User, domain.Entitlement, error)
+	calls           []string
+	issueCharges    []captchaChargeCall
+	registerCharges []captchaChargeCall
+	created         []domain.CreateRegistrationCaptchaParams
+	reservations    []domain.ReserveRegistrationCaptchaParams
+	registrants     []domain.RegisterWithCaptchaParams
+	refreshes       []domain.RefreshToken
+}
+
+func (s *captchaHTTPStore) ChargeCaptchaIssueWindow(ctx context.Context, key []byte, now time.Time) error {
+	s.calls = append(s.calls, "charge_issue")
+	s.issueCharges = append(s.issueCharges, captchaChargeCall{key: key, now: now})
+	if s.chargeIssue == nil {
+		return nil
+	}
+	return s.chargeIssue(ctx, key, now)
 }
 
 func (s *captchaHTTPStore) CreateRegistrationCaptcha(ctx context.Context, params domain.CreateRegistrationCaptchaParams) (domain.RegistrationCaptcha, error) {
+	s.calls = append(s.calls, "create")
 	s.created = append(s.created, params)
 	if s.create == nil {
 		return domain.RegistrationCaptcha{ID: uuid.New(), ExpiresAt: params.ExpiresAt}, nil
@@ -35,7 +57,26 @@ func (s *captchaHTTPStore) CreateRegistrationCaptcha(ctx context.Context, params
 	return s.create(ctx, params)
 }
 
+func (s *captchaHTTPStore) ChargeCaptchaRegisterWindow(ctx context.Context, key []byte, now time.Time) error {
+	s.calls = append(s.calls, "charge_register")
+	s.registerCharges = append(s.registerCharges, captchaChargeCall{key: key, now: now})
+	if s.chargeRegister == nil {
+		return nil
+	}
+	return s.chargeRegister(ctx, key, now)
+}
+
+func (s *captchaHTTPStore) ReserveRegistrationCaptcha(ctx context.Context, params domain.ReserveRegistrationCaptchaParams) error {
+	s.calls = append(s.calls, "reserve")
+	s.reservations = append(s.reservations, params)
+	if s.reserve == nil {
+		return nil
+	}
+	return s.reserve(ctx, params)
+}
+
 func (s *captchaHTTPStore) RegisterWithCaptcha(ctx context.Context, params domain.RegisterWithCaptchaParams) (domain.User, domain.Entitlement, error) {
+	s.calls = append(s.calls, "register")
 	s.registrants = append(s.registrants, params)
 	if s.register == nil {
 		return domain.User{}, domain.Entitlement{}, domain.ErrCaptchaFailed
@@ -135,6 +176,22 @@ func TestCaptchaIssueReturnsBoundedChallengeMaterial(t *testing.T) {
 	if len(store.created) != 1 {
 		t.Fatalf("create calls = %d", len(store.created))
 	}
+	// The issue window must be charged and committed before the challenge is
+	// persisted.
+	want := []string{"charge_issue", "create"}
+	if strings.Join(store.calls, ",") != strings.Join(want, ",") {
+		t.Fatalf("issue calls = %v, want %v", store.calls, want)
+	}
+	if len(store.issueCharges) != 1 {
+		t.Fatalf("issue charges = %d", len(store.issueCharges))
+	}
+	wantKey := registrationRateLimitKey([]byte(strings.Repeat("k", 32)), "captcha:issue:127.0.0.1")
+	if !bytes.Equal(store.issueCharges[0].key, wantKey) {
+		t.Fatal("issue rate limit key did not use the trusted client IP")
+	}
+	if !store.issueCharges[0].now.Equal(captchaTestClock()) {
+		t.Fatalf("issue charge now = %v", store.issueCharges[0].now)
+	}
 	params := store.created[0]
 	if len(params.AnswerHash) != 32 || len(params.AnswerSalt) != 32 {
 		t.Fatalf("persisted hash/salt lengths = %d/%d", len(params.AnswerHash), len(params.AnswerSalt))
@@ -144,10 +201,6 @@ func TestCaptchaIssueReturnsBoundedChallengeMaterial(t *testing.T) {
 	}
 	if !params.Now.Equal(captchaTestClock()) {
 		t.Fatalf("now = %v", params.Now)
-	}
-	wantKey := registrationRateLimitKey([]byte(strings.Repeat("k", 32)), "captcha:issue:127.0.0.1")
-	if !bytes.Equal(params.IPRateLimitKey, wantKey) {
-		t.Fatal("issue rate limit key did not use the trusted client IP")
 	}
 	// Only hash material is persisted: neither the challenge nor its SVG.
 	if strings.Contains(string(params.AnswerHash), captchaTestAnswer) {
@@ -164,6 +217,8 @@ func TestCaptchaIssueUsesForwardedIPOnlyFromLoopback(t *testing.T) {
 		{name: "malformed proxy header falls back", remote: "127.0.0.1:12345", forwarded: "198.51.100.17, 203.0.113.1", wantIP: "127.0.0.1"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
+			store.calls = nil
+			store.issueCharges = nil
 			store.created = nil
 			req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/captcha", nil)
 			req.RemoteAddr = test.remote
@@ -174,24 +229,31 @@ func TestCaptchaIssueUsesForwardedIPOnlyFromLoopback(t *testing.T) {
 				t.Fatalf("status = %d body = %s", recorder.Code, recorder.Body.String())
 			}
 			want := registrationRateLimitKey([]byte(strings.Repeat("k", 32)), "captcha:issue:"+test.wantIP)
-			if len(store.created) != 1 || !bytes.Equal(store.created[0].IPRateLimitKey, want) {
+			if len(store.issueCharges) != 1 || !bytes.Equal(store.issueCharges[0].key, want) {
 				t.Fatalf("issue key did not use %q", test.wantIP)
 			}
 		})
 	}
 }
 
-func TestCaptchaIssueRateLimitIsStable(t *testing.T) {
-	store := &captchaHTTPStore{create: func(context.Context, domain.CreateRegistrationCaptchaParams) (domain.RegistrationCaptcha, error) {
-		return domain.RegistrationCaptcha{}, domain.ErrRateLimited
+func TestCaptchaIssueRateLimitIsStableAndAccurate(t *testing.T) {
+	store := &captchaHTTPStore{chargeIssue: func(context.Context, []byte, time.Time) error {
+		return domain.RateLimitedError{RetryAfterSeconds: 1859}
 	}}
 	router := newCaptchaRouter(t, store, RouterOptions{})
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/captcha", nil)
 	req.RemoteAddr = "127.0.0.1:12345"
 	response := httptest.NewRecorder()
 	router.ServeHTTP(response, req)
-	if response.Code != http.StatusTooManyRequests || !strings.Contains(response.Body.String(), "rate_limited") || response.Header().Get("Retry-After") == "" {
-		t.Fatalf("response = %d %s retry-after=%q", response.Code, response.Body.String(), response.Header().Get("Retry-After"))
+	if response.Code != http.StatusTooManyRequests || !strings.Contains(response.Body.String(), "rate_limited") {
+		t.Fatalf("response = %d %s", response.Code, response.Body.String())
+	}
+	if got := response.Header().Get("Retry-After"); got != "1859" {
+		t.Fatalf("Retry-After = %q, want the rejected window's remaining seconds", got)
+	}
+	// A rejected charge must stop the flow before any challenge is issued.
+	if len(store.created) != 0 {
+		t.Fatal("rate limited issue still persisted a challenge")
 	}
 }
 
@@ -254,6 +316,26 @@ func TestRegisterCreatesFormalUserCredentialTrialAndTokens(t *testing.T) {
 	if len(store.registrants) != 1 {
 		t.Fatalf("register calls = %d", len(store.registrants))
 	}
+	// Security contract of the flow: committed window charge, captcha
+	// reservation, and only then the expensive registration transaction.
+	wantOrder := []string{"charge_register", "reserve", "register"}
+	if strings.Join(store.calls, ",") != strings.Join(wantOrder, ",") {
+		t.Fatalf("register calls = %v, want %v", store.calls, wantOrder)
+	}
+	wantKey := registrationRateLimitKey([]byte(strings.Repeat("k", 32)), "captcha:register:127.0.0.1")
+	if len(store.registerCharges) != 1 || !bytes.Equal(store.registerCharges[0].key, wantKey) {
+		t.Fatal("register rate limit key did not use the trusted client IP")
+	}
+	if len(store.reservations) != 1 {
+		t.Fatalf("reservations = %d", len(store.reservations))
+	}
+	reservation := store.reservations[0]
+	if reservation.CaptchaID != captchaID || reservation.CaptchaAnswer != "ab3cd" {
+		t.Fatalf("reservation = %+v", reservation)
+	}
+	if len(reservation.AnswerPepper) != auth.MinimumSecretBytes || !reservation.Now.Equal(captchaTestClock()) {
+		t.Fatalf("reservation pepper/now = %+v", reservation)
+	}
 	params := store.registrants[0]
 	if params.Username != "example_user" || params.Email != "user@example.com" {
 		t.Fatalf("identities were not canonicalized: %+v", params)
@@ -270,10 +352,70 @@ func TestRegisterCreatesFormalUserCredentialTrialAndTokens(t *testing.T) {
 	if len(store.refreshes) != 1 {
 		t.Fatalf("refresh tokens issued = %d", len(store.refreshes))
 	}
-	wantKey := registrationRateLimitKey([]byte(strings.Repeat("k", 32)), "captcha:register:127.0.0.1")
-	if !bytes.Equal(params.IPRateLimitKey, wantKey) {
-		t.Fatal("register rate limit key did not use the trusted client IP")
+}
+
+// The expensive registration path (Argon2id hashing and the final
+// transaction) must only run behind the committed per trusted client IP
+// window charge and the one-time captcha reservation.
+func TestRegisterGatesExpensiveWorkBehindChargeAndReservation(t *testing.T) {
+	captchaID := uuid.New()
+	body := func() string {
+		return `{"username":"example_user","email":"user@example.com","password":"password1","captcha_id":"` + captchaID.String() + `","captcha_answer":"AB3CD"}`
 	}
+
+	t.Run("window charge rejection stops the flow", func(t *testing.T) {
+		store := &captchaHTTPStore{chargeRegister: func(context.Context, []byte, time.Time) error {
+			return domain.RateLimitedError{RetryAfterSeconds: 3599}
+		}}
+		router := newCaptchaRouter(t, store, RouterOptions{})
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/register", strings.NewReader(body()))
+		req.Header.Set("Content-Type", "application/json")
+		req.RemoteAddr = "127.0.0.1:12345"
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, req)
+		if response.Code != http.StatusTooManyRequests || response.Header().Get("Retry-After") != "3599" {
+			t.Fatalf("response = %d retry-after=%q body = %s", response.Code, response.Header().Get("Retry-After"), response.Body.String())
+		}
+		if len(store.reservations) != 0 || len(store.registrants) != 0 {
+			t.Fatal("rate limited register still reserved or registered")
+		}
+	})
+
+	t.Run("reservation failure stops the flow before hashing", func(t *testing.T) {
+		store := &captchaHTTPStore{reserve: func(context.Context, domain.ReserveRegistrationCaptchaParams) error {
+			return domain.ErrCaptchaFailed
+		}}
+		router := newCaptchaRouter(t, store, RouterOptions{})
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/register", strings.NewReader(body()))
+		req.Header.Set("Content-Type", "application/json")
+		req.RemoteAddr = "127.0.0.1:12345"
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, req)
+		if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), "captcha_failed") {
+			t.Fatalf("response = %d %s", response.Code, response.Body.String())
+		}
+		if len(store.registerCharges) != 1 || len(store.registrants) != 0 {
+			t.Fatalf("charges = %d registrants = %d", len(store.registerCharges), len(store.registrants))
+		}
+	})
+
+	t.Run("reservation storage failure is generic", func(t *testing.T) {
+		store := &captchaHTTPStore{reserve: func(context.Context, domain.ReserveRegistrationCaptchaParams) error {
+			return errors.New("boom")
+		}}
+		router := newCaptchaRouter(t, store, RouterOptions{})
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/register", strings.NewReader(body()))
+		req.Header.Set("Content-Type", "application/json")
+		req.RemoteAddr = "127.0.0.1:12345"
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, req)
+		if response.Code != http.StatusInternalServerError || !strings.Contains(response.Body.String(), "internal_error") {
+			t.Fatalf("response = %d %s", response.Code, response.Body.String())
+		}
+		if len(store.registrants) != 0 {
+			t.Fatal("storage failure still reached the registration transaction")
+		}
+	})
 }
 
 func TestRegisterErrorContractIsGenericAndStable(t *testing.T) {
@@ -329,6 +471,9 @@ func TestRegisterIsStrictJSONWithCurrentBodyLimit(t *testing.T) {
 		{name: "oversized answer", body: `{"username":"example_user","email":"user@example.com","password":"password1","captcha_id":"` + captchaID.String() + `","captcha_answer":"` + strings.Repeat("A", 65) + `"}`},
 	} {
 		t.Run(test.name, func(t *testing.T) {
+			store.calls = nil
+			store.registerCharges = nil
+			store.reservations = nil
 			store.registrants = nil
 			req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/register", strings.NewReader(test.body))
 			req.Header.Set("Content-Type", "application/json")
@@ -336,6 +481,11 @@ func TestRegisterIsStrictJSONWithCurrentBodyLimit(t *testing.T) {
 			router.ServeHTTP(response, req)
 			if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), "invalid_request") || len(store.registrants) != 0 {
 				t.Fatalf("response = %d %s with %d store calls", response.Code, response.Body.String(), len(store.registrants))
+			}
+			// Malformed requests must be rejected before any rate window is
+			// charged or any captcha work happens.
+			if len(store.registerCharges) != 0 || len(store.reservations) != 0 {
+				t.Fatalf("invalid request charged the window %d times and reserved %d captchas", len(store.registerCharges), len(store.reservations))
 			}
 		})
 	}
@@ -374,6 +524,9 @@ func TestRegisterRejectsInvalidIdentityAndCaptchaInput(t *testing.T) {
 		{name: "nil captcha id", username: "example_user", email: "user@example.com", password: "password1", captchaID: uuid.Nil.String(), answer: "AB3CD"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
+			store.calls = nil
+			store.registerCharges = nil
+			store.reservations = nil
 			store.registrants = nil
 			body := `{"username":"` + test.username + `","email":"` + test.email + `","password":"` + test.password + `","captcha_id":"` + test.captchaID + `","captcha_answer":"` + test.answer + `"}`
 			req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/register", strings.NewReader(body))
@@ -382,6 +535,9 @@ func TestRegisterRejectsInvalidIdentityAndCaptchaInput(t *testing.T) {
 			router.ServeHTTP(response, req)
 			if response.Code != http.StatusBadRequest || len(store.registrants) != 0 {
 				t.Fatalf("response = %d %s with %d store calls", response.Code, response.Body.String(), len(store.registrants))
+			}
+			if len(store.registerCharges) != 0 || len(store.reservations) != 0 {
+				t.Fatalf("invalid identity charged the window %d times and reserved %d captchas", len(store.registerCharges), len(store.reservations))
 			}
 		})
 	}
@@ -442,7 +598,7 @@ func TestRegisterUsesForwardedIPOnlyFromLoopback(t *testing.T) {
 				t.Fatalf("status = %d", response.Code)
 			}
 			want := registrationRateLimitKey([]byte(strings.Repeat("k", 32)), "captcha:register:"+test.wantIP)
-			if len(store.registrants) != 1 || !bytes.Equal(store.registrants[0].IPRateLimitKey, want) {
+			if len(store.registerCharges) != 1 || !bytes.Equal(store.registerCharges[0].key, want) {
 				t.Fatalf("register key did not use %q", test.wantIP)
 			}
 		})

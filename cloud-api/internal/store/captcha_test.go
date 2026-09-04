@@ -5,6 +5,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/dngmeng/cloud-api/internal/domain"
 )
@@ -13,7 +14,10 @@ import (
 // registration flow. PostgreSQL behavior is exercised in integration.
 func TestRegistrationCaptchaStoreContract(t *testing.T) {
 	var captchaStore interface {
+		ChargeCaptchaIssueWindow(context.Context, []byte, time.Time) error
 		CreateRegistrationCaptcha(context.Context, domain.CreateRegistrationCaptchaParams) (domain.RegistrationCaptcha, error)
+		ChargeCaptchaRegisterWindow(context.Context, []byte, time.Time) error
+		ReserveRegistrationCaptcha(context.Context, domain.ReserveRegistrationCaptchaParams) error
 		RegisterWithCaptcha(context.Context, domain.RegisterWithCaptchaParams) (domain.User, domain.Entitlement, error)
 	} = (*Postgres)(nil)
 	if captchaStore == nil {
@@ -55,10 +59,19 @@ func TestRegistrationCaptchaMigrationPersistsOnlyHashedMaterial(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read captcha rollback: %v", err)
 	}
-	for _, fragment := range []string{"DROP TABLE captcha_rate_limits", "DROP TABLE registration_captchas"} {
-		if !strings.Contains(string(down), fragment) {
+	// Rollback must be idempotent and follow dependency order, matching the
+	// repository's established DROP TABLE IF EXISTS pattern.
+	rollback := string(down)
+	for _, fragment := range []string{"DROP TABLE IF EXISTS captcha_rate_limits", "DROP TABLE IF EXISTS registration_captchas"} {
+		if !strings.Contains(rollback, fragment) {
 			t.Errorf("captcha rollback missing %q", fragment)
 		}
+	}
+	if strings.Contains(rollback, "DROP TABLE captcha_rate_limits;") || strings.Contains(rollback, "DROP TABLE registration_captchas;") {
+		t.Error("captcha rollback must drop with IF EXISTS")
+	}
+	if strings.Index(rollback, "captcha_rate_limits") > strings.Index(rollback, "registration_captchas") {
+		t.Error("captcha rollback must drop the rate-limit table before the captcha table")
 	}
 }
 

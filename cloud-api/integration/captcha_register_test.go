@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -125,6 +126,25 @@ func TestCaptchaRegistrationLifecycleIntegration(t *testing.T) {
 			t.Fatal(err)
 		}
 		return count
+	}
+
+	captchaAttempts := func(t *testing.T, id string) int {
+		t.Helper()
+		var attempts int
+		if err := raw.QueryRow(context.Background(), `SELECT attempt_count FROM registration_captchas WHERE id=$1`, id).Scan(&attempts); err != nil {
+			t.Fatal(err)
+		}
+		return attempts
+	}
+
+	// The fixed one-hour window just started in every subtest that asserts
+	// it, so the reported remainder must be almost the full window.
+	retryAfterWithinFreshWindow := func(t *testing.T, response *httptest.ResponseRecorder) {
+		t.Helper()
+		value, err := strconv.Atoi(response.Header().Get("Retry-After"))
+		if err != nil || value < 3500 || value > 3600 {
+			t.Fatalf("Retry-After = %q, want the one-hour window remainder", response.Header().Get("Retry-After"))
+		}
 	}
 
 	t.Run("issue_register_success_consumes_captcha_and_issues_tokens", func(t *testing.T) {
@@ -338,6 +358,90 @@ func TestCaptchaRegistrationLifecycleIntegration(t *testing.T) {
 		})
 	})
 
+	t.Run("conflicts_charge_the_register_window_without_consuming_the_captcha", func(t *testing.T) {
+		conflictIP := nextIP()
+		username := "captchaf" + strings.ReplaceAll(uuid.NewString()[:8], "-", "x")
+		email := integrationEmail()
+		hash, err := auth.HashPassword("CaptchaPass1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var existing uuid.UUID
+		if err := raw.QueryRow(context.Background(), `INSERT INTO users(email,username,password_hash) VALUES($1,$2,$3) RETURNING id`, email, username, hash).Scan(&existing); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() {
+			cleanupContext, cleanupCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cleanupCancel()
+			_, _ = raw.Exec(cleanupContext, `DELETE FROM users WHERE id=$1`, existing)
+		})
+
+		// Issue from a separate IP so the conflict loop only exercises the
+		// register window of conflictIP.
+		captchaID, _ := issue(t, nextIP())
+
+		// Repeated conflicts must keep charging the register window even
+		// though every registration transaction rolls back, until the trusted
+		// IP is persistently limited. The captcha must stay untouched: not
+		// consumed and without burned attempts.
+		limited := false
+		for attempt := 0; attempt <= auth.CaptchaRegisterIPPerHour+1; attempt++ {
+			body := `{"username":"` + username + `","email":"` + email + `","password":"CaptchaPass1","captcha_id":"` + captchaID + `","captcha_answer":"AB3CD"}`
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/register", strings.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			req.RemoteAddr = "127.0.0.1:12345"
+			req.Header.Set("X-Forwarded-For", conflictIP)
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, req)
+			switch {
+			case response.Code == http.StatusConflict:
+			case response.Code == http.StatusTooManyRequests:
+				limited = true
+				retryAfterWithinFreshWindow(t, response)
+				if !strings.Contains(response.Body.String(), "rate_limited") {
+					t.Fatalf("limited body = %s", response.Body.String())
+				}
+			default:
+				t.Fatalf("attempt %d unexpected status %d body = %s", attempt, response.Code, response.Body.String())
+			}
+			if limited {
+				break
+			}
+		}
+		if !limited {
+			t.Fatal("conflict probes never hit the per trusted IP register window")
+		}
+		if captchaRows(t, captchaID) != 1 {
+			t.Fatal("conflict probing consumed the captcha")
+		}
+		if attempts := captchaAttempts(t, captchaID); attempts != 0 {
+			t.Fatalf("conflict probing burned captcha attempts: %d", attempts)
+		}
+
+		// The unlimited trusted IP of a legitimate client can still consume
+		// the same captcha for a non-conflicting registration.
+		status, body := register(t, nextIP(), captchaID, "AB3CD")
+		if status != http.StatusCreated {
+			t.Fatalf("post-conflict registration status = %d body = %s", status, body)
+		}
+		var created struct {
+			User struct {
+				ID uuid.UUID `json:"id"`
+			} `json:"user"`
+		}
+		if err := json.Unmarshal([]byte(body), &created); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() {
+			cleanupContext, cleanupCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cleanupCancel()
+			_, _ = raw.Exec(cleanupContext, `DELETE FROM users WHERE id=$1`, created.User.ID)
+		})
+		if captchaRows(t, captchaID) != 0 {
+			t.Fatal("committed success did not consume the reused captcha")
+		}
+	})
+
 	t.Run("register_window_rate_limits_per_trusted_ip", func(t *testing.T) {
 		ip := nextIP()
 		var limited int
@@ -366,8 +470,9 @@ func TestCaptchaRegistrationLifecycleIntegration(t *testing.T) {
 		req.Header.Set("X-Forwarded-For", ip)
 		response := httptest.NewRecorder()
 		router.ServeHTTP(response, req)
-		if response.Code != http.StatusTooManyRequests || !strings.Contains(response.Body.String(), "rate_limited") || response.Header().Get("Retry-After") == "" {
+		if response.Code != http.StatusTooManyRequests || !strings.Contains(response.Body.String(), "rate_limited") {
 			t.Fatalf("issue limit response = %d %s", response.Code, response.Body.String())
 		}
+		retryAfterWithinFreshWindow(t, response)
 	})
 }

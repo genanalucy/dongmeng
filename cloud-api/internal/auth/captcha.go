@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"fmt"
+	"math"
 	"math/big"
 	"strings"
 	"time"
@@ -181,25 +182,81 @@ func captchaJitter(limit int64) int64 {
 }
 
 const (
-	captchaSVGWidth   = 160
-	captchaSVGHeight  = 56
-	captchaSVGNS      = "http://www.w3.org/2000/svg"
-	captchaCharFormat = `<text x="%d" y="%d" font-family="monospace" font-size="%d" font-weight="bold" fill="#%06x" text-anchor="middle" transform="rotate(%d %d %d)">%c</text>`
+	captchaSVGWidth  = 160
+	captchaSVGHeight = 56
+	captchaSVGNS     = "http://www.w3.org/2000/svg"
+	// captchaGlyphGridW/H define the design grid every stroke glyph is
+	// authored on; rendering scales and rotates that grid per character.
+	captchaGlyphGridW = 9.0
+	captchaGlyphGridH = 12.0
+	// captchaStrokeWidth is the stroke weight in rendered pixels.
+	captchaStrokeWidth = 2.3
 )
 
 // captchaForegroundPalette holds dark, high-contrast render colors.
 var captchaForegroundPalette = []uint32{0x2B3A55, 0x3F3F46, 0x1F3B26, 0x4A2B2B, 0x243B53}
 
-// RenderCaptchaSVG renders one challenge locally as a self-contained SVG with
-// per-character position, size, rotation, and foreground jitter plus noise
-// lines. It references no external resources and returns the empty string for
-// malformed challenges instead of emitting attacker-controlled text.
+// captchaPoint is one authoring-grid vertex of a glyph stroke.
+type captchaPoint struct{ X, Y float64 }
+
+// captchaGlyph is one character expressed as polyline strokes. Coordinates
+// live on the captchaGlyphGridW x captchaGlyphGridH grid with the baseline at
+// Y = captchaGlyphGridH.
+type captchaGlyph [][]captchaPoint
+
+// captchaGlyphs carries stroke outlines for every character of
+// captchaAlphabet. Glyphs are pure geometry: the SVG never carries the
+// answer as text, title, description, or metadata, so parsing the XML yields
+// no machine-readable characters of the challenge.
+var captchaGlyphs = map[byte]captchaGlyph{
+	'A': {{{0, 12}, {4.5, 0}, {9, 12}}, {{1.8, 7.6}, {7.2, 7.6}}},
+	'B': {{{0, 0}, {0, 12}}, {{0, 0}, {6, 0}, {8.5, 2}, {8.5, 4}, {6, 6}, {0, 6}}, {{0, 6}, {6.6, 6}, {9, 8}, {9, 10}, {6.6, 12}, {0, 12}}},
+	'C': {{{9, 2.4}, {6.2, 0}, {3, 0}, {0, 3}, {0, 9}, {3, 12}, {6.2, 12}, {9, 9.6}}},
+	'D': {{{0, 0}, {0, 12}}, {{0, 0}, {5.5, 0}, {9, 3.6}, {9, 8.4}, {5.5, 12}, {0, 12}}},
+	'E': {{{9, 0}, {0, 0}, {0, 12}, {9, 12}}, {{0, 6}, {6.6, 6}}},
+	'F': {{{9, 0}, {0, 0}, {0, 12}}, {{0, 6}, {6.6, 6}}},
+	'G': {{{9, 2.4}, {6.2, 0}, {3, 0}, {0, 3}, {0, 9}, {3, 12}, {6.2, 12}, {9, 9.6}, {9, 6}, {5.2, 6}}},
+	'H': {{{0, 0}, {0, 12}}, {{9, 0}, {9, 12}}, {{0, 6}, {9, 6}}},
+	'J': {{{9, 0}, {9, 9}, {6.6, 12}, {3.2, 12}, {0.8, 9.9}}},
+	'K': {{{0, 0}, {0, 12}}, {{9, 0}, {0, 6.6}}, {{2.4, 4.9}, {9, 12}}},
+	'L': {{{0, 0}, {0, 12}, {9, 12}}},
+	'M': {{{0, 12}, {0, 0}, {4.5, 6.5}, {9, 0}, {9, 12}}},
+	'N': {{{0, 12}, {0, 0}, {9, 12}, {9, 0}}},
+	'P': {{{0, 12}, {0, 0}}, {{0, 0}, {6, 0}, {9, 2.6}, {9, 4.6}, {6, 7}, {0, 7}}},
+	'Q': {{{4.5, 0}, {6.9, 0.9}, {8.2, 3}, {8.2, 4.8}, {6.9, 6.9}, {4.5, 7.8}, {2.1, 6.9}, {0.8, 4.8}, {0.8, 3}, {2.1, 0.9}, {4.5, 0}}, {{5.6, 6.4}, {8.8, 11.4}}},
+	'R': {{{0, 12}, {0, 0}, {6, 0}, {9, 2.6}, {9, 4.6}, {6, 7}, {0, 7}}, {{2.6, 4.9}, {9, 12}}},
+	'S': {{{8.6, 2.1}, {6, 0}, {3, 0}, {0.6, 2}, {0.6, 4}, {3, 5.9}, {6, 5.9}, {8.6, 7.9}, {8.6, 10}, {6, 12}, {3, 12}, {0.6, 9.9}}},
+	'T': {{{0, 0}, {9, 0}}, {{4.5, 0}, {4.5, 12}}},
+	'U': {{{0, 0}, {0, 9}, {2.6, 11.6}, {6.4, 11.6}, {9, 9}, {9, 0}}},
+	'V': {{{0, 0}, {4.5, 12}, {9, 0}}},
+	'W': {{{0, 0}, {1.9, 12}, {4.5, 5.2}, {7.1, 12}, {9, 0}}},
+	'X': {{{0, 0}, {9, 12}}, {{0, 12}, {9, 0}}},
+	'Y': {{{0, 0}, {4.5, 6.2}, {9, 0}}, {{4.5, 6.2}, {4.5, 12}}},
+	'Z': {{{0.4, 0}, {8.6, 0}, {0.4, 12}, {8.6, 12}}},
+	'2': {{{0.4, 2.6}, {2.8, 0}, {6.2, 0}, {8.6, 2.6}, {8.6, 4.8}, {0.4, 9.4}, {0.4, 12}, {8.6, 12}}},
+	'3': {{{0.5, 1.8}, {3.2, 0}, {5.8, 0}, {8.5, 2.4}, {8.5, 4.4}, {6.2, 6.1}, {8.5, 7.9}, {8.5, 9.7}, {5.8, 12}, {3.2, 12}, {0.5, 10.2}}},
+	'4': {{{6.8, 0}, {0.4, 7.6}, {8.8, 7.6}}, {{6.8, 3.4}, {6.8, 12}}},
+	'5': {{{8.6, 0}, {0.6, 0}, {0.6, 5.4}, {5.4, 5.4}, {8.6, 7.8}, {8.6, 9.9}, {5.8, 12}, {2.6, 12}, {0.6, 10.4}}},
+	'6': {{{8.4, 1.6}, {5.2, 0}, {2.2, 2.2}, {2.2, 8.8}, {4.6, 11.8}, {7, 11.8}, {8.8, 9.7}, {8.8, 8}, {7, 6.4}, {4.4, 6.4}, {2.2, 8.2}}},
+	'7': {{{0.4, 0}, {8.6, 0}, {3.6, 12}}},
+	'8': {{{4.5, 0}, {6.6, 0.8}, {7.6, 2.5}, {6.9, 4.4}, {4.5, 5.9}, {2.1, 4.4}, {1.4, 2.5}, {2.4, 0.8}, {4.5, 0}}, {{4.5, 5.9}, {7.2, 7.1}, {8.2, 9.2}, {7.2, 11.2}, {4.5, 12}, {1.8, 11.2}, {0.8, 9.2}, {1.8, 7.1}, {4.5, 5.9}}},
+	'9': {{{1.6, 10.4}, {4.8, 12}, {7.8, 9.8}, {7.8, 3.2}, {5.4, 0.2}, {3, 0.2}, {1.2, 2}, {1.2, 3.8}, {3, 5.4}, {5.6, 5.4}, {7.8, 3.6}}},
+}
+
+// RenderCaptchaSVG renders one challenge locally as a self-contained SVG.
+// Characters are emitted as rotated, jittered stroke outlines (path data),
+// never as text nodes: the answer is not recoverable by parsing the XML or by
+// reading accessibility metadata. The accessibility label stays generic so
+// assistive technology announces the challenge's purpose without disclosing
+// its answer. It references no external resources and returns the empty
+// string for malformed challenges instead of emitting attacker-controlled
+// content.
 func RenderCaptchaSVG(challenge string) string {
 	if _, err := ParseCaptchaAnswer(challenge); err != nil {
 		return ""
 	}
 	var svg strings.Builder
-	fmt.Fprintf(&svg, `<svg xmlns=%q width="%d" height="%d" viewBox="0 0 %d %d" role="img" aria-label="captcha">`, captchaSVGNS, captchaSVGWidth, captchaSVGHeight, captchaSVGWidth, captchaSVGHeight)
+	fmt.Fprintf(&svg, `<svg xmlns=%q width="%d" height="%d" viewBox="0 0 %d %d" role="img" aria-label="captcha image">`, captchaSVGNS, captchaSVGWidth, captchaSVGHeight, captchaSVGWidth, captchaSVGHeight)
 	fmt.Fprintf(&svg, `<rect width="%d" height="%d" rx="4" fill="#F2F4F7"/>`, captchaSVGWidth, captchaSVGHeight)
 	for line := 0; line < 3; line++ {
 		fmt.Fprintf(&svg, `<line x1="%d" y1="%d" x2="%d" y2="%d" stroke="#C8CED6" stroke-width="1"/>`,
@@ -209,12 +266,42 @@ func RenderCaptchaSVG(challenge string) string {
 	const margin = 12
 	step := (captchaSVGWidth - 2*margin) / len(challenge)
 	for index := 0; index < len(challenge); index++ {
-		x := margin + step*index + step/2 + int(captchaJitter(4))
-		y := 36 + int(captchaJitter(5))
-		size := 25 + int(captchaJitter(3))
-		rotation := int(captchaJitter(18))
+		glyph, ok := captchaGlyphs[challenge[index]]
+		if !ok {
+			// ParseCaptchaAnswer already bounds the alphabet, so a missing
+			// glyph is a programming error that must fail closed.
+			return ""
+		}
+		x := float64(margin + step*index + step/2 + int(captchaJitter(4)))
+		baseline := float64(36 + int(captchaJitter(5)))
+		size := float64(25 + int(captchaJitter(3)))
+		rotation := float64(captchaJitter(18))
 		color := captchaForegroundPalette[captchaPaletteIndex()]
-		fmt.Fprintf(&svg, captchaCharFormat, x, y, size, color, rotation, x, y, challenge[index])
+		scale := size / captchaGlyphGridH
+		// The glyph origin maps the design grid's baseline onto the jittered
+		// baseline; rotation pivots on the glyph's visual center.
+		originX := x - captchaGlyphGridW*scale/2
+		originY := baseline - captchaGlyphGridH*scale
+		centerX := x
+		centerY := baseline - size/2
+		radians := rotation * math.Pi / 180
+		cos, sin := math.Cos(radians), math.Sin(radians)
+		var path strings.Builder
+		for _, stroke := range glyph {
+			for pointIndex, point := range stroke {
+				sx := originX + point.X*scale
+				sy := originY + point.Y*scale
+				dx, dy := sx-centerX, sy-centerY
+				rx := centerX + dx*cos - dy*sin
+				ry := centerY + dx*sin + dy*cos
+				if pointIndex == 0 {
+					fmt.Fprintf(&path, "M%.1f %.1f", rx, ry)
+					continue
+				}
+				fmt.Fprintf(&path, "L%.1f %.1f", rx, ry)
+			}
+		}
+		fmt.Fprintf(&svg, `<path d="%s" fill="none" stroke="#%06x" stroke-width="%.1f" stroke-linecap="round" stroke-linejoin="round"/>`, path.String(), color, captchaStrokeWidth)
 	}
 	svg.WriteString(`</svg>`)
 	return svg.String()
