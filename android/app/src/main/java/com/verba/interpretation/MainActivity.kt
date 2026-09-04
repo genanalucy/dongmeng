@@ -148,6 +148,7 @@ import com.verba.interpretation.ui.AccountViewModel
 import com.verba.interpretation.ui.ChatFollowEvent
 import com.verba.interpretation.ui.ChatFollowPolicy
 import com.verba.interpretation.ui.ChatFollowState
+import com.verba.interpretation.ui.EndpointSettingsAccessPolicy
 import com.verba.interpretation.ui.FaceToFaceMode
 import com.verba.interpretation.ui.FaceToFacePhase
 import com.verba.interpretation.ui.FaceToFaceSide
@@ -245,7 +246,7 @@ private fun InterpretationApp(
             ProductScreen.PROFILE -> ProfilePage(
                 modifier = Modifier.padding(padding),
                 onAccount = { stack = stack.push(ProductScreen.ACCOUNT) },
-                showTestSettings = navigationMode == ProductNavigationMode.ADMIN_TEST,
+                showTestSettings = EndpointSettingsAccessPolicy.adminTestSettingsVisible(navigationMode, BuildConfig.DEBUG),
                 onEndpointSettings = { stack = stack.push(ProductScreen.ENDPOINT_SETTINGS) },
             )
             ProductScreen.ACCOUNT -> AccountPage(
@@ -256,6 +257,7 @@ private fun InterpretationApp(
                 onSettings = { stack = stack.push(ProductScreen.ACCOUNT_SETTINGS) },
                 onServiceSettings = { stack = stack.push(ProductNavigationPolicy.accountSecondaryScreen(AccountSecondaryDestination.SERVICE_SETTINGS)) },
                 accountViewModel = accountViewModel,
+                showServiceSettings = EndpointSettingsAccessPolicy.endpointEditingEnabled(BuildConfig.DEBUG),
             )
             ProductScreen.ACCOUNT_USAGE -> AccountUsagePage(Modifier.padding(padding), { stack = stack.pop() }, accountViewModel)
             ProductScreen.ACCOUNT_SETTINGS -> AccountSettingsPage(Modifier.padding(padding), { stack = stack.pop() }, accountViewModel)
@@ -1134,6 +1136,7 @@ private fun AccountPage(
     onSettings: () -> Unit,
     onServiceSettings: () -> Unit,
     accountViewModel: AccountViewModel,
+    showServiceSettings: Boolean = true,
 ) {
     val state by accountViewModel.state.collectAsStateWithLifecycle()
     val latestLoginIdentifier by accountViewModel.latestLoginIdentifier.collectAsStateWithLifecycle()
@@ -1148,6 +1151,7 @@ private fun AccountPage(
             onServiceSettings = onServiceSettings,
             onLogout = accountViewModel::logout,
             modifier = modifier,
+            showServiceSettings = showServiceSettings,
         )
         return
     }
@@ -1433,7 +1437,7 @@ private fun EndpointSettingsPage(modifier: Modifier, onBack: () -> Unit) {
             }
             item {
                 Text(
-                    "Debug 可使用 http/ws；Release 仅允许 https/wss。",
+                    "仅 Debug 构建可修改地址；Release 固定使用内置生产端点。",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

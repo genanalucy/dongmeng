@@ -196,6 +196,20 @@ class ProductNavigationPolicyTest {
         assertEquals(ProductDestination.PROFILE, ProductNavigationPolicy.selectedDestination(ProductScreen.ENDPOINT_SETTINGS))
         assertEquals(ProductDestination.ADMIN_TEST, ProductNavigationPolicy.selectedDestination(ProductScreen.ADMIN_TEST))
     }
+
+    @Test
+    fun endpointSettingsUiIsHiddenInReleaseBuilds() {
+        assertFalse(EndpointSettingsAccessPolicy.endpointEditingEnabled(debugBuild = false))
+        assertFalse(EndpointSettingsAccessPolicy.adminTestSettingsVisible(ProductNavigationMode.ADMIN_TEST, debugBuild = false))
+        assertFalse(EndpointSettingsAccessPolicy.adminTestSettingsVisible(ProductNavigationMode.USER, debugBuild = false))
+    }
+
+    @Test
+    fun endpointSettingsUiRemainsAvailableInDebugBuilds() {
+        assertTrue(EndpointSettingsAccessPolicy.endpointEditingEnabled(debugBuild = true))
+        assertTrue(EndpointSettingsAccessPolicy.adminTestSettingsVisible(ProductNavigationMode.ADMIN_TEST, debugBuild = true))
+        assertFalse(EndpointSettingsAccessPolicy.adminTestSettingsVisible(ProductNavigationMode.USER, debugBuild = true))
+    }
 }
 
 private fun contrastRatio(foreground: Color, background: Color): Double {

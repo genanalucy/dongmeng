@@ -15,29 +15,34 @@ class EndpointSettings(
         httpUrl = BuildConfig.AGENT_HTTP_URL,
         webSocketUrl = BuildConfig.TRANSLATION_WS_URL,
     ),
-    private val policy: EndpointSecurityPolicy = EndpointSecurityPolicy(BuildConfig.DEBUG),
+    private val policy: EndpointSecurityPolicy = EndpointSecurityPolicy(
+        allowInsecure = BuildConfig.DEBUG,
+        lockedEndpoints = if (BuildConfig.DEBUG) null else EndpointConfig(defaults.httpUrl, defaults.webSocketUrl),
+    ),
     private val healthClient: OkHttpClient = OkHttpClient(),
 ) {
     private val preferences = context.applicationContext.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
 
     fun current(): EndpointConfig {
+        if (policy.isLocked) {
+            // Release builds always use the built-in production endpoints; drop any stored overrides.
+            clearStoredEndpoints()
+            return EndpointConfig(defaults.httpUrl, defaults.webSocketUrl)
+        }
         val storedWebSocketUrl = preferences.getString(WEBSOCKET_URL_KEY, defaults.webSocketUrl) ?: defaults.webSocketUrl
-        val webSocketUrl = migrateLegacyWebSocketUrl(storedWebSocketUrl, defaults.webSocketUrl)
-        if (webSocketUrl != storedWebSocketUrl) {
-            preferences.edit().putString(WEBSOCKET_URL_KEY, webSocketUrl).apply()
-        }
         val storedHttpUrl = preferences.getString(HTTP_URL_KEY, defaults.httpUrl) ?: defaults.httpUrl
-        val httpUrl = migrateLegacyHttpUrl(storedHttpUrl, defaults.httpUrl)
-        if (httpUrl != storedHttpUrl) {
-            preferences.edit().putString(HTTP_URL_KEY, httpUrl).apply()
+        val resolved = resolveEndpointConfig(storedHttpUrl, storedWebSocketUrl, EndpointConfig(defaults.httpUrl, defaults.webSocketUrl), locked = false)
+        if (resolved.httpUrl != storedHttpUrl) {
+            preferences.edit().putString(HTTP_URL_KEY, resolved.httpUrl).apply()
         }
-        return EndpointConfig(
-            httpUrl = httpUrl,
-            webSocketUrl = webSocketUrl,
-        )
+        if (resolved.webSocketUrl != storedWebSocketUrl) {
+            preferences.edit().putString(WEBSOCKET_URL_KEY, resolved.webSocketUrl).apply()
+        }
+        return resolved
     }
 
     fun save(httpUrl: String, webSocketUrl: String): Result<EndpointConfig> {
+        if (policy.isLocked) return Result.failure(IllegalStateException("Release 版本不允许修改服务地址。"))
         val validated = policy.validate(httpUrl, webSocketUrl).getOrElse { return Result.failure(it) }
         preferences.edit()
             .putString(HTTP_URL_KEY, validated.httpUrl)
@@ -47,7 +52,7 @@ class EndpointSettings(
     }
 
     fun restoreDefaults(): EndpointConfig {
-        preferences.edit().remove(HTTP_URL_KEY).remove(WEBSOCKET_URL_KEY).apply()
+        clearStoredEndpoints()
         return current()
     }
 
@@ -81,12 +86,33 @@ class EndpointSettings(
     private fun parseHttpUrl(value: String): HttpUrl = value.trim().toHttpUrlOrNull()
         ?: throw IllegalArgumentException("HTTP 地址不是有效 URL。")
 
+    private fun clearStoredEndpoints() {
+        if (preferences.contains(HTTP_URL_KEY) || preferences.contains(WEBSOCKET_URL_KEY)) {
+            preferences.edit().remove(HTTP_URL_KEY).remove(WEBSOCKET_URL_KEY).apply()
+        }
+    }
+
     companion object {
         internal fun isHealthyResponse(body: String?): Boolean = try {
             val json = JSONObject(body.orEmpty())
             json.optString("status") == "ok" && json.optString("service") == "translator-agent"
         } catch (_: Exception) {
             false
+        }
+
+        /** Release builds ignore stored overrides entirely; debug keeps persisted user choices. */
+        internal fun resolveEndpointConfig(
+            storedHttpUrl: String?,
+            storedWebSocketUrl: String?,
+            defaults: EndpointConfig,
+            locked: Boolean,
+        ): EndpointConfig = if (locked) {
+            defaults
+        } else {
+            EndpointConfig(
+                httpUrl = migrateLegacyHttpUrl(storedHttpUrl ?: defaults.httpUrl, defaults.httpUrl),
+                webSocketUrl = migrateLegacyWebSocketUrl(storedWebSocketUrl ?: defaults.webSocketUrl, defaults.webSocketUrl),
+            )
         }
 
         internal fun migrateLegacyHttpUrl(storedUrl: String, defaultUrl: String): String =
@@ -114,7 +140,15 @@ data class EndpointConfig(val httpUrl: String, val webSocketUrl: String) {
         .build()
 }
 
-class EndpointSecurityPolicy(private val allowInsecure: Boolean) {
+class EndpointSecurityPolicy(
+    private val allowInsecure: Boolean,
+    lockedEndpoints: EndpointConfig? = null,
+) {
+    /** Release builds lock endpoints to the BuildConfig production values. */
+    val isLocked: Boolean = lockedEndpoints != null
+
+    private val locked: EndpointConfig? = lockedEndpoints?.let(::canonicalize)
+
     fun validate(httpUrl: String, webSocketUrl: String): Result<EndpointConfig> = runCatching {
         val httpSchemes = if (allowInsecure) setOf("https", "http") else setOf("https")
         val webSocketSchemes = if (allowInsecure) setOf("wss", "ws") else setOf("wss")
@@ -126,7 +160,23 @@ class EndpointSecurityPolicy(private val allowInsecure: Boolean) {
             "wss" -> webSocket.toString().replaceFirst("https:", "wss:")
             else -> webSocket.toString()
         }
-        EndpointConfig(http.toString().removeSuffix("/"), canonicalWebSocket)
+        val candidate = EndpointConfig(http.toString().removeSuffix("/"), canonicalWebSocket)
+        locked?.let { lock ->
+            require(candidate == lock) { "Release 版本仅允许内置生产服务地址。" }
+        }
+        candidate
+    }
+
+    private fun canonicalize(config: EndpointConfig): EndpointConfig {
+        val http = parse(config.httpUrl, if (allowInsecure) setOf("https", "http") else setOf("https"), "HTTP")
+        val webSocket = parse(config.webSocketUrl, if (allowInsecure) setOf("wss", "ws") else setOf("wss"), "WebSocket")
+        val webSocketScheme = config.webSocketUrl.trim().substringBefore(":").lowercase()
+        val canonicalWebSocket = when (webSocketScheme) {
+            "ws" -> webSocket.toString().replaceFirst("http:", "ws:")
+            "wss" -> webSocket.toString().replaceFirst("https:", "wss:")
+            else -> webSocket.toString()
+        }
+        return EndpointConfig(http.toString().removeSuffix("/"), canonicalWebSocket)
     }
 
     private fun parse(value: String, allowedSchemes: Set<String>, label: String): HttpUrl {

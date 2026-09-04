@@ -10,11 +10,25 @@ class EndpointSettingsTest {
     private val debugPolicy = EndpointSecurityPolicy(allowInsecure = true)
     private val releasePolicy = EndpointSecurityPolicy(allowInsecure = false)
 
+    // Mirrors the release default in EndpointSettings: BuildConfig production endpoints are locked.
+    private val releaseLockedPolicy = EndpointSecurityPolicy(
+        allowInsecure = false,
+        lockedEndpoints = EndpointConfig(BuildConfig.AGENT_HTTP_URL, BuildConfig.TRANSLATION_WS_URL),
+    )
+    private val productionDefaults = EndpointConfig(BuildConfig.AGENT_HTTP_URL, BuildConfig.TRANSLATION_WS_URL)
+
     @Test fun debugAcceptsHttpAndWsEndpoints() {
         val result = debugPolicy.validate("http://127.0.0.1:18765", "ws://127.0.0.1:18765/ws/translate")
 
         assertTrue(result.isSuccess)
         assertEquals("http://127.0.0.1:18765", result.getOrThrow().httpUrl)
+    }
+
+    @Test fun debugAcceptsArbitraryHttpsHostsForDevelopmentServers() {
+        val result = debugPolicy.validate("https://dev-agent.example.com", "wss://dev-agent.example.com/ws/translate")
+
+        assertEquals("https://dev-agent.example.com", result.getOrThrow().httpUrl)
+        assertEquals("wss://dev-agent.example.com/ws/translate", result.getOrThrow().webSocketUrl)
     }
 
     @Test fun debugBuildUsesEc2HttpsTranslationEndpoints() {
@@ -28,6 +42,58 @@ class EndpointSettingsTest {
 
         assertTrue(result.isFailure)
         assertTrue(result.exceptionOrNull()?.message?.contains("https") == true)
+    }
+
+    @Test fun releaseLockRejectsArbitraryHttpsAndWssHosts() {
+        assertTrue(releaseLockedPolicy.isLocked)
+
+        val hostileHttp = releaseLockedPolicy.validate("https://attacker.example.com", BuildConfig.TRANSLATION_WS_URL)
+        val hostileWebSocket = releaseLockedPolicy.validate(BuildConfig.AGENT_HTTP_URL, "wss://attacker.example.com/ws/translate")
+        val bothHostile = releaseLockedPolicy.validate("https://attacker.example.com", "wss://attacker.example.com/ws/translate")
+
+        assertTrue(hostileHttp.isFailure)
+        assertTrue(hostileWebSocket.isFailure)
+        assertTrue(bothHostile.isFailure)
+        assertTrue(bothHostile.exceptionOrNull()?.message?.contains("生产") == true)
+    }
+
+    @Test fun releaseLockRejectsAlternatePortsAndPathsOnProductionHost() {
+        val alternatePort = releaseLockedPolicy.validate("https://47-129-170-16.sslip.io:8443", BuildConfig.TRANSLATION_WS_URL)
+        val alternatePath = releaseLockedPolicy.validate("https://47-129-170-16.sslip.io/exfil", BuildConfig.TRANSLATION_WS_URL)
+        val alternateWebSocketPath = releaseLockedPolicy.validate(BuildConfig.AGENT_HTTP_URL, "wss://47-129-170-16.sslip.io/exfil")
+
+        assertTrue(alternatePort.isFailure)
+        assertTrue(alternatePath.isFailure)
+        assertTrue(alternateWebSocketPath.isFailure)
+    }
+
+    @Test fun releaseLockAcceptsOnlyBuiltInProductionEndpoints() {
+        val result = releaseLockedPolicy.validate(BuildConfig.AGENT_HTTP_URL, BuildConfig.TRANSLATION_WS_URL)
+
+        assertEquals(productionDefaults, result.getOrThrow())
+    }
+
+    @Test fun releaseIgnoresStoredEndpointOverrides() {
+        val resolved = EndpointSettings.resolveEndpointConfig(
+            storedHttpUrl = "https://attacker.example.com",
+            storedWebSocketUrl = "wss://attacker.example.com/ws/translate",
+            defaults = productionDefaults,
+            locked = true,
+        )
+
+        assertEquals(productionDefaults, resolved)
+    }
+
+    @Test fun debugResolutionKeepsStoredEndpointOverrides() {
+        val resolved = EndpointSettings.resolveEndpointConfig(
+            storedHttpUrl = "https://dev-agent.example.com",
+            storedWebSocketUrl = "wss://dev-agent.example.com/ws/translate",
+            defaults = productionDefaults,
+            locked = false,
+        )
+
+        assertEquals("https://dev-agent.example.com", resolved.httpUrl)
+        assertEquals("wss://dev-agent.example.com/ws/translate", resolved.webSocketUrl)
     }
 
     @Test fun rejectsMalformedAndCredentialBearingEndpoints() {

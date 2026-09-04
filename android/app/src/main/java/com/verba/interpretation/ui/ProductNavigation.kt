@@ -113,6 +113,14 @@ object ProductNavigationPolicy {
 
 }
 
+/** Endpoint editing is a debug-only capability; release builds ship without any server-address UI. */
+object EndpointSettingsAccessPolicy {
+    fun endpointEditingEnabled(debugBuild: Boolean): Boolean = debugBuild
+
+    fun adminTestSettingsVisible(mode: ProductNavigationMode, debugBuild: Boolean): Boolean =
+        debugBuild && mode == ProductNavigationMode.ADMIN_TEST
+}
+
 enum class HistoryFilter(val label: String) {
     ALL("全部"),
     INTERPRETATION("同传"),

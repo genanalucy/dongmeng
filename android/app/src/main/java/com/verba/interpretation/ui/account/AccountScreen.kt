@@ -75,6 +75,7 @@ fun AccountScreen(
     onServiceSettings: () -> Unit,
     onLogout: () -> Unit,
     modifier: Modifier = Modifier,
+    showServiceSettings: Boolean = true,
 ) {
     val overview = state.overview ?: AccountOverview(
         username = state.user?.username ?: "未登录",
@@ -105,7 +106,9 @@ fun AccountScreen(
             item { AccountRow("使用与权益", "查看权益详情与使用记录", Icons.Outlined.WorkspacePremium) { AccountActionDispatcher.dispatch(AccountAction.USAGE, callbacks) } }
             item { AccountRow("历史记录", "查看本机保存的翻译记录", Icons.Outlined.History) { AccountActionDispatcher.dispatch(AccountAction.HISTORY, callbacks) } }
             item { AccountRow("账户设置", "修改用户名、邮箱和手机号", Icons.Outlined.ManageAccounts) { AccountActionDispatcher.dispatch(AccountAction.SETTINGS, callbacks) } }
-            item { AccountRow("服务设置", "管理语言与播放偏好", Icons.Outlined.Settings) { AccountActionDispatcher.dispatch(AccountAction.SERVICE_SETTINGS, callbacks) } }
+            if (showServiceSettings) {
+                item { AccountRow("服务设置", "管理语言与播放偏好", Icons.Outlined.Settings) { AccountActionDispatcher.dispatch(AccountAction.SERVICE_SETTINGS, callbacks) } }
+            }
             item {
                 OutlinedButton(
                     onClick = { AccountActionDispatcher.dispatch(AccountAction.LOGOUT, callbacks) }, enabled = !state.loading,
