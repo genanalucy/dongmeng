@@ -570,4 +570,5 @@ type Store interface {
 	ListDevices(context.Context, uuid.UUID) ([]Device, error)
 	ListAuditLogs(context.Context, int, int) ([]AuditLog, error)
 	AccountStore
+	HistoryStore
 }

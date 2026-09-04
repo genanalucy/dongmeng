@@ -2,6 +2,7 @@
 package config
 
 import (
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"math"
@@ -12,6 +13,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/dngmeng/cloud-api/internal/historycrypto"
 )
 
 const (
@@ -56,6 +59,9 @@ type Config struct {
 	SMTPConnectTimeout               time.Duration
 	SMTPSendTimeout                  time.Duration
 	EmailVerificationRateLimitSecret string
+	HistoryEnabled                   bool
+	HistoryRootKey                   []byte
+	HistoryKeyVersion                int
 }
 
 // Load reads environment variables and validates the resulting configuration.
@@ -85,8 +91,12 @@ func Load() (Config, error) {
 		SMTPSendTimeout:                  defaultSMTPSendTimeout,
 		EmailVerificationRateLimitSecret: os.Getenv("EMAIL_VERIFICATION_RATE_LIMIT_SECRET"),
 	}
+	historyRootKey, err := base64StdEnv("HISTORY_ROOT_KEY")
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.HistoryRootKey = historyRootKey
 
-	var err error
 	if cfg.DatabaseTimeout, err = durationEnv("DATABASE_TIMEOUT", cfg.DatabaseTimeout); err != nil {
 		return Config{}, err
 	}
@@ -112,6 +122,12 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 	if cfg.EmailVerificationEnabled, err = boolEnv("EMAIL_VERIFICATION_ENABLED", false); err != nil {
+		return Config{}, err
+	}
+	if cfg.HistoryEnabled, err = boolEnv("HISTORY_ENABLED", false); err != nil {
+		return Config{}, err
+	}
+	if cfg.HistoryKeyVersion, err = intEnv("HISTORY_KEY_VERSION", 0); err != nil {
 		return Config{}, err
 	}
 	if cfg.SMTPPort, err = intEnv("SMTP_PORT", cfg.SMTPPort); err != nil {
@@ -199,6 +215,17 @@ func (c Config) Validate() error {
 		}
 		if len(c.EmailVerificationRateLimitSecret) < 32 {
 			problems = append(problems, "EMAIL_VERIFICATION_RATE_LIMIT_SECRET must be at least 32 bytes")
+		}
+	}
+	// History fail-closed gate: an enabled runtime refuses to start without a
+	// high-entropy root key and a positive key version. Key material itself is
+	// never included in validation messages.
+	if c.HistoryEnabled {
+		if err := historycrypto.ValidateRootKey(c.HistoryRootKey); err != nil {
+			problems = append(problems, "HISTORY_ROOT_KEY must decode to a high-entropy key of at least 32 bytes")
+		}
+		if c.HistoryKeyVersion < 1 {
+			problems = append(problems, "HISTORY_KEY_VERSION must be a positive integer")
 		}
 	}
 
@@ -335,4 +362,17 @@ func intEnv(name string, fallback int) (int, error) {
 		return 0, fmt.Errorf("%s must be an integer: %w", name, err)
 	}
 	return parsed, nil
+}
+
+// base64StdEnv decodes a standard-base64 secret. The value is never echoed.
+func base64StdEnv(name string) ([]byte, error) {
+	value := strings.TrimSpace(os.Getenv(name))
+	if value == "" {
+		return nil, nil
+	}
+	decoded, err := base64.StdEncoding.DecodeString(value)
+	if err != nil || len(decoded) == 0 {
+		return nil, fmt.Errorf("%s must be non-empty standard base64", name)
+	}
+	return decoded, nil
 }

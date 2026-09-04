@@ -100,15 +100,15 @@ func TestRepositoryMigrationsClassifyConcurrentIndexOutsideTransaction(t *testin
 	if err != nil {
 		t.Fatalf("discover repository migrations: %v", err)
 	}
-	if len(migrations) != 6 {
-		t.Fatalf("migration count = %d, want 6", len(migrations))
+	if len(migrations) != 7 {
+		t.Fatalf("migration count = %d, want 7", len(migrations))
 	}
-	for index, version := range []string{"000001", "000002", "000003", "000004", "000005", "000006"} {
+	for index, version := range []string{"000001", "000002", "000003", "000004", "000005", "000006", "000007"} {
 		if migrations[index].Version != version {
 			t.Fatalf("migration[%d].Version = %q, want %q", index, migrations[index].Version, version)
 		}
 	}
-	if migrations[0].OutsideTransaction || !migrations[1].OutsideTransaction || migrations[2].OutsideTransaction || migrations[3].OutsideTransaction || migrations[4].OutsideTransaction || migrations[5].OutsideTransaction {
+	if migrations[0].OutsideTransaction || !migrations[1].OutsideTransaction || migrations[2].OutsideTransaction || migrations[3].OutsideTransaction || migrations[4].OutsideTransaction || migrations[5].OutsideTransaction || migrations[6].OutsideTransaction {
 		t.Fatalf("repository migration transaction classification mismatch")
 	}
 	index := migrations[1].ConcurrentIndex
