@@ -13,23 +13,31 @@ import (
 func (p *Postgres) CreateAuthorizedTranslationSession(ctx context.Context, s domain.TranslationSession, now time.Time) error {
 	return p.CreateSession(ctx, s, now)
 }
+
+// CreateAuthorizedTranslationSessionWithLimit enforces the per-user concurrent
+// active-session governance in the same transaction as the creation: the oldest
+// active sessions are ended with the device-replacement reason so the new
+// creation succeeds within maxConcurrent.
 func (p *Postgres) CreateAuthorizedTranslationSessionWithLimit(ctx context.Context, s domain.TranslationSession, now time.Time, limit int) error {
-	if limit != 1 {
+	if limit < 1 {
 		return domain.ErrInvalid
 	}
-	return p.CreateSession(ctx, s, now)
+	return p.createSessionWithLimit(ctx, s, now, limit)
 }
 func (p *Postgres) EndTranslationSession(ctx context.Context, user, id uuid.UUID, now time.Time) error {
-	return p.setSessionTerminal(ctx, user, id, "ended_at", now)
+	return p.setSessionTerminal(ctx, user, id, "ended_at", domain.TerminationEnded, now)
 }
 func (p *Postgres) RevokeTranslationSession(ctx context.Context, user, id uuid.UUID, now time.Time) error {
-	return p.setSessionTerminal(ctx, user, id, "revoked_at", now)
+	return p.setSessionTerminal(ctx, user, id, "revoked_at", domain.TerminationRevoked, now)
 }
-func (p *Postgres) setSessionTerminal(ctx context.Context, user, id uuid.UUID, column string, now time.Time) error {
+func (p *Postgres) setSessionTerminal(ctx context.Context, user, id uuid.UUID, column string, reason domain.TranslationTerminationReason, now time.Time) error {
 	if column != "ended_at" && column != "revoked_at" {
 		return domain.ErrInvalid
 	}
-	tag, err := p.pool.Exec(ctx, "UPDATE translation_sessions SET "+column+"=COALESCE("+column+",$3) WHERE id=$1 AND user_id=$2", id, user, now.UTC())
+	// COALESCE keeps both the first terminal timestamp and the first recorded
+	// reason, so repeated or crossed terminal calls stay idempotent and never
+	// rewrite why a session originally stopped being usable.
+	tag, err := p.pool.Exec(ctx, "UPDATE translation_sessions SET "+column+"=COALESCE("+column+",$3), termination_reason=COALESCE(termination_reason,$4) WHERE id=$1 AND user_id=$2", id, user, now.UTC(), string(reason))
 	if err != nil {
 		return storeErr(err)
 	}
@@ -38,14 +46,44 @@ func (p *Postgres) setSessionTerminal(ctx context.Context, user, id uuid.UUID, c
 	}
 	return nil
 }
-func (p *Postgres) AuthorizeTranslationSession(ctx context.Context, user, session, entitlement, jti uuid.UUID, now time.Time) error {
-	var one int
-	err := p.pool.QueryRow(ctx, `SELECT 1 FROM translation_sessions s JOIN entitlements e ON e.id=s.entitlement_id AND e.user_id=s.user_id WHERE s.id=$1 AND s.user_id=$2 AND s.entitlement_id=$3 AND s.jti=$4 AND s.expires_at>$5 AND s.ended_at IS NULL AND s.revoked_at IS NULL AND e.revoked_at IS NULL AND e.starts_at<=$5 AND e.expires_at>$5`, session, user, entitlement, jti, now.UTC()).Scan(&one)
+
+// TranslationSessionState is the persisted source of truth for one presented
+// translation token identity set. It returns domain.ErrUnauthorized when the
+// identifiers match no session. Otherwise it reports the persisted
+// owner/session/JTI/install data together with Active and the resolved
+// TerminationReason: a stored reason wins; sessions that are still stored as
+// active but unusable get the read-time reason for user disablement,
+// entitlement revocation, or natural expiry.
+func (p *Postgres) TranslationSessionState(ctx context.Context, user, session, entitlement, jti uuid.UUID, now time.Time) (domain.TranslationSessionAuthorization, error) {
+	state := domain.TranslationSessionAuthorization{}
+	evaluationAt := now.UTC()
+	var userEnabled, entitlementActive bool
+	err := p.pool.QueryRow(ctx, `SELECT s.user_id,s.id,s.entitlement_id,s.jti,s.install_id,s.expires_at,s.ended_at,s.revoked_at,COALESCE(s.termination_reason,''),u.disabled_at IS NULL,(e.revoked_at IS NULL AND e.starts_at<=$5 AND e.expires_at>$5)
+FROM translation_sessions s
+JOIN users u ON u.id=s.user_id
+JOIN entitlements e ON e.id=s.entitlement_id AND e.user_id=s.user_id
+WHERE s.id=$1 AND s.user_id=$2 AND s.entitlement_id=$3 AND s.jti=$4`, session, user, entitlement, jti, evaluationAt).
+		Scan(&state.UserID, &state.SessionID, &state.EntitlementID, &state.JTI, &state.InstallID, &state.ExpiresAt, &state.EndedAt, &state.RevokedAt, &state.TerminationReason, &userEnabled, &entitlementActive)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return domain.ErrUnauthorized
+		return domain.TranslationSessionAuthorization{}, domain.ErrUnauthorized
 	}
-	return storeErr(err)
+	if err != nil {
+		return domain.TranslationSessionAuthorization{}, storeErr(err)
+	}
+	state.Active = userEnabled && entitlementActive && state.EndedAt == nil && state.RevokedAt == nil && state.ExpiresAt.After(evaluationAt)
+	if !state.Active && state.TerminationReason == "" {
+		switch {
+		case !userEnabled:
+			state.TerminationReason = domain.TerminationUserDisabled
+		case !entitlementActive:
+			state.TerminationReason = domain.TerminationEntitlementRevoked
+		case !state.ExpiresAt.After(evaluationAt):
+			state.TerminationReason = domain.TerminationExpired
+		}
+	}
+	return state, nil
 }
+
 func (p *Postgres) StackAnnualEntitlement(ctx context.Context, user uuid.UUID, now time.Time) (domain.Entitlement, error) {
 	var e domain.Entitlement
 	err := p.tx(ctx, func(t pgx.Tx) error {
@@ -57,14 +95,19 @@ func (p *Postgres) StackAnnualEntitlement(ctx context.Context, user uuid.UUID, n
 	return e, storeErr(err)
 }
 func (p *Postgres) RevokeEntitlement(ctx context.Context, user, id uuid.UUID, now time.Time) error {
-	tag, err := p.pool.Exec(ctx, `UPDATE entitlements SET revoked_at=COALESCE(revoked_at,$3) WHERE id=$1 AND user_id=$2`, id, user, now.UTC())
-	if err != nil {
+	return p.tx(ctx, func(t pgx.Tx) error {
+		tag, err := t.Exec(ctx, `UPDATE entitlements SET revoked_at=COALESCE(revoked_at,$3) WHERE id=$1 AND user_id=$2`, id, user, now.UTC())
+		if err != nil {
+			return storeErr(err)
+		}
+		if tag.RowsAffected() == 0 {
+			return domain.ErrNotFound
+		}
+		// Revoking the entitlement terminates its sessions in the same
+		// transaction so the terminal reason is recorded consistently.
+		_, err = t.Exec(ctx, `UPDATE translation_sessions SET revoked_at=COALESCE(revoked_at,$4), termination_reason=COALESCE(termination_reason,$5) WHERE user_id=$1 AND entitlement_id=$2 AND expires_at>$3 AND ended_at IS NULL AND revoked_at IS NULL`, user, id, now.UTC(), now.UTC(), string(domain.TerminationEntitlementRevoked))
 		return storeErr(err)
-	}
-	if tag.RowsAffected() == 0 {
-		return domain.ErrNotFound
-	}
-	return nil
+	})
 }
 func (p *Postgres) UserEnabled(ctx context.Context, user uuid.UUID) (bool, error) {
 	var enabled bool
@@ -83,6 +126,13 @@ func (p *Postgres) DisableUser(ctx context.Context, admin, user uuid.UUID, now t
 		}
 		if tag.RowsAffected() == 0 {
 			return domain.ErrNotFound
+		}
+		// Disabling the user terminates its active sessions in the same
+		// transaction, so a still-present translation token stops authorizing
+		// immediately and records why.
+		_, err = t.Exec(ctx, `UPDATE translation_sessions SET revoked_at=COALESCE(revoked_at,$2), termination_reason=COALESCE(termination_reason,$3) WHERE user_id=$1 AND expires_at>$2 AND ended_at IS NULL AND revoked_at IS NULL`, user, now.UTC(), string(domain.TerminationUserDisabled))
+		if err != nil {
+			return err
 		}
 		_, err = t.Exec(ctx, `INSERT INTO audit_logs(admin_id,action,target_type,target_id,metadata) VALUES($1,'user.disable','user',$2,'{}')`, admin, user)
 		return err

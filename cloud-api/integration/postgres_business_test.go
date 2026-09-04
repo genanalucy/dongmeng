@@ -184,11 +184,39 @@ func TestPostgresBusinessLifecycle(t *testing.T) {
 		t.Fatal("trial was not the active entitlement before its stacked package")
 	}
 	first := integrationSession(user.ID, active.ID, "install-"+uuid.NewString(), now.Add(time.Minute))
-	if err := db.CreateSession(ctx, first, now); err != nil {
+	if err := db.CreateAuthorizedTranslationSessionWithLimit(ctx, first, now, 2); err != nil {
 		t.Fatal("create first active session")
 	}
-	if err := db.CreateSession(ctx, integrationSession(user.ID, active.ID, "install-"+uuid.NewString(), now.Add(time.Minute)), now); !errors.Is(err, domain.ErrConflict) {
-		t.Fatal("second active session was not rejected")
+	// created_at is the application clock passed at creation, so each session
+	// is created at a strictly later time to keep the (created_at, id)
+	// governance order deterministic for the replacement assertions below.
+	second := integrationSession(user.ID, active.ID, "install-"+uuid.NewString(), now.Add(time.Minute))
+	if err := db.CreateAuthorizedTranslationSessionWithLimit(ctx, second, now.Add(10*time.Millisecond), 2); err != nil {
+		t.Fatal("second active session was not admitted")
+	}
+	third := integrationSession(user.ID, active.ID, "install-"+uuid.NewString(), now.Add(time.Minute))
+	if err := db.CreateAuthorizedTranslationSessionWithLimit(ctx, third, now.Add(time.Second), 2); err != nil {
+		t.Fatalf("third device creation did not replace the oldest session: %v", err)
+	}
+	var firstEnded bool
+	var firstReason string
+	if err := raw.QueryRow(ctx, `SELECT ended_at IS NOT NULL, COALESCE(termination_reason,'') FROM translation_sessions WHERE id=$1`, first.ID).Scan(&firstEnded, &firstReason); err != nil {
+		t.Fatal("read replaced session terminal state")
+	}
+	if !firstEnded || firstReason != string(domain.TerminationReplacedByDevice) {
+		t.Fatalf("replaced session ended=%v reason=%q, want ended replaced_by_device", firstEnded, firstReason)
+	}
+	replacedState, err := db.TranslationSessionState(ctx, user.ID, first.ID, first.EntitlementID, first.JTI, now.Add(time.Second))
+	if err != nil || replacedState.Active || replacedState.TerminationReason != domain.TerminationReplacedByDevice {
+		t.Fatalf("replaced session state = %+v err = %v, want inactive replaced_by_device", replacedState, err)
+	}
+	secondState, err := db.TranslationSessionState(ctx, user.ID, second.ID, second.EntitlementID, second.JTI, now.Add(time.Second))
+	if err != nil || !secondState.Active {
+		t.Fatalf("second session state = %+v err = %v, want active", secondState, err)
+	}
+	var activeCount int
+	if err := raw.QueryRow(ctx, `SELECT count(*) FROM translation_sessions WHERE user_id=$1 AND expires_at>$2 AND ended_at IS NULL AND revoked_at IS NULL`, user.ID, now.Add(time.Second)).Scan(&activeCount); err != nil || activeCount != 2 {
+		t.Fatalf("active session count = %d err = %v, want exactly 2", activeCount, err)
 	}
 
 	other, _, err := db.Register(ctx, domain.RegisterParams{Username: "phoneuser_" + uuid.NewString()[:8], Phone: "+8613600138000", PasswordHash: hash, Now: now})
@@ -196,17 +224,10 @@ func TestPostgresBusinessLifecycle(t *testing.T) {
 		t.Fatal("register cross-user fixture")
 	}
 	otherID = other.ID
-	if err := db.EndTranslationSession(ctx, user.ID, first.ID, now.Add(time.Second)); err != nil {
-		t.Fatal("end first session before cross-user fixture")
-	}
-	unused := integrationSession(user.ID, active.ID, "install-"+uuid.NewString(), now.Add(time.Minute))
-	if err := db.CreateSession(ctx, unused, now.Add(time.Second)); err != nil {
-		t.Fatal("create unused owner session")
-	}
-	if err := db.CreateUsageRecord(ctx, domain.CreateUsageParams{UserID: other.ID, SessionID: unused.ID, AudioSeconds: 1, Characters: 1, Now: now}); err == nil {
+	if err := db.CreateUsageRecord(ctx, domain.CreateUsageParams{UserID: other.ID, SessionID: third.ID, AudioSeconds: 1, Characters: 1, Now: now}); err == nil {
 		t.Fatal("cross-user usage/session association was accepted")
 	}
-	usage := domain.CreateUsageParams{UserID: user.ID, SessionID: unused.ID, AudioSeconds: 1, Characters: 1, Now: now}
+	usage := domain.CreateUsageParams{UserID: user.ID, SessionID: third.ID, AudioSeconds: 1, Characters: 1, Now: now}
 	if err := db.CreateUsageRecord(ctx, usage); err != nil {
 		t.Fatal("write first session usage")
 	}
@@ -214,17 +235,23 @@ func TestPostgresBusinessLifecycle(t *testing.T) {
 		t.Fatal("second usage record for one session was not rejected")
 	}
 
-	if err := db.EndTranslationSession(ctx, user.ID, unused.ID, now.Add(2*time.Second)); err != nil {
-		t.Fatal("end unused session")
+	if err := db.EndTranslationSession(ctx, user.ID, third.ID, now.Add(2*time.Second)); err != nil {
+		t.Fatal("end third session")
 	}
-	second := integrationSession(user.ID, active.ID, "install-"+uuid.NewString(), now.Add(time.Minute))
-	if err := db.CreateSession(ctx, second, now.Add(2*time.Second)); err != nil {
+	if err := raw.QueryRow(ctx, `SELECT COALESCE(termination_reason,'') FROM translation_sessions WHERE id=$1`, third.ID).Scan(&firstReason); err != nil || firstReason != string(domain.TerminationEnded) {
+		t.Fatalf("ended session reason = %q err = %v, want ended", firstReason, err)
+	}
+	fourth := integrationSession(user.ID, active.ID, "install-"+uuid.NewString(), now.Add(time.Minute))
+	if err := db.CreateAuthorizedTranslationSessionWithLimit(ctx, fourth, now.Add(2*time.Second), 2); err != nil {
 		t.Fatal("ended session did not release active-session slot")
 	}
-	if err := db.RevokeTranslationSession(ctx, user.ID, second.ID, now.Add(3*time.Second)); err != nil {
-		t.Fatal("revoke second session")
+	if err := db.RevokeTranslationSession(ctx, user.ID, fourth.ID, now.Add(3*time.Second)); err != nil {
+		t.Fatal("revoke fourth session")
 	}
-	if err := db.CreateSession(ctx, integrationSession(user.ID, active.ID, "install-"+uuid.NewString(), now.Add(time.Minute)), now.Add(3*time.Second)); err != nil {
+	if err := raw.QueryRow(ctx, `SELECT COALESCE(termination_reason,'') FROM translation_sessions WHERE id=$1`, fourth.ID).Scan(&firstReason); err != nil || firstReason != string(domain.TerminationRevoked) {
+		t.Fatalf("revoked session reason = %q err = %v, want revoked", firstReason, err)
+	}
+	if err := db.CreateAuthorizedTranslationSessionWithLimit(ctx, integrationSession(user.ID, active.ID, "install-"+uuid.NewString(), now.Add(time.Minute)), now.Add(3*time.Second), 2); err != nil {
 		t.Fatal("revoked session did not release active-session slot")
 	}
 

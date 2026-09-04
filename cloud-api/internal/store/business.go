@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"errors"
+	"math"
 	"strings"
 	"time"
 
@@ -256,8 +257,18 @@ func (p *Postgres) UserByUsername(ctx context.Context, username string) (domain.
 func (p *Postgres) UserByID(ctx context.Context, id uuid.UUID) (domain.User, error) {
 	return scanUser(p.pool.QueryRow(ctx, `SELECT id,COALESCE(username,''),COALESCE(phone,''),email,role,created_at FROM users WHERE id=$1`, id))
 }
+
+// ActiveEntitlement resolves the user's currently active entitlement. An
+// absent row is the product state "this user holds no entitlement", not a
+// missing referenced entity, so it reports domain.ErrNoEntitlement like
+// every other implementation of the EntitlementStore contract instead of
+// the generic not-found error.
 func (p *Postgres) ActiveEntitlement(ctx context.Context, id uuid.UUID, now time.Time) (domain.Entitlement, error) {
-	return scanEnt(p.pool.QueryRow(ctx, `SELECT id,user_id,kind,starts_at,expires_at FROM entitlements WHERE user_id=$1 AND revoked_at IS NULL AND starts_at<=$2 AND expires_at>$2 ORDER BY expires_at DESC,id DESC LIMIT 1`, id, now.UTC()))
+	entitlement, err := scanEnt(p.pool.QueryRow(ctx, `SELECT id,user_id,kind,starts_at,expires_at FROM entitlements WHERE user_id=$1 AND revoked_at IS NULL AND starts_at<=$2 AND expires_at>$2 ORDER BY expires_at DESC,id DESC LIMIT 1`, id, now.UTC()))
+	if errors.Is(err, domain.ErrNotFound) {
+		return domain.Entitlement{}, domain.ErrNoEntitlement
+	}
+	return entitlement, err
 }
 func (p *Postgres) CreateRefreshToken(ctx context.Context, x domain.CreateRefreshParams) (domain.RefreshToken, error) {
 	var r domain.RefreshToken
@@ -328,23 +339,44 @@ func (p *Postgres) RedeemCode(ctx context.Context, user uuid.UUID, hash []byte, 
 	return e, err
 }
 func (p *Postgres) CreateSession(ctx context.Context, s domain.TranslationSession, now time.Time) error {
+	// The raw creation path performs no concurrency governance; the product
+	// limit is enforced only through CreateAuthorizedTranslationSessionWithLimit.
+	return p.createSessionWithLimit(ctx, s, now, math.MaxInt32)
+}
+
+// createSessionWithLimit atomically governs the per-user active-session count.
+// Under the per-user transaction advisory lock it upserts the device, counts
+// the user's still-active sessions (expiry past `now` is ignored), ends the
+// oldest ones in the stable (created_at, id) order with the device-replacement
+// termination reason whenever the limit would be exceeded, and inserts the new
+// session behind an ownership-and-activity re-check of its entitlement. A
+// failure anywhere rolls the whole arbitration back, so a persisted failure
+// can never end an old session without also creating the replacement grant.
+func (p *Postgres) createSessionWithLimit(ctx context.Context, s domain.TranslationSession, now time.Time, limit int) error {
 	return p.tx(ctx, func(t pgx.Tx) error {
-		// Transaction-scoped advisory locking serializes the read/count/insert
-		// sequence per user without imposing a global session lock.
+		// Transaction-scoped advisory locking serializes the
+		// read/count/replace/insert sequence per user without imposing a
+		// global session lock.
 		if _, err := t.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0))`, s.UserID); err != nil {
 			return err
-		}
-		var n int
-		if err := t.QueryRow(ctx, `SELECT count(*) FROM translation_sessions WHERE user_id=$1 AND expires_at>$2 AND ended_at IS NULL AND revoked_at IS NULL`, s.UserID, now.UTC()).Scan(&n); err != nil {
-			return err
-		}
-		if n > 0 {
-			return domain.ErrConflict
 		}
 		if _, err := t.Exec(ctx, `INSERT INTO user_devices(user_id,install_id,last_seen_at) VALUES($1,$2,$3) ON CONFLICT(user_id,install_id) DO UPDATE SET last_seen_at=EXCLUDED.last_seen_at`, s.UserID, s.InstallID, now.UTC()); err != nil {
 			return err
 		}
-		tag, err := t.Exec(ctx, `INSERT INTO translation_sessions(id,user_id,entitlement_id,install_id,jti,expires_at) SELECT $1,$2,$3,$4,$5,$6 WHERE EXISTS(SELECT 1 FROM entitlements WHERE id=$3 AND user_id=$2 AND revoked_at IS NULL AND starts_at<=$7 AND expires_at>$7)`, s.ID, s.UserID, s.EntitlementID, s.InstallID, s.JTI, s.ExpiresAt.UTC(), now.UTC())
+		var active int
+		if err := t.QueryRow(ctx, `SELECT count(*) FROM translation_sessions WHERE user_id=$1 AND expires_at>$2 AND ended_at IS NULL AND revoked_at IS NULL`, s.UserID, now.UTC()).Scan(&active); err != nil {
+			return err
+		}
+		if replace := active - limit + 1; replace > 0 {
+			tag, err := t.Exec(ctx, `UPDATE translation_sessions SET ended_at=$3, termination_reason=$4 WHERE id IN (SELECT id FROM translation_sessions WHERE user_id=$1 AND expires_at>$2 AND ended_at IS NULL AND revoked_at IS NULL ORDER BY created_at,id LIMIT $5)`, s.UserID, now.UTC(), now.UTC(), string(domain.TerminationReplacedByDevice), replace)
+			if err != nil {
+				return storeErr(err)
+			}
+			if tag.RowsAffected() != int64(replace) {
+				return domain.ErrConflict
+			}
+		}
+		tag, err := t.Exec(ctx, `INSERT INTO translation_sessions(id,user_id,entitlement_id,install_id,jti,expires_at,created_at) SELECT $1,$2,$3,$4,$5,$6,$7 WHERE EXISTS(SELECT 1 FROM entitlements WHERE id=$3 AND user_id=$2 AND revoked_at IS NULL AND starts_at<=$8 AND expires_at>$8)`, s.ID, s.UserID, s.EntitlementID, s.InstallID, s.JTI, s.ExpiresAt.UTC(), now.UTC(), now.UTC())
 		if err != nil {
 			return storeErr(err)
 		}
@@ -396,7 +428,7 @@ func (p *Postgres) ListUsers(ctx context.Context, search string, limit, offset i
 	return out, rows.Err()
 }
 func (p *Postgres) ListTranslationSessions(ctx context.Context, user uuid.UUID, limit, offset int) ([]domain.TranslationSession, error) {
-	rows, err := p.pool.Query(ctx, `SELECT id,user_id,entitlement_id,install_id,jti,expires_at FROM translation_sessions WHERE user_id=$1 ORDER BY expires_at DESC,id DESC LIMIT $2 OFFSET $3`, user, limit, offset)
+	rows, err := p.pool.Query(ctx, `SELECT id,user_id,entitlement_id,install_id,jti,expires_at,created_at,ended_at,revoked_at,COALESCE(termination_reason,'') FROM translation_sessions WHERE user_id=$1 ORDER BY expires_at DESC,id DESC LIMIT $2 OFFSET $3`, user, limit, offset)
 	if err != nil {
 		return nil, err
 	}
@@ -404,7 +436,7 @@ func (p *Postgres) ListTranslationSessions(ctx context.Context, user uuid.UUID, 
 	out := []domain.TranslationSession{}
 	for rows.Next() {
 		var v domain.TranslationSession
-		if err := rows.Scan(&v.ID, &v.UserID, &v.EntitlementID, &v.InstallID, &v.JTI, &v.ExpiresAt); err != nil {
+		if err := rows.Scan(&v.ID, &v.UserID, &v.EntitlementID, &v.InstallID, &v.JTI, &v.ExpiresAt, &v.CreatedAt, &v.EndedAt, &v.RevokedAt, &v.TerminationReason); err != nil {
 			return nil, storeErr(err)
 		}
 		out = append(out, v)

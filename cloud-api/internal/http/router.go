@@ -102,7 +102,7 @@ func NewRouter(options RouterOptions) http.Handler {
 	if options.Store == nil {
 		return router
 	}
-	service := auth.AuthorizationService{Store: options.Store, EntitlementLifecycle: options.Store, Tokens: options.Tokens, MaxConcurrentSessions: auth.SingleActiveTranslationSessionLimit}
+	service := auth.AuthorizationService{Store: options.Store, EntitlementLifecycle: options.Store, Tokens: options.Tokens, MaxConcurrentSessions: auth.TwoActiveTranslationSessionLimit}
 	api := api{store: options.Store, tokens: options.Tokens, authorizer: service, verification: verification, registrationVerification: registrationVerification, captcha: options.Captcha, logger: logger, now: now}
 	router.Get("/api/v1/auth/captcha", api.captchaIssue)
 	router.Post("/api/v1/auth/register", api.register)

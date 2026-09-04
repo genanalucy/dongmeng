@@ -11,8 +11,8 @@ import (
 )
 
 const (
-	DefaultTranslationSessionTTL        = 5 * time.Minute
-	SingleActiveTranslationSessionLimit = 1
+	DefaultTranslationSessionTTL     = 5 * time.Minute
+	TwoActiveTranslationSessionLimit = 2
 )
 
 // RegistrationStore must atomically persist the user and exactly one trial
@@ -22,6 +22,9 @@ type RegistrationStore interface {
 }
 
 // EntitlementStore is the persisted source of truth for access decisions.
+// ActiveEntitlement must report a user without an active entitlement as
+// domain.ErrNoEntitlement rather than a not-found entity error, so
+// authorization outcomes stay identical across store implementations.
 type EntitlementStore interface {
 	ActiveEntitlement(context.Context, uuid.UUID, time.Time) (domain.Entitlement, error)
 }
@@ -40,30 +43,38 @@ type EntitlementLifecycleStore interface {
 // CreateAuthorizedTranslationSession must atomically re-check that the named
 // entitlement belongs to the user and is active at authorizedAt before storing
 // the session. EndTranslationSession records a normal completion;
-// RevokeTranslationSession invalidates a session before expiry. Implementations
-// must reject ownership mismatches and make both terminal transitions idempotent.
-// Token consumers must consult this persisted lifecycle; JWT validity alone
-// does not make an ended or revoked session usable.
+// RevokeTranslationSession invalidates a session before expiry; both must
+// persist their termination reason. Implementations must reject ownership
+// mismatches and make both terminal transitions idempotent. Token consumers
+// must consult this persisted lifecycle; JWT validity alone does not make an
+// ended or revoked session usable.
 type TranslationSessionStore interface {
 	CreateAuthorizedTranslationSession(context.Context, domain.TranslationSession, time.Time) error
 	EndTranslationSession(context.Context, uuid.UUID, uuid.UUID, time.Time) error
 	RevokeTranslationSession(context.Context, uuid.UUID, uuid.UUID, time.Time) error
 }
 
-// ConcurrentTranslationSessionStore extends session creation with an atomic
-// per-user limit. Implementations must, in one transaction, ignore or expire
+// ConcurrentTranslationSessionStore extends session creation with atomic
+// per-user governance. Implementations must, in one transaction, ignore
 // sessions whose expiry is <= authorizedAt, count only non-ended/non-revoked
-// sessions, re-check entitlement ownership and activity, enforce maxConcurrent,
-// and create the new session. Limit exhaustion should return domain.ErrConflict.
+// sessions, re-check entitlement ownership and activity, end the oldest
+// active sessions in the stable (created_at, id) order with the
+// replaced_by_device termination reason whenever maxConcurrent would be
+// exceeded, and create the new session. Creation therefore succeeds within
+// the limit instead of failing with domain.ErrConflict.
 type ConcurrentTranslationSessionStore interface {
 	CreateAuthorizedTranslationSessionWithLimit(context.Context, domain.TranslationSession, time.Time, int) error
 }
 
 // TranslationSessionAuthorizationStore is the persisted source of truth for a
-// presented translation token. It must return nil only when all identifiers
-// match one active, non-ended, non-revoked session whose expiry is after now.
+// presented translation token. TranslationSessionState must return
+// domain.ErrUnauthorized when the identifiers match no session, and otherwise
+// expose the persisted owner/session/JTI/install data together with Active and
+// the resolved TerminationReason. Token consumers must consult this persisted
+// lifecycle; JWT validity alone does not make an ended, revoked, expired, or
+// otherwise terminated session usable.
 type TranslationSessionAuthorizationStore interface {
-	AuthorizeTranslationSession(context.Context, uuid.UUID, uuid.UUID, uuid.UUID, uuid.UUID, time.Time) error
+	TranslationSessionState(context.Context, uuid.UUID, uuid.UUID, uuid.UUID, uuid.UUID, time.Time) (domain.TranslationSessionAuthorization, error)
 }
 
 type AuthorizationStore interface {
@@ -250,7 +261,8 @@ func (s AuthorizationService) AuthorizeTranslationSession(ctx context.Context, t
 	if userErr != nil || sessionErr != nil || entitlementErr != nil || jtiErr != nil {
 		return Claims{}, domain.ErrUnauthorized
 	}
-	if err := store.AuthorizeTranslationSession(ctx, userID, sessionID, entitlementID, jti, now.UTC()); err != nil {
+	state, err := store.TranslationSessionState(ctx, userID, sessionID, entitlementID, jti, now.UTC())
+	if err != nil || !state.Active {
 		return Claims{}, domain.ErrUnauthorized
 	}
 	return claims, nil

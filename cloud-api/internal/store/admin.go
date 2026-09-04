@@ -18,7 +18,7 @@ func (p *Postgres) GrantEntitlementByAdmin(ctx context.Context, admin, user uuid
 		if err != nil {
 			return err
 		}
-		_, err = t.Exec(ctx, `INSERT INTO audit_logs(admin_id,action,target_type,target_id,metadata) VALUES($1,'entitlement.grant','entitlement',$2,jsonb_build_object('user_id',$3))`, admin, e.ID, user)
+		_, err = t.Exec(ctx, `INSERT INTO audit_logs(admin_id,action,target_type,target_id,metadata) VALUES($1,'entitlement.grant','entitlement',$2,jsonb_build_object('user_id',$3::uuid))`, admin, e.ID, user)
 		return err
 	})
 	return e, storeErr(err)
@@ -32,7 +32,12 @@ func (p *Postgres) RevokeEntitlementByAdmin(ctx context.Context, admin, user, id
 		if tag.RowsAffected() == 0 {
 			return domain.ErrNotFound
 		}
-		_, err = t.Exec(ctx, `INSERT INTO audit_logs(admin_id,action,target_type,target_id,metadata) VALUES($1,'entitlement.revoke','entitlement',$2,jsonb_build_object('user_id',$3))`, admin, id, user)
+		// The revoked entitlement's still-active sessions terminate in the same
+		// transaction with the entitlement-revocation reason.
+		if _, err := t.Exec(ctx, `UPDATE translation_sessions SET revoked_at=COALESCE(revoked_at,$4), termination_reason=COALESCE(termination_reason,$5) WHERE user_id=$1 AND entitlement_id=$2 AND expires_at>$3 AND ended_at IS NULL AND revoked_at IS NULL`, user, id, now.UTC(), now.UTC(), string(domain.TerminationEntitlementRevoked)); err != nil {
+			return err
+		}
+		_, err = t.Exec(ctx, `INSERT INTO audit_logs(admin_id,action,target_type,target_id,metadata) VALUES($1,'entitlement.revoke','entitlement',$2,jsonb_build_object('user_id',$3::uuid))`, admin, id, user)
 		return err
 	})
 }

@@ -433,12 +433,65 @@ func (t RefreshToken) Valid() bool {
 }
 
 type TranslationSession struct {
-	ID            uuid.UUID `json:"id"`
-	UserID        uuid.UUID `json:"user_id"`
-	EntitlementID uuid.UUID `json:"entitlement_id,omitempty"`
-	InstallID     string    `json:"install_id"`
-	JTI           uuid.UUID `json:"jti"`
-	ExpiresAt     time.Time `json:"expires_at"`
+	ID                uuid.UUID  `json:"id"`
+	UserID            uuid.UUID  `json:"user_id"`
+	EntitlementID     uuid.UUID  `json:"entitlement_id,omitempty"`
+	InstallID         string     `json:"install_id"`
+	JTI               uuid.UUID  `json:"jti"`
+	ExpiresAt         time.Time  `json:"expires_at"`
+	CreatedAt         time.Time  `json:"created_at"`
+	EndedAt           *time.Time `json:"ended_at,omitempty"`
+	RevokedAt         *time.Time `json:"revoked_at,omitempty"`
+	TerminationReason string     `json:"termination_reason,omitempty"`
+}
+
+// TranslationTerminationReason explains why a translation session stopped
+// being usable. Every non-expiry terminal transition persists one of these
+// values alongside its terminal timestamp; natural expiry is resolved at read
+// time instead. Agent clients use the reason to tell a displaced device why
+// its session ended.
+type TranslationTerminationReason string
+
+const (
+	TerminationEnded              TranslationTerminationReason = "ended"
+	TerminationRevoked            TranslationTerminationReason = "revoked"
+	TerminationReplacedByDevice   TranslationTerminationReason = "replaced_by_device"
+	TerminationEntitlementRevoked TranslationTerminationReason = "entitlement_revoked"
+	TerminationUserDisabled       TranslationTerminationReason = "user_disabled"
+	// TerminationExpired is the read-time reason for a session whose
+	// expires_at has passed; it is never stored because no terminal
+	// transition occurred.
+	TerminationExpired TranslationTerminationReason = "expired"
+)
+
+// ValidTranslationTerminationReason reports whether the value is one of the
+// reasons the persisted lifecycle can record.
+func ValidTranslationTerminationReason(value string) bool {
+	switch TranslationTerminationReason(value) {
+	case TerminationEnded, TerminationRevoked, TerminationReplacedByDevice, TerminationEntitlementRevoked, TerminationUserDisabled:
+		return true
+	default:
+		return false
+	}
+}
+
+// TranslationSessionAuthorization is the persisted authorization truth for
+// one presented translation token identity set (owner, session, entitlement,
+// JTI). Active reports whether the session is usable at the evaluation time;
+// when it is not, TerminationReason carries the resolved explanation so the
+// Agent boundary can distinguish device replacement from explicit end,
+// revocation, disablement, entitlement revocation, and natural expiry.
+type TranslationSessionAuthorization struct {
+	SessionID         uuid.UUID
+	UserID            uuid.UUID
+	EntitlementID     uuid.UUID
+	JTI               uuid.UUID
+	InstallID         string
+	Active            bool
+	ExpiresAt         time.Time
+	EndedAt           *time.Time
+	RevokedAt         *time.Time
+	TerminationReason TranslationTerminationReason
 }
 
 type UsageRecord struct {

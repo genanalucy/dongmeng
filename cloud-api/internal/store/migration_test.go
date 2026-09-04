@@ -65,3 +65,37 @@ func TestRefreshExpiryIndexUsesIncrementalNonBlockingMigration(t *testing.T) {
 		t.Error("refresh expiry rollback must be concurrent and idempotent")
 	}
 }
+
+func TestTwoDeviceGovernanceMigrationPersistsTerminationReasons(t *testing.T) {
+	up, err := os.ReadFile("../../../migrations/000009_two_device_session_governance.up.sql")
+	if err != nil {
+		t.Fatalf("read two-device governance migration: %v", err)
+	}
+	schema := string(up)
+	for _, fragment := range []string{
+		"ALTER TABLE translation_sessions ADD COLUMN IF NOT EXISTS termination_reason text",
+		"CHECK (termination_reason IS NULL OR termination_reason IN",
+		"'replaced_by_device'",
+		"CHECK (termination_reason IS NULL OR ended_at IS NOT NULL OR revoked_at IS NOT NULL)",
+		"CREATE INDEX IF NOT EXISTS translation_sessions_active_user_created_idx",
+		"ON translation_sessions (user_id, created_at, id)",
+		"WHERE ended_at IS NULL AND revoked_at IS NULL",
+	} {
+		if !strings.Contains(schema, fragment) {
+			t.Errorf("two-device governance migration missing %q", fragment)
+		}
+	}
+
+	down, err := os.ReadFile("../../../migrations/000009_two_device_session_governance.down.sql")
+	if err != nil {
+		t.Fatalf("read two-device governance rollback: %v", err)
+	}
+	for _, fragment := range []string{
+		"DROP INDEX IF EXISTS translation_sessions_active_user_created_idx",
+		"DROP COLUMN IF EXISTS termination_reason",
+	} {
+		if !strings.Contains(string(down), fragment) {
+			t.Errorf("two-device governance rollback missing %q", fragment)
+		}
+	}
+}
