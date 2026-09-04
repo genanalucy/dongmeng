@@ -23,6 +23,10 @@ type RouterOptions struct {
 	Now                      func() time.Time
 	Verification             PhoneVerificationService
 	RegistrationVerification *auth.EmailRegistrationService
+	// Captcha backs GET /api/v1/auth/captcha and POST /api/v1/auth/register.
+	// Registration is captcha-only; a nil service keeps both endpoints fail
+	// closed.
+	Captcha *auth.CaptchaService
 }
 
 func noStore(next http.Handler) http.Handler {
@@ -83,19 +87,25 @@ func NewRouter(options RouterOptions) http.Handler {
 	if verification == nil {
 		verification = disabledPhoneVerificationService{}
 	}
+	// Retained for rollback wiring only; the email registration service is
+	// never routed.
+	registrationVerification := options.RegistrationVerification
 	verificationAPI := api{verification: verification, now: now}
 	router.Post("/api/v1/auth/phone-verifications", verificationAPI.phoneVerification)
 	router.Post("/api/v1/auth/phone-verifications/confirm", verificationAPI.phoneVerification)
-	registrationVerification := options.RegistrationVerification
-	registrationAPI := api{store: options.Store, tokens: options.Tokens, registrationVerification: registrationVerification, logger: logger, now: now}
-	router.Post("/api/v1/auth/registration-verifications", registrationAPI.registrationVerificationRequest)
-	router.Post("/api/v1/auth/registration-verifications/confirm", registrationAPI.registrationVerificationConfirm)
+	// The email verification registration flow stays disabled at the routing
+	// boundary even when a service is wired, so it can never bypass captcha
+	// registration policy. Its handlers and persistence remain unrouted for
+	// rollback. EMAIL_VERIFICATION_ENABLED no longer enables any route.
+	router.Post("/api/v1/auth/registration-verifications", registrationVerificationUnavailable)
+	router.Post("/api/v1/auth/registration-verifications/confirm", registrationVerificationUnavailable)
 	if options.Store == nil {
 		return router
 	}
 	service := auth.AuthorizationService{Store: options.Store, EntitlementLifecycle: options.Store, Tokens: options.Tokens, MaxConcurrentSessions: auth.SingleActiveTranslationSessionLimit}
-	api := api{store: options.Store, tokens: options.Tokens, authorizer: service, verification: verification, registrationVerification: registrationVerification, logger: logger, now: now}
-	router.Post("/api/v1/auth/register", api.registerDeprecated)
+	api := api{store: options.Store, tokens: options.Tokens, authorizer: service, verification: verification, registrationVerification: registrationVerification, captcha: options.Captcha, logger: logger, now: now}
+	router.Get("/api/v1/auth/captcha", api.captchaIssue)
+	router.Post("/api/v1/auth/register", api.register)
 	router.Post("/api/v1/auth/login", api.login)
 	router.Post("/api/v1/auth/refresh", api.refresh)
 	router.Group(func(r chi.Router) {

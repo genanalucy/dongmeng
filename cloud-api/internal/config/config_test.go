@@ -54,6 +54,35 @@ func TestLoadRejectsUnsafeValues(t *testing.T) {
 	}
 }
 
+func TestValidateRequiresCaptchaSecretUnconditionally(t *testing.T) {
+	short := validConfig()
+	short.CaptchaSecret = "tooshort"
+	err := short.Validate()
+	if err == nil || !strings.Contains(err.Error(), "CAPTCHA_SECRET") {
+		t.Fatalf("Validate() error = %v, want CAPTCHA_SECRET rejection", err)
+	}
+	if strings.Contains(err.Error(), short.CaptchaSecret) {
+		t.Fatalf("Validate() exposed captcha secret: %v", err)
+	}
+
+	missing := validConfig()
+	missing.CaptchaSecret = ""
+	missing.EmailVerificationEnabled = false
+	if err := missing.Validate(); err == nil || !strings.Contains(err.Error(), "CAPTCHA_SECRET") {
+		t.Fatalf("Validate() error = %v, want unconditional CAPTCHA_SECRET rejection", err)
+	}
+}
+
+func TestLoadRejectsMissingCaptchaSecret(t *testing.T) {
+	setRequiredEnvironment(t)
+	t.Setenv("CAPTCHA_SECRET", "")
+
+	_, err := Load()
+	if err == nil || !strings.Contains(err.Error(), "CAPTCHA_SECRET") {
+		t.Fatalf("Load() error = %v, want CAPTCHA_SECRET rejection", err)
+	}
+}
+
 func TestValidateRejectsNonLoopbackSMTPHostInProduction(t *testing.T) {
 	cfg := validConfig()
 	cfg.EmailVerificationEnabled = true
@@ -147,6 +176,7 @@ func setRequiredEnvironment(t *testing.T) {
 	t.Setenv("SMTP_CONNECT_TIMEOUT", "")
 	t.Setenv("SMTP_SEND_TIMEOUT", "")
 	t.Setenv("EMAIL_VERIFICATION_RATE_LIMIT_SECRET", "rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr")
+	t.Setenv("CAPTCHA_SECRET", "cccccccccccccccccccccccccccccccc")
 }
 
 func validConfig() Config {
@@ -175,5 +205,6 @@ func validConfig() Config {
 		SMTPConnectTimeout:               time.Second,
 		SMTPSendTimeout:                  time.Second,
 		EmailVerificationRateLimitSecret: "rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr",
+		CaptchaSecret:                    "cccccccccccccccccccccccccccccccc",
 	}
 }

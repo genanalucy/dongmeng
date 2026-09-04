@@ -59,9 +59,13 @@ type Config struct {
 	SMTPConnectTimeout               time.Duration
 	SMTPSendTimeout                  time.Duration
 	EmailVerificationRateLimitSecret string
-	HistoryEnabled                   bool
-	HistoryRootKey                   []byte
-	HistoryKeyVersion                int
+	// CaptchaSecret backs captcha answer hashing and per-IP rate-limit keys.
+	// It is required unconditionally because captcha registration is the only
+	// registration path; a missing secret must stop startup, not weaken it.
+	CaptchaSecret     string
+	HistoryEnabled    bool
+	HistoryRootKey    []byte
+	HistoryKeyVersion int
 }
 
 // Load reads environment variables and validates the resulting configuration.
@@ -90,6 +94,7 @@ func Load() (Config, error) {
 		SMTPConnectTimeout:               defaultSMTPConnectTimeout,
 		SMTPSendTimeout:                  defaultSMTPSendTimeout,
 		EmailVerificationRateLimitSecret: os.Getenv("EMAIL_VERIFICATION_RATE_LIMIT_SECRET"),
+		CaptchaSecret:                    strings.TrimSpace(os.Getenv("CAPTCHA_SECRET")),
 	}
 	historyRootKey, err := base64StdEnv("HISTORY_ROOT_KEY")
 	if err != nil {
@@ -197,6 +202,10 @@ func (c Config) Validate() error {
 		problems = append(problems, "token issuer, distinct audiences, and distinct 32-byte token keys are required")
 	}
 	if c.EmailVerificationEnabled {
+		// EMAIL_VERIFICATION_ENABLED is retained for rollback configuration
+		// compatibility only. It no longer enables any registration route: the
+		// email verification endpoints stay disabled and registration always
+		// requires a captcha, with CAPTCHA_SECRET enforced below.
 		if err := validateSMTPHost(c.SMTPHost, c.Environment); err != nil {
 			problems = append(problems, err.Error())
 		}
@@ -216,6 +225,9 @@ func (c Config) Validate() error {
 		if len(c.EmailVerificationRateLimitSecret) < 32 {
 			problems = append(problems, "EMAIL_VERIFICATION_RATE_LIMIT_SECRET must be at least 32 bytes")
 		}
+	}
+	if len(c.CaptchaSecret) < 32 {
+		problems = append(problems, "CAPTCHA_SECRET must be at least 32 bytes")
 	}
 	// History fail-closed gate: an enabled runtime refuses to start without a
 	// high-entropy root key and a positive key version. Key material itself is

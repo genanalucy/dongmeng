@@ -90,24 +90,6 @@ func scanRegistrationVerification(row pgx.Row) (domain.RegistrationVerification,
 	return verification, storeErr(err)
 }
 
-func updateRegistrationRateLimit(ctx context.Context, t pgx.Tx, keyType string, keyHash []byte, maximum int, now time.Time) error {
-	var count int
-	err := t.QueryRow(ctx, `INSERT INTO email_verification_rate_limits(key_type,key_hash,window_started_at,request_count,updated_at)
-		VALUES($1,$2,$3,1,$3)
-		ON CONFLICT(key_type,key_hash) DO UPDATE SET
-			window_started_at=CASE WHEN email_verification_rate_limits.window_started_at <= EXCLUDED.window_started_at-interval '1 hour' THEN EXCLUDED.window_started_at ELSE email_verification_rate_limits.window_started_at END,
-			request_count=CASE WHEN email_verification_rate_limits.window_started_at <= EXCLUDED.window_started_at-interval '1 hour' THEN 1 ELSE email_verification_rate_limits.request_count+1 END,
-			updated_at=EXCLUDED.updated_at
-		RETURNING request_count`, keyType, keyHash, now.UTC()).Scan(&count)
-	if err != nil {
-		return storeErr(err)
-	}
-	if count > maximum {
-		return domain.ErrRegistrationVerificationFailed
-	}
-	return nil
-}
-
 func (p *Postgres) RequestRegistrationVerification(ctx context.Context, x domain.CreateRegistrationVerificationParams) (domain.RegistrationVerification, error) {
 	var verification domain.RegistrationVerification
 	username, err := domain.ParseUsername(x.Username)
@@ -126,8 +108,8 @@ func (p *Postgres) RequestRegistrationVerification(ctx context.Context, x domain
 		// Public request traffic performs bounded, idempotent cleanup for both
 		// hashed key types before it updates any rate-limit bucket. The expiry
 		// index keeps this transaction maintenance query efficient without a daemon.
-		if _, err := t.Exec(ctx, `DELETE FROM email_verification_rate_limits WHERE (key_type,key_hash) IN (SELECT key_type,key_hash FROM email_verification_rate_limits WHERE window_started_at <= $1::timestamptz - interval '1 hour' ORDER BY window_started_at LIMIT 100)`, now); err != nil {
-			return storeErr(err)
+		if err := cleanupWindowedRateLimits(ctx, t, "email_verification_rate_limits", now); err != nil {
+			return err
 		}
 		// The advisory lock covers the no-row case, where SELECT FOR UPDATE alone
 		// cannot serialize concurrent first requests for the same email.

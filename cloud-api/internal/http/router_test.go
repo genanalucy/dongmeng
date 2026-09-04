@@ -3,14 +3,11 @@ package httpapi
 import (
 	"bytes"
 	"context"
-	"crypto/hmac"
-	"crypto/sha256"
 	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -164,8 +161,8 @@ func TestMultiIdentityAuthHTTPContractIsStrictAndDoesNotExposePrivateIdentities(
 		name, path, body string
 		status           int
 	}{
-		{"register requires verification", "/api/v1/auth/register", `{"username":"Alice_01","email":"Alice@Example.COM","phone":"13800138000","password":"Aa123456"}`, http.StatusGone},
-		{"register rejects unknown", "/api/v1/auth/register", `{"username":"alice_01","email":"alice@example.com","phone":"13800138000","password":"Aa123456","unknown":true}`, http.StatusGone},
+		{"register requires captcha material", "/api/v1/auth/register", `{"username":"Alice_01","email":"Alice@Example.COM","phone":"13800138000","password":"Aa123456"}`, http.StatusBadRequest},
+		{"register rejects unknown", "/api/v1/auth/register", `{"username":"alice_01","email":"alice@example.com","phone":"13800138000","password":"Aa123456","unknown":true}`, http.StatusBadRequest},
 		{"login phone", "/api/v1/auth/login", `{"identifier":"13800138000","password":"Aa123456"}`, http.StatusOK},
 		{"login email", "/api/v1/auth/login", `{"identifier":"Alice@Example.COM","password":"Aa123456"}`, http.StatusOK},
 		{"login username", "/api/v1/auth/login", `{"identifier":"Alice_01","password":"Aa123456"}`, http.StatusOK},
@@ -325,180 +322,6 @@ func newRegistrationVerificationRouter(t *testing.T, store *registrationVerifica
 	return NewRouter(RouterOptions{Config: config.Config{Environment: "test", DatabaseTimeout: time.Second, RateLimitRPS: 1000, RateLimitBurst: 1000}, Store: store, Tokens: issuer, RegistrationVerification: service, Now: func() time.Time { return time.Date(2026, 9, 2, 12, 0, 0, 0, time.UTC) }})
 }
 
-func TestRegistrationVerificationRequestIsStrictAndGenericForOperationalOutcomes(t *testing.T) {
-	for _, test := range []struct {
-		name       string
-		body       string
-		storeErr   error
-		senderErr  error
-		wantStatus int
-		wantSends  int
-	}{
-		{name: "success", body: `{"username":"example_user","email":"user@example.com","password":"password1"}`, wantStatus: http.StatusAccepted, wantSends: 1},
-		{name: "registered email", body: `{"username":"example_user","email":"user@example.com","password":"password1"}`, storeErr: domain.ErrConflict, wantStatus: http.StatusAccepted},
-		{name: "rate limited", body: `{"username":"example_user","email":"user@example.com","password":"password1"}`, storeErr: domain.ErrRegistrationVerificationFailed, wantStatus: http.StatusAccepted},
-		{name: "smtp failure", body: `{"username":"example_user","email":"user@example.com","password":"password1"}`, senderErr: errors.New("smtp unavailable"), wantStatus: http.StatusAccepted, wantSends: 1},
-		{name: "missing field", body: `{"username":"example_user","email":"user@example.com"}`, wantStatus: http.StatusBadRequest},
-		{name: "unknown field", body: `{"username":"example_user","email":"user@example.com","password":"password1","extra":true}`, wantStatus: http.StatusBadRequest},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			requests, invalidations := 0, 0
-			store := &registrationVerificationHTTPStore{
-				request: func(context.Context, domain.CreateRegistrationVerificationParams) (domain.RegistrationVerification, error) {
-					requests++
-					return domain.RegistrationVerification{ID: uuid.New(), ReservationID: uuid.New()}, test.storeErr
-				},
-				confirm: func(context.Context, domain.ConfirmRegistrationVerificationParams) (domain.RegisterParams, error) {
-					return domain.RegisterParams{}, domain.ErrRegistrationVerificationFailed
-				},
-				invalidate: func(context.Context, domain.InvalidateRegistrationVerificationParams) error {
-					invalidations++
-					return nil
-				},
-			}
-			sender := &registrationCodeSenderSpy{err: test.senderErr}
-			req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/registration-verifications", strings.NewReader(test.body))
-			req.Header.Set("Content-Type", "application/json")
-			req.RemoteAddr = "127.0.0.1:12345"
-			req.Header.Set("X-Forwarded-For", "198.51.100.17")
-			response := httptest.NewRecorder()
-			newRegistrationVerificationRouter(t, store, sender).ServeHTTP(response, req)
-			if response.Code != test.wantStatus {
-				t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
-			}
-			if test.wantStatus == http.StatusAccepted && !strings.Contains(response.Body.String(), `"retry_after_seconds":60`) {
-				t.Fatalf("accepted response = %s", response.Body.String())
-			}
-			if sender.calls != test.wantSends {
-				t.Fatalf("sender calls = %d, want %d", sender.calls, test.wantSends)
-			}
-			if test.senderErr != nil && invalidations != 1 {
-				t.Fatalf("invalidations = %d, want 1 after SMTP failure", invalidations)
-			}
-			if test.wantStatus == http.StatusBadRequest && (requests != 0 || sender.calls != 0) {
-				t.Fatalf("invalid input reached operational dependencies: requests=%d sends=%d", requests, sender.calls)
-			}
-		})
-	}
-}
-
-func TestRegistrationVerificationUsesForwardedIPOnlyFromLoopbackCaddy(t *testing.T) {
-	secret := []byte("test-rate-limit-secret")
-	for _, test := range []struct{ name, remote, forwarded, wantIP string }{
-		{name: "loopback proxy", remote: "127.0.0.1:12345", forwarded: "198.51.100.17", wantIP: "198.51.100.17"},
-		{name: "direct request ignores spoofed header", remote: "203.0.113.4:12345", forwarded: "198.51.100.17", wantIP: "203.0.113.4"},
-		{name: "malformed proxy header falls back", remote: "127.0.0.1:12345", forwarded: "198.51.100.17, 203.0.113.1", wantIP: "127.0.0.1"},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			var got domain.CreateRegistrationVerificationParams
-			store := &registrationVerificationHTTPStore{
-				request: func(_ context.Context, params domain.CreateRegistrationVerificationParams) (domain.RegistrationVerification, error) {
-					got = params
-					return domain.RegistrationVerification{ID: uuid.New(), ReservationID: uuid.New()}, nil
-				},
-				confirm: func(context.Context, domain.ConfirmRegistrationVerificationParams) (domain.RegisterParams, error) {
-					return domain.RegisterParams{}, domain.ErrRegistrationVerificationFailed
-				},
-				invalidate: func(context.Context, domain.InvalidateRegistrationVerificationParams) error { return nil },
-			}
-			req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/registration-verifications", strings.NewReader(`{"username":"example_user","email":"user@example.com","password":"password1"}`))
-			req.Header.Set("Content-Type", "application/json")
-			req.RemoteAddr, req.Header = test.remote, make(http.Header)
-			req.Header.Set("Content-Type", "application/json")
-			req.Header.Set("X-Forwarded-For", test.forwarded)
-			response := httptest.NewRecorder()
-			newRegistrationVerificationRouter(t, store, &registrationCodeSenderSpy{}).ServeHTTP(response, req)
-			if response.Code != http.StatusAccepted {
-				t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
-			}
-			want := registrationRateLimitKeyForTest(secret, test.wantIP)
-			if !bytes.Equal(got.IPRateLimitKey, want) {
-				t.Fatalf("IP limit key did not use %q", test.wantIP)
-			}
-		})
-	}
-}
-
-func TestRegistrationVerificationConfirmIsGenericOnFailureAndCreatesResponseOnce(t *testing.T) {
-	userID := uuid.New()
-	trial, err := domain.NewTrialEntitlement(uuid.New(), userID, time.Date(2026, 9, 2, 12, 0, 0, 0, time.UTC))
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, test := range []struct {
-		name       string
-		confirmErr error
-		wantStatus int
-	}{
-		{name: "wrong code", confirmErr: domain.ErrRegistrationVerificationFailed, wantStatus: http.StatusBadRequest},
-		{name: "expired", confirmErr: domain.ErrRegistrationVerificationFailed, wantStatus: http.StatusBadRequest},
-		{name: "fifth failed attempt", confirmErr: domain.ErrRegistrationVerificationFailed, wantStatus: http.StatusBadRequest},
-		{name: "success", wantStatus: http.StatusCreated},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			store := &registrationVerificationHTTPStore{
-				request: func(context.Context, domain.CreateRegistrationVerificationParams) (domain.RegistrationVerification, error) {
-					return domain.RegistrationVerification{}, nil
-				},
-				confirm: func(context.Context, domain.ConfirmRegistrationVerificationParams) (domain.RegisterParams, error) {
-					return domain.RegisterParams{Email: "user@example.com"}, test.confirmErr
-				},
-				invalidate: func(context.Context, domain.InvalidateRegistrationVerificationParams) error { return nil },
-				user:       domain.User{ID: userID, Username: "example_user", Role: string(domain.RoleUser), CreatedAt: time.Date(2026, 9, 2, 12, 0, 0, 0, time.UTC)}, trial: trial,
-			}
-			req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/registration-verifications/confirm", strings.NewReader(`{"email":"user@example.com","code":"012345"}`))
-			req.Header.Set("Content-Type", "application/json")
-			response := httptest.NewRecorder()
-			newRegistrationVerificationRouter(t, store, &registrationCodeSenderSpy{}).ServeHTTP(response, req)
-			if response.Code != test.wantStatus {
-				t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
-			}
-			if test.wantStatus == http.StatusBadRequest && !strings.Contains(response.Body.String(), "verification_failed") {
-				t.Fatalf("failure body = %s", response.Body.String())
-			}
-			if test.wantStatus == http.StatusCreated && (!strings.Contains(response.Body.String(), `"user"`) || !strings.Contains(response.Body.String(), `"trial_entitlement"`) || !strings.Contains(response.Body.String(), `"access_token"`) || !strings.Contains(response.Body.String(), `"refresh_token"`)) {
-				t.Fatalf("success body = %s", response.Body.String())
-			}
-		})
-	}
-}
-
-func TestRegistrationVerificationConfirmAllowsOnlyOneConcurrentSuccess(t *testing.T) {
-	var mu sync.Mutex
-	var confirmed bool
-	store := &registrationVerificationHTTPStore{
-		request: func(context.Context, domain.CreateRegistrationVerificationParams) (domain.RegistrationVerification, error) {
-			return domain.RegistrationVerification{}, nil
-		},
-		confirm: func(context.Context, domain.ConfirmRegistrationVerificationParams) (domain.RegisterParams, error) {
-			mu.Lock()
-			defer mu.Unlock()
-			if confirmed {
-				return domain.RegisterParams{}, domain.ErrRegistrationVerificationFailed
-			}
-			confirmed = true
-			return domain.RegisterParams{Email: "user@example.com"}, nil
-		},
-		invalidate: func(context.Context, domain.InvalidateRegistrationVerificationParams) error { return nil },
-		user:       domain.User{ID: uuid.New(), Username: "example_user", Role: string(domain.RoleUser), CreatedAt: time.Now()},
-	}
-	router := newRegistrationVerificationRouter(t, store, &registrationCodeSenderSpy{})
-	statuses := make(chan int, 2)
-	for range 2 {
-		go func() {
-			req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/registration-verifications/confirm", strings.NewReader(`{"email":"user@example.com","code":"012345"}`))
-			req.Header.Set("Content-Type", "application/json")
-			response := httptest.NewRecorder()
-			router.ServeHTTP(response, req)
-			statuses <- response.Code
-		}()
-	}
-	first, second := <-statuses, <-statuses
-	if (first != http.StatusCreated || second != http.StatusBadRequest) && (second != http.StatusCreated || first != http.StatusBadRequest) {
-		t.Fatalf("statuses = %d, %d", first, second)
-	}
-}
-
 func TestRegistrationVerificationIsFailClosedWhenDisabled(t *testing.T) {
 	router := NewRouter(RouterOptions{Config: config.Config{Environment: "test", DatabaseTimeout: time.Second, RateLimitRPS: 1000, RateLimitBurst: 1000}})
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/registration-verifications", strings.NewReader(`{"username":"example_user","email":"user@example.com","password":"password1"}`))
@@ -510,7 +333,40 @@ func TestRegistrationVerificationIsFailClosedWhenDisabled(t *testing.T) {
 	}
 }
 
-func TestLegacyRegisterRequiresEmailVerification(t *testing.T) {
+// Even a fully wired email verification service must not re-enable the
+// legacy registration endpoints: they can never bypass captcha policy.
+func TestEmailVerificationEndpointsStayDisabledEvenWhenServiceIsWired(t *testing.T) {
+	requests, confirms := 0, 0
+	store := &registrationVerificationHTTPStore{
+		request: func(context.Context, domain.CreateRegistrationVerificationParams) (domain.RegistrationVerification, error) {
+			requests++
+			return domain.RegistrationVerification{ID: uuid.New(), ReservationID: uuid.New()}, nil
+		},
+		confirm: func(context.Context, domain.ConfirmRegistrationVerificationParams) (domain.RegisterParams, error) {
+			confirms++
+			return domain.RegisterParams{}, domain.ErrRegistrationVerificationFailed
+		},
+		invalidate: func(context.Context, domain.InvalidateRegistrationVerificationParams) error { return nil },
+	}
+	sender := &registrationCodeSenderSpy{}
+	router := newRegistrationVerificationRouter(t, store, sender)
+	for _, endpoint := range []string{"/api/v1/auth/registration-verifications", "/api/v1/auth/registration-verifications/confirm"} {
+		req := httptest.NewRequest(http.MethodPost, endpoint, strings.NewReader(`{"username":"example_user","email":"user@example.com","password":"password1","code":"012345"}`))
+		req.Header.Set("Content-Type", "application/json")
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, req)
+		if response.Code != http.StatusServiceUnavailable || !strings.Contains(response.Body.String(), "registration_verification_not_enabled") {
+			t.Fatalf("%s response = %d %s", endpoint, response.Code, response.Body.String())
+		}
+	}
+	if requests != 0 || confirms != 0 || sender.calls != 0 {
+		t.Fatalf("disabled endpoints reached operational dependencies: requests=%d confirms=%d sends=%d", requests, confirms, sender.calls)
+	}
+}
+
+// Registration without captcha material is rejected before any store access;
+// the full captcha contract lives in captcha_test.go.
+func TestRegisterWithoutCaptchaMaterialIsRejected(t *testing.T) {
 	store := &registrationVerificationHTTPStore{
 		request: func(context.Context, domain.CreateRegistrationVerificationParams) (domain.RegistrationVerification, error) {
 			return domain.RegistrationVerification{}, nil
@@ -524,22 +380,25 @@ func TestLegacyRegisterRequiresEmailVerification(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	response := httptest.NewRecorder()
 	newRegistrationVerificationRouter(t, store, &registrationCodeSenderSpy{}).ServeHTTP(response, req)
-	if response.Code != http.StatusGone || !strings.Contains(response.Body.String(), "registration_verification_required") {
+	if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), "invalid_request") {
 		t.Fatalf("response = %d %s", response.Code, response.Body.String())
 	}
 }
 
-func registrationRateLimitKeyForTest(secret []byte, value string) []byte {
-	mac := hmac.New(sha256.New, secret)
-	_, _ = mac.Write([]byte("ip:" + value))
-	return mac.Sum(nil)
-}
-
 func TestBusinessRoutesRequireConfiguredStore(t *testing.T) {
 	router := testRouter(readinessFunc(func(context.Context) error { return nil }), nil)
-	response := request(router, http.MethodPost, "/api/v1/auth/register", "")
-	if response.Code != http.StatusNotFound {
-		t.Fatalf("business route without store = %d %s", response.Code, response.Body.String())
+	for _, path := range []string{"/api/v1/auth/register", "/api/v1/auth/captcha"} {
+		if path == "/api/v1/auth/captcha" {
+			response := request(router, http.MethodGet, path, "")
+			if response.Code != http.StatusNotFound {
+				t.Fatalf("captcha route without store = %d %s", response.Code, response.Body.String())
+			}
+			continue
+		}
+		response := request(router, http.MethodPost, path, "")
+		if response.Code != http.StatusNotFound {
+			t.Fatalf("business route without store = %d %s", response.Code, response.Body.String())
+		}
 	}
 }
 

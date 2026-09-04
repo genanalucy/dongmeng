@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -100,15 +101,15 @@ func TestRepositoryMigrationsClassifyConcurrentIndexOutsideTransaction(t *testin
 	if err != nil {
 		t.Fatalf("discover repository migrations: %v", err)
 	}
-	if len(migrations) != 7 {
-		t.Fatalf("migration count = %d, want 7", len(migrations))
+	if len(migrations) != 8 {
+		t.Fatalf("migration count = %d, want 8", len(migrations))
 	}
-	for index, version := range []string{"000001", "000002", "000003", "000004", "000005", "000006", "000007"} {
+	for index, version := range []string{"000001", "000002", "000003", "000004", "000005", "000006", "000007", "000008"} {
 		if migrations[index].Version != version {
 			t.Fatalf("migration[%d].Version = %q, want %q", index, migrations[index].Version, version)
 		}
 	}
-	if migrations[0].OutsideTransaction || !migrations[1].OutsideTransaction || migrations[2].OutsideTransaction || migrations[3].OutsideTransaction || migrations[4].OutsideTransaction || migrations[5].OutsideTransaction || migrations[6].OutsideTransaction {
+	if migrations[0].OutsideTransaction || !migrations[1].OutsideTransaction || migrations[2].OutsideTransaction || migrations[3].OutsideTransaction || migrations[4].OutsideTransaction || migrations[5].OutsideTransaction || migrations[6].OutsideTransaction || migrations[7].OutsideTransaction {
 		t.Fatalf("repository migration transaction classification mismatch")
 	}
 	index := migrations[1].ConcurrentIndex
@@ -384,8 +385,8 @@ func TestRunRecordsRepositoryChecksumsIsIdempotentAndFailsBeforeLaterMigration(t
 	if err := conn.QueryRow(ctx, "SELECT count(*) FROM "+ledger).Scan(&count); err != nil {
 		t.Fatal("count repository migration ledger")
 	}
-	if count != 6 {
-		t.Fatalf("ledger count = %d, want 6", count)
+	if count != 8 {
+		t.Fatalf("ledger count = %d, want 8", count)
 	}
 	var valid bool
 	if err := conn.QueryRow(ctx, `SELECT i.indisvalid FROM pg_catalog.pg_index i JOIN pg_catalog.pg_class c ON c.oid=i.indexrelid JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=$1 AND c.relname='refresh_tokens_expiry_idx'`, schema).Scan(&valid); err != nil {
@@ -410,7 +411,17 @@ func TestRunRecordsRepositoryChecksumsIsIdempotentAndFailsBeforeLaterMigration(t
 	}
 
 	directory := copyRepositoryMigrations(t)
-	if err := os.WriteFile(filepath.Join(directory, "000006_later.up.sql"), []byte("CREATE TABLE must_not_exist(id integer);\n"), 0o600); err != nil {
+	// The "later" migration must use the next unused version of the full
+	// repository set so the fixture stays valid as migrations are added.
+	repositoryMigrations, err := discoverMigrations(repositoryMigrationDirectory(t))
+	if err != nil {
+		t.Fatalf("discover repository migration copy: %v", err)
+	}
+	latestVersion, err := strconv.ParseUint(repositoryMigrations[len(repositoryMigrations)-1].Version, 10, 32)
+	if err != nil {
+		t.Fatalf("parse latest repository migration version: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(directory, fmt.Sprintf("%06d_later.up.sql", latestVersion+1)), []byte("CREATE TABLE must_not_exist(id integer);\n"), 0o600); err != nil {
 		t.Fatal("write later migration")
 	}
 	path := filepath.Join(directory, "000001_init.up.sql")
@@ -423,7 +434,7 @@ func TestRunRecordsRepositoryChecksumsIsIdempotentAndFailsBeforeLaterMigration(t
 	}
 	err = Run(ctx, Config{DatabaseURL: dsn, Directory: directory, Schema: schema})
 	if err == nil || !strings.Contains(err.Error(), "migration checksum mismatch for version 000001") {
-		t.Fatal("repository checksum mismatch did not fail through ledger validation")
+		t.Fatalf("repository checksum mismatch did not fail through ledger validation: %v", err)
 	}
 	var laterExists bool
 	if err := conn.QueryRow(ctx, "SELECT to_regclass($1) IS NOT NULL", schema+".must_not_exist").Scan(&laterExists); err != nil {
@@ -441,22 +452,28 @@ func repositoryMigrationDirectory(t *testing.T) string {
 
 func copyRepositoryMigrations(t *testing.T) string {
 	t.Helper()
+	source := repositoryMigrationDirectory(t)
+	entries, err := os.ReadDir(source)
+	if err != nil {
+		t.Fatalf("read repository migration directory: %v", err)
+	}
 	directory := t.TempDir()
-	for _, name := range []string{
-		"000001_init.up.sql",
-		"000002_refresh_tokens_expiry_idx.up.sql",
-		"000003_business_lifecycle.up.sql",
-		"000004_phone_authentication.up.sql",
-		"000005_email_registration_verifications.up.sql",
-		"000006_registration_verification_reservations.up.sql",
-	} {
-		contents, err := os.ReadFile(filepath.Join(repositoryMigrationDirectory(t), name))
+	copied := 0
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".up.sql") {
+			continue
+		}
+		contents, err := os.ReadFile(filepath.Join(source, entry.Name()))
 		if err != nil {
-			t.Fatalf("read repository migration %s: %v", name, err)
+			t.Fatalf("read repository migration %s: %v", entry.Name(), err)
 		}
-		if err := os.WriteFile(filepath.Join(directory, name), contents, 0o600); err != nil {
-			t.Fatalf("copy repository migration %s: %v", name, err)
+		if err := os.WriteFile(filepath.Join(directory, entry.Name()), contents, 0o600); err != nil {
+			t.Fatalf("copy repository migration %s: %v", entry.Name(), err)
 		}
+		copied++
+	}
+	if copied == 0 {
+		t.Fatal("no repository up migrations found to copy")
 	}
 	return directory
 }

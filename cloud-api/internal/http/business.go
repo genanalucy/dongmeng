@@ -59,6 +59,7 @@ type api struct {
 	authorizer               authService
 	verification             PhoneVerificationService
 	registrationVerification *auth.EmailRegistrationService
+	captcha                  *auth.CaptchaService
 	logger                   *slog.Logger
 	now                      func() time.Time
 }
@@ -171,8 +172,154 @@ func domainError(w http.ResponseWriter, r *http.Request, err error) {
 		writeError(w, r, http.StatusInternalServerError, "internal_error")
 	}
 }
-func (a api) registerDeprecated(w http.ResponseWriter, r *http.Request) {
-	writeError(w, r, http.StatusGone, "registration_verification_required")
+
+// registrationVerificationUnavailable is the stable migration boundary for
+// the email verification registration endpoints. They are unroutable by
+// policy: captcha registration is the only registration path.
+func registrationVerificationUnavailable(w http.ResponseWriter, r *http.Request) {
+	writeError(w, r, http.StatusServiceUnavailable, "registration_verification_not_enabled")
+}
+
+func (a api) warnCaptcha(r *http.Request, stage string) {
+	if a.logger != nil {
+		// Only bounded metadata: never the challenge, answer, captcha id,
+		// password, email, or SVG body.
+		a.logger.Warn("captcha registration did not complete", "request_id", RequestIDFromContext(r.Context()), "stage", stage)
+	}
+}
+
+func (a api) captchaIssue(w http.ResponseWriter, r *http.Request) {
+	if a.captcha == nil {
+		writeError(w, r, http.StatusServiceUnavailable, "captcha_not_enabled")
+		return
+	}
+	clientIP := trustedClientIP(r)
+	if !clientIP.IsValid() {
+		inputError(w, r)
+		return
+	}
+	draft, err := a.captcha.Issue()
+	if err != nil {
+		a.warnCaptcha(r, "issue")
+		writeError(w, r, http.StatusInternalServerError, "internal_error")
+		return
+	}
+	svg := auth.RenderCaptchaSVG(draft.Challenge)
+	if svg == "" {
+		a.warnCaptcha(r, "render")
+		writeError(w, r, http.StatusInternalServerError, "internal_error")
+		return
+	}
+	captcha, err := a.store.CreateRegistrationCaptcha(r.Context(), domain.CreateRegistrationCaptchaParams{
+		AnswerHash:     draft.AnswerHash,
+		AnswerSalt:     draft.AnswerSalt,
+		IPRateLimitKey: registrationRateLimitKey(a.captcha.RateLimitKeySecret, "captcha:issue:"+clientIP.String()),
+		Now:            a.now().UTC(),
+		ExpiresAt:      draft.ExpiresAt,
+	})
+	if err != nil {
+		if errors.Is(err, domain.ErrRateLimited) {
+			w.Header().Set("Retry-After", "60")
+			writeError(w, r, http.StatusTooManyRequests, "rate_limited")
+			return
+		}
+		a.warnCaptcha(r, "storage")
+		writeError(w, r, http.StatusInternalServerError, "internal_error")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"captcha_id": captcha.ID,
+		"image":      svg,
+		"image_type": "image/svg+xml",
+		"expires_in": int(auth.CaptchaTTL.Seconds()),
+	})
+}
+
+func (a api) register(w http.ResponseWriter, r *http.Request) {
+	var x struct {
+		Username      string `json:"username"`
+		Email         string `json:"email"`
+		Password      string `json:"password"`
+		CaptchaID     string `json:"captcha_id"`
+		CaptchaAnswer string `json:"captcha_answer"`
+	}
+	if decode(w, r, &x) != nil || x.Username == "" || x.Email == "" || x.Password == "" || x.CaptchaID == "" || x.CaptchaAnswer == "" {
+		inputError(w, r)
+		return
+	}
+	if len(x.CaptchaAnswer) > auth.CaptchaAnswerMaxBytes {
+		inputError(w, r)
+		return
+	}
+	input, err := domain.ParseRegistrationVerificationInput(x.Username, x.Email, x.Password)
+	if err != nil {
+		inputError(w, r)
+		return
+	}
+	captchaID, err := uuid.Parse(x.CaptchaID)
+	if err != nil || captchaID == uuid.Nil || captchaID.String() != x.CaptchaID {
+		inputError(w, r)
+		return
+	}
+	if a.captcha == nil {
+		writeError(w, r, http.StatusServiceUnavailable, "captcha_not_enabled")
+		return
+	}
+	clientIP := trustedClientIP(r)
+	if !clientIP.IsValid() {
+		inputError(w, r)
+		return
+	}
+	passwordHash, err := auth.HashPassword(input.Password.String())
+	if err != nil {
+		inputError(w, r)
+		return
+	}
+	user, trial, err := a.store.RegisterWithCaptcha(r.Context(), domain.RegisterWithCaptchaParams{
+		Username:       input.Username.String(),
+		Email:          input.Email.String(),
+		PasswordHash:   passwordHash,
+		CaptchaID:      captchaID,
+		CaptchaAnswer:  x.CaptchaAnswer,
+		AnswerPepper:   a.captcha.AnswerPepper,
+		IPRateLimitKey: registrationRateLimitKey(a.captcha.RateLimitKeySecret, "captcha:register:"+clientIP.String()),
+		Now:            a.now().UTC(),
+	})
+	if err != nil {
+		switch {
+		case errors.Is(err, domain.ErrCaptchaFailed):
+			writeError(w, r, http.StatusBadRequest, "captcha_failed")
+		case errors.Is(err, domain.ErrRateLimited):
+			w.Header().Set("Retry-After", "60")
+			writeError(w, r, http.StatusTooManyRequests, "rate_limited")
+		case errors.Is(err, domain.ErrInvalid):
+			inputError(w, r)
+		case errors.Is(err, domain.ErrConflict):
+			domainError(w, r, err)
+		default:
+			a.warnCaptcha(r, "storage")
+			writeError(w, r, http.StatusInternalServerError, "internal_error")
+		}
+		return
+	}
+	a.writeRegistrationCreated(w, r, user, trial)
+}
+
+func (a api) writeRegistrationCreated(w http.ResponseWriter, r *http.Request, user domain.User, trial domain.Entitlement) {
+	access, err := a.tokens.AccessToken(user.ID, user.Role, 15*time.Minute, a.now())
+	if err != nil {
+		writeError(w, r, http.StatusInternalServerError, "internal_error")
+		return
+	}
+	refresh, err := (auth.RefreshManager{Store: a.store}).Issue(r.Context(), user.ID, 30*24*time.Hour, a.now())
+	if err != nil {
+		domainError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"user": publicUser(user), "trial_entitlement": trial,
+		"access_token": access, "refresh_token": refresh.Plaintext, "token_type": "Bearer", "expires_in": 900,
+	})
 }
 
 func trustedClientIP(r *http.Request) netip.Addr {
@@ -304,20 +451,7 @@ func (a api) registrationVerificationConfirm(w http.ResponseWriter, r *http.Requ
 		writeError(w, r, http.StatusInternalServerError, "internal_error")
 		return
 	}
-	access, err := a.tokens.AccessToken(user.ID, user.Role, 15*time.Minute, a.now())
-	if err != nil {
-		writeError(w, r, http.StatusInternalServerError, "internal_error")
-		return
-	}
-	refresh, err := (auth.RefreshManager{Store: a.store}).Issue(r.Context(), user.ID, 30*24*time.Hour, a.now())
-	if err != nil {
-		domainError(w, r, err)
-		return
-	}
-	writeJSON(w, http.StatusCreated, map[string]any{
-		"user": publicUser(user), "trial_entitlement": trial,
-		"access_token": access, "refresh_token": refresh.Plaintext, "token_type": "Bearer", "expires_in": 900,
-	})
+	a.writeRegistrationCreated(w, r, user, trial)
 }
 func invalidCredentials(w http.ResponseWriter, r *http.Request) {
 	writeError(w, r, http.StatusUnauthorized, "invalid_credentials")

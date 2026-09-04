@@ -1,62 +1,53 @@
 package main
 
 import (
+	"bytes"
 	"testing"
 	"time"
 
+	"github.com/dngmeng/cloud-api/internal/auth"
 	"github.com/dngmeng/cloud-api/internal/config"
 )
 
-func TestRegistrationVerificationDependenciesAreDisabledWithoutFeatureGate(t *testing.T) {
-	dependencies, err := newRegistrationVerificationDependencies(config.Config{})
-	if err != nil {
-		t.Fatalf("newRegistrationVerificationDependencies() error = %v", err)
-	}
-	if dependencies.sender != nil {
-		t.Fatalf("dependencies = %#v, want disabled dependencies", dependencies)
-	}
-}
-
-func TestRouterOptionsReceivesEnabledRegistrationVerificationService(t *testing.T) {
-	dependencies, err := newRegistrationVerificationDependencies(config.Config{
-		EmailVerificationEnabled:         true,
-		SMTPHost:                         "127.0.0.1",
-		SMTPPort:                         25,
-		SMTPFrom:                         "no-reply@verba.example",
-		SMTPConnectTimeout:               time.Second,
-		SMTPSendTimeout:                  time.Second,
-		EmailVerificationRateLimitSecret: "rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr",
-	})
-	if err != nil {
-		t.Fatalf("newRegistrationVerificationDependencies() error = %v", err)
-	}
-
-	options := newRouterOptions(config.Config{}, nil, nil, dependencies)
-	if options.RegistrationVerification != dependencies.service {
-		t.Fatal("router options did not receive the registration verification service")
+func TestNewCaptchaServiceFailsClosedWithoutValidSecret(t *testing.T) {
+	for _, cfg := range []config.Config{
+		{},
+		{CaptchaSecret: "tooshort"},
+	} {
+		if _, err := newCaptchaService(cfg); err == nil {
+			t.Fatalf("newCaptchaService(%+v) error = nil, want fail-closed rejection", cfg)
+		}
 	}
 }
 
-func TestNewRegistrationCodeSenderUsesSMTPConfig(t *testing.T) {
-	sender, err := newRegistrationCodeSender(config.Config{
-		EmailVerificationEnabled: true,
-		SMTPHost:                 "127.0.0.1",
-		SMTPPort:                 25,
-		SMTPFrom:                 "no-reply@verba.example",
-		SMTPConnectTimeout:       time.Second,
-		SMTPSendTimeout:          time.Second,
-	})
+func TestNewCaptchaServiceBuildsIssuingPrimitiveFromValidConfig(t *testing.T) {
+	service, err := newCaptchaService(config.Config{CaptchaSecret: string(bytes.Repeat([]byte("c"), auth.MinimumSecretBytes))})
 	if err != nil {
-		t.Fatalf("newRegistrationCodeSender() error = %v", err)
+		t.Fatalf("newCaptchaService() error = %v", err)
 	}
-	if sender == nil {
-		t.Fatal("newRegistrationCodeSender() returned nil sender")
+	draft, err := service.Issue()
+	if err != nil {
+		t.Fatalf("Issue() error = %v", err)
+	}
+	if draft.Challenge == "" || len(draft.AnswerHash) != 32 || len(draft.AnswerSalt) == 0 || !draft.ExpiresAt.After(time.Now().Add(auth.CaptchaTTL-time.Minute)) {
+		t.Fatalf("draft = %+v", draft)
 	}
 }
 
-func TestRegistrationVerificationDependenciesRequireEnabledSafeConfig(t *testing.T) {
-	_, err := newRegistrationVerificationDependencies(config.Config{EmailVerificationEnabled: true})
-	if err == nil {
-		t.Fatal("newRegistrationVerificationDependencies() error = nil")
+func TestRouterOptionsReceiveCaptchaServiceAndNoEmailVerificationWiring(t *testing.T) {
+	service, err := newCaptchaService(config.Config{CaptchaSecret: string(bytes.Repeat([]byte("c"), auth.MinimumSecretBytes))})
+	if err != nil {
+		t.Fatalf("newCaptchaService() error = %v", err)
+	}
+
+	options := newRouterOptions(config.Config{}, nil, nil, service)
+	if options.Captcha != service {
+		t.Fatal("router options did not receive the captcha service")
+	}
+	// EMAIL_VERIFICATION_ENABLED must no longer enable the registration path:
+	// no email verification service is wired into the router regardless of
+	// configuration.
+	if options.RegistrationVerification != nil {
+		t.Fatal("router options wired a registration verification service")
 	}
 }

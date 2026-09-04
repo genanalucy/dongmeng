@@ -6,9 +6,11 @@ Base URL: `http://127.0.0.1:8080`. All JSON errors are `{ "error": "code", "requ
 
 | Method | Path | Body | Result |
 |---|---|---|---|
-| POST | `/api/v1/auth/register` | `email`, `password` | `201 user, trial_entitlement`; creates the user and fixed 3-day trial atomically |
-| POST | `/api/v1/auth/login` | `email`, `password` | access/refresh token pair |
+| GET | `/api/v1/auth/captcha` | | `200 captcha_id, image (self-contained SVG string), image_type="image/svg+xml", expires_in=300`; challenges are cryptographically random over an unambiguous alphanumeric set, rendered locally, persisted only as a salted answer hash with a 5-minute expiry and at most 5 verification attempts; successful, expired, or exhausted challenges are consumed. Per trusted client IP issue limit returns `429 rate_limited` with `Retry-After` |
+| POST | `/api/v1/auth/register` | `username`, `email`, `password`, `captcha_id`, `captcha_answer` | `201 user, trial_entitlement, access_token, refresh_token`; on success the formal user, password credential, and fixed 3-day trial are created in one transaction and tokens are issued immediately. Answer matching is case-insensitive and trims surrounding whitespace. Failures: `400 captcha_failed` (unknown, wrong-answer, expired, or exhausted captcha; the attempt is consumed), `409 conflict` (username or email already registered; the captcha stays usable), `429 rate_limited` per trusted client IP register window |
+| POST | `/api/v1/auth/login` | `identifier`, `password` | access/refresh token pair |
 | POST | `/api/v1/auth/refresh` | `refresh_token` | rotated pair; replay revokes the complete refresh family |
+| POST | `/api/v1/auth/registration-verifications`, `/api/v1/auth/registration-verifications/confirm` | | permanently disabled migration boundary: `503 registration_verification_not_enabled` even when legacy email verification configuration is present |
 | GET | `/healthz`, `/api/v1/health` | | liveness |
 | GET | `/readyz`, `/api/v1/ready` | | PostgreSQL readiness |
 | GET | `/api/v1/config` | | non-secret service metadata |
@@ -79,3 +81,5 @@ Use it only in the Agent WebSocket protocols `translation.v1` and `translation.j
 ## Runtime configuration
 
 `TOKEN_ISSUER`, `ACCESS_TOKEN_AUDIENCE`, `TRANSLATION_SESSION_AUDIENCE`, `ACCESS_TOKEN_HS256_KEY`, and `TRANSLATION_SESSION_HS256_KEY` are mandatory. Audiences and keys must be distinct; both keys require at least 32 bytes. Production secret injection must supply the keys—do not commit or log them.
+
+`CAPTCHA_SECRET` (at least 32 bytes) is mandatory and fail-closed: it backs captcha answer hashing and per-IP rate-limit keys, and startup refuses to run without it. `EMAIL_VERIFICATION_ENABLED` and its SMTP settings are retained for rollback configuration compatibility only; they no longer enable any registration route.

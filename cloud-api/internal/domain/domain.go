@@ -29,6 +29,8 @@ var (
 	ErrInvalid                        = errors.New("invalid input")
 	ErrNoEntitlement                  = errors.New("no active entitlement")
 	ErrRegistrationVerificationFailed = errors.New("registration verification failed")
+	ErrCaptchaFailed                  = errors.New("captcha failed")
+	ErrRateLimited                    = errors.New("rate limited")
 )
 
 type Role string
@@ -511,6 +513,25 @@ type ConfirmRegistrationVerificationParams struct {
 	Now               time.Time
 }
 
+type CreateRegistrationCaptchaParams struct {
+	AnswerHash, AnswerSalt []byte
+	IPRateLimitKey         []byte
+	Now, ExpiresAt         time.Time
+}
+
+type RegistrationCaptcha struct {
+	ID        uuid.UUID
+	ExpiresAt time.Time
+}
+
+type RegisterWithCaptchaParams struct {
+	Username, Email, PasswordHash string
+	CaptchaID                     uuid.UUID
+	CaptchaAnswer                 string
+	AnswerPepper, IPRateLimitKey  []byte
+	Now                           time.Time
+}
+
 type CreateRefreshParams struct {
 	UserID, FamilyID uuid.UUID
 	Hash             []byte
@@ -552,6 +573,14 @@ type Store interface {
 	RequestRegistrationVerification(context.Context, CreateRegistrationVerificationParams) (RegistrationVerification, error)
 	ConfirmRegistrationVerification(context.Context, ConfirmRegistrationVerificationParams) (RegisterParams, error)
 	InvalidateRegistrationVerification(context.Context, InvalidateRegistrationVerificationParams) error
+	// CreateRegistrationCaptcha persists only the salted answer hash and
+	// enforces the per-IP captcha issue window.
+	CreateRegistrationCaptcha(context.Context, CreateRegistrationCaptchaParams) (RegistrationCaptcha, error)
+	// RegisterWithCaptcha atomically verifies one captcha answer and, on match,
+	// creates the user, password credential, and trial entitlement in a single
+	// transaction. The captcha is consumed only by the committed success,
+	// expiry, attempt exhaustion, or a matching verification.
+	RegisterWithCaptcha(context.Context, RegisterWithCaptchaParams) (User, Entitlement, error)
 	UserByEmail(context.Context, string) (User, string, error)
 	UserByPhone(context.Context, string) (User, string, error)
 	UserByUsername(context.Context, string) (User, string, error)
