@@ -1116,12 +1116,11 @@ private fun AccountSettingsPage(modifier: Modifier, onBack: () -> Unit, accountV
     val identityProfile = state.identityProfile
     AccountIdentitySettingsScreen(
         username = identityProfile?.username ?: state.overview?.username ?: state.user?.username.orEmpty(),
-        email = identityProfile?.email.orEmpty(),
-        maskedPhone = identityProfile?.maskedPhone.orEmpty(),
         loading = state.loading,
         message = state.message,
         onBack = onBack,
-        onSubmit = accountViewModel::updateIdentity,
+        onDeleteAccount = accountViewModel::deleteAccount,
+        isAdmin = state.isAdmin,
         modifier = modifier,
     )
 }
@@ -1186,10 +1185,10 @@ private fun AccountPage(
                         loading = state.loading,
                         registration = state.registration,
                         onLogin = accountViewModel::login,
-                        onRequestVerification = accountViewModel::requestRegistrationVerification,
-                        onConfirmVerification = accountViewModel::confirmRegistrationVerification,
+                        onRequestCaptcha = accountViewModel::requestRegistrationCaptcha,
+                        onSubmitCaptcha = accountViewModel::confirmRegistrationCaptcha,
+                        onRefreshCaptcha = accountViewModel::refreshRegistrationCaptcha,
                         onEditDetails = accountViewModel::returnToRegistrationDetails,
-                        onResend = accountViewModel::resendRegistrationVerification,
                         initialIdentifier = latestLoginIdentifier,
                     )
                 }

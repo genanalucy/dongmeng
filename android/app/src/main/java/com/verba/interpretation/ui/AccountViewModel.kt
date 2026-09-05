@@ -20,9 +20,11 @@ import com.verba.interpretation.cloud.LoginIdentifierStore
 import com.verba.interpretation.cloud.SharedPreferencesInstallationIdStore
 import com.verba.interpretation.cloud.SharedPreferencesLoginIdentifierStore
 import com.verba.interpretation.cloud.UsagePage
+import com.verba.interpretation.ui.account.AccountDeletionPolicy
 import com.verba.interpretation.ui.account.AccountIdentityFormPolicy
+import com.verba.interpretation.ui.account.AuthenticationFormPolicy
 import com.verba.interpretation.ui.account.LatestLoginIdentifierPolicy
-import com.verba.interpretation.ui.account.RegistrationResendPolicy
+import com.verba.interpretation.cloud.SlideCaptchaChallenge
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -33,7 +35,40 @@ import kotlinx.coroutines.withContext
 
 sealed interface RegistrationUiState {
     data object Details : RegistrationUiState
-    data class Challenge(val username: String, val email: String, val maskedEmail: String, val resendAvailableAtMillis: Long) : RegistrationUiState
+
+    /**
+     * 活跃注册流程中的滑块拼图挑战。仅承载验证码素材与几何信息；
+     * 用户名/邮箱/密码始终只留在表单与调用参数中，不进入状态或存储。
+     */
+    data class SlideCaptcha(
+        val captchaId: String,
+        val tolerancePx: Int,
+        val challengeWidth: Int,
+        val challengeHeight: Int,
+        val challengeImageBase64: String,
+        val tileImageBase64: String,
+        val tileWidth: Int,
+        val tileHeight: Int,
+        val tileStartX: Int,
+        val tileStartY: Int,
+        val expiresAtMillis: Long,
+    ) : RegistrationUiState {
+        companion object {
+            fun from(challenge: SlideCaptchaChallenge, nowMillis: Long): SlideCaptcha = SlideCaptcha(
+                captchaId = challenge.captchaId,
+                tolerancePx = challenge.tolerancePx,
+                challengeWidth = challenge.challenge.width,
+                challengeHeight = challenge.challenge.height,
+                challengeImageBase64 = challenge.challenge.imageBase64,
+                tileImageBase64 = challenge.tile.image.imageBase64,
+                tileWidth = challenge.tile.image.width,
+                tileHeight = challenge.tile.image.height,
+                tileStartX = challenge.tile.startX,
+                tileStartY = challenge.tile.startY,
+                expiresAtMillis = nowMillis + challenge.expiresInSeconds * 1_000L,
+            )
+        }
+    }
 }
 
 data class AccountUiState(
@@ -64,11 +99,13 @@ class AccountViewModel(
     private val clockMillis: () -> Long = System::currentTimeMillis,
     private val registrationRequestGate: RegistrationRequestGate = AtomicRegistrationRequestGate(),
     private val loginIdentifierStore: LoginIdentifierStore = SharedPreferencesLoginIdentifierStore(application),
+    private val installationIdStore: InstallationIdStore = SharedPreferencesInstallationIdStore(application),
 ) : AndroidViewModel(application) {
     companion object {
         private const val UsagePageSize = 20
         private const val SafeRequestError = "账户状态暂时无法更新，请稍后重试。"
         private const val SessionExpiredMessage = "登录已过期，请重新登录。"
+        private const val CaptchaConsumedMessage = "拼图位置未通过校验，已为你获取新的拼图。"
 
         fun factory(application: Application): ViewModelProvider.Factory = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
@@ -120,18 +157,28 @@ class AccountViewModel(
         }
     }
 
-    fun requestRegistrationVerification(username: String, email: String, password: String) {
+    fun requestRegistrationCaptcha(username: String, email: String, password: String) {
+        val validation = AuthenticationFormPolicy.register(username, email, password, password)
+        if (!validation.isValid) return
+        loadRegistrationCaptcha()
+    }
+
+    fun refreshRegistrationCaptcha() { loadRegistrationCaptcha() }
+
+    fun returnToRegistrationDetails() {
+        if (mutableState.value.registration !is RegistrationUiState.SlideCaptcha) return
+        mutableState.value = mutableState.value.copy(registration = RegistrationUiState.Details, message = null)
+    }
+
+    private fun loadRegistrationCaptcha() {
         if (!registrationRequestGate.tryAcquire()) return
         mutableState.value = mutableState.value.copy(loading = true, message = null)
         viewModelScope.launch {
             try {
-                // This ViewModel never writes the password to state, SavedStateHandle, or storage.
-                val retryAfterSeconds = withContext(ioDispatcher) {
-                    api.requestRegistrationVerification(username, email, password)
-                }
+                val challenge = withContext(ioDispatcher) { api.fetchRegistrationCaptcha() }
                 mutableState.value = mutableState.value.copy(
                     loading = false,
-                    registration = RegistrationUiState.Challenge(username, email, email.maskedEmail(), clockMillis() + retryAfterSeconds * 1_000L),
+                    registration = RegistrationUiState.SlideCaptcha.from(challenge, clockMillis()),
                 )
             } catch (error: Exception) {
                 handleRequestFailure(error)
@@ -141,23 +188,16 @@ class AccountViewModel(
         }
     }
 
-    fun resendRegistrationVerification(username: String, email: String, password: String) {
-        val challenge = mutableState.value.registration as? RegistrationUiState.Challenge ?: return
-        if (challenge.username != username || challenge.email != email || RegistrationResendPolicy.remainingSeconds(challenge.resendAvailableAtMillis, clockMillis()) != 0) return
-        requestRegistrationVerification(username, email, password)
-    }
-
-    fun returnToRegistrationDetails() {
-        mutableState.value = mutableState.value.copy(registration = RegistrationUiState.Details, message = null)
-    }
-
-    fun confirmRegistrationVerification(email: String, code: String) {
+    fun confirmRegistrationCaptcha(username: String, email: String, password: String, captchaX: Int) {
+        val captcha = mutableState.value.registration as? RegistrationUiState.SlideCaptcha ?: return
+        if (!registrationRequestGate.tryAcquire()) return
+        mutableState.value = mutableState.value.copy(loading = true, message = null)
         viewModelScope.launch {
-            mutableState.value = mutableState.value.copy(loading = true, message = null)
+            var captchaConsumed = false
             try {
-                // This ViewModel never writes the code to state, SavedStateHandle, or storage.
+                // 密码仅在本调用内流转，绝不写入 state、SavedStateHandle 或存储。
                 val registration = withContext(ioDispatcher) {
-                    api.confirmRegistrationVerification(email, code)
+                    api.register(username, email, password, captcha.captchaId, captchaX)
                 }
                 withContext(ioDispatcher) { api.storeTokens(registration.tokens) }
                 LatestLoginIdentifierPolicy.registrationIdentifier(registration.user.username)?.let(::rememberLoginIdentifier)
@@ -168,8 +208,19 @@ class AccountViewModel(
                     previewingUserExperience = mutableState.value.previewingUserExperience && registration.user.role == CloudRole.ADMIN,
                 )
             } catch (error: Exception) {
-                handleRequestFailure(error)
+                if (error is CloudApiException && error.sessionExpired) {
+                    mutableState.value = AccountUiState(message = SessionExpiredMessage)
+                } else if (error is CloudApiException && error.statusCode == 400) {
+                    // captcha_failed：服务端已消费该验证码，必须换新拼图重试。
+                    captchaConsumed = true
+                    mutableState.value = mutableState.value.copy(loading = false, message = CaptchaConsumedMessage)
+                } else {
+                    handleRequestFailure(error)
+                }
+            } finally {
+                registrationRequestGate.release()
             }
+            if (captchaConsumed) loadRegistrationCaptcha()
         }
     }
 
@@ -212,6 +263,34 @@ class AccountViewModel(
             try {
                 withContext(ioDispatcher) { api.logout() }
                 mutableState.value = AccountUiState(message = "已退出登录。")
+            } catch (error: Exception) {
+                handleRequestFailure(error)
+            }
+        }
+    }
+
+    /**
+     * 自助删除：确认串必须与当前展示的用户名精确一致才会发起请求；
+     * 成功（204）后 CloudApi 已清除令牌，这里再清除登录标识与安装标识，
+     * 并把整个账户状态重置为未登录（导航随之回到认证入口）。
+     */
+    fun deleteAccount(confirmation: String) {
+        val state = mutableState.value
+        val displayedUsername = state.identityProfile?.username ?: state.user?.username
+        if (displayedUsername == null || !AccountDeletionPolicy.confirmationMatches(displayedUsername, confirmation)) {
+            mutableState.value = state.copy(message = AccountDeletionPolicy.MismatchMessage)
+            return
+        }
+        viewModelScope.launch {
+            mutableState.value = mutableState.value.copy(loading = true, message = null)
+            try {
+                withContext(ioDispatcher) {
+                    api.deleteAccount(AccountDeletionPolicy.normalizedConfirmation(confirmation))
+                    loginIdentifierStore.clear()
+                    installationIdStore.clear()
+                }
+                mutableLatestLoginIdentifier.value = ""
+                mutableState.value = AccountUiState(message = "账户已删除，本机登录信息已清除。")
             } catch (error: Exception) {
                 handleRequestFailure(error)
             }
@@ -268,11 +347,4 @@ class AccountViewModel(
         mutableLatestLoginIdentifier.value = identifier
     }
 
-}
-
-private fun String.maskedEmail(): String {
-    val at = indexOf('@')
-    if (at <= 0) return "***"
-    val local = substring(0, at)
-    return "${local.first()}***${local.last()}${substring(at)}"
 }

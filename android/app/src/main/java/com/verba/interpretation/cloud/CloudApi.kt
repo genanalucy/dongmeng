@@ -40,22 +40,34 @@ data class IdentityUpdateRequest(
         .toString()
 }
 
-data class RegistrationVerificationRequest(val username: String, val email: String, val password: String) {
-    fun toJson(): String = JSONObject()
-        .put("username", username)
-        .put("email", email)
-        .put("password", password)
-        .toString()
-}
-
-data class RegistrationVerificationConfirmation(val email: String, val code: String) {
-    fun toJson(): String = JSONObject()
-        .put("email", email)
-        .put("code", code)
-        .toString()
-}
-
 data class RegistrationResponse(val user: CloudUser, val trialEntitlement: CloudEntitlement, val tokens: AuthTokens)
+
+/** One rendered image of a slide captcha challenge (base64 bytes plus pixel metadata). */
+data class SlideCaptchaImage(
+    val imageBase64: String,
+    val imageType: String,
+    val width: Int,
+    val height: Int,
+)
+
+/** The draggable puzzle piece with its origin inside the challenge image. */
+data class SlideCaptchaTile(
+    val image: SlideCaptchaImage,
+    val startX: Int,
+    val startY: Int,
+)
+
+/**
+ * GET /api/v1/auth/captcha contract from Cloud a16cb0b. Only the challenge
+ * geometry and rendered assets travel here; the hidden target x never does.
+ */
+data class SlideCaptchaChallenge(
+    val captchaId: String,
+    val expiresInSeconds: Int,
+    val tolerancePx: Int,
+    val challenge: SlideCaptchaImage,
+    val tile: SlideCaptchaTile,
+)
 
 data class LoginRequest(val identifier: String, val password: String) {
     fun toJson(): String = JSONObject()
@@ -76,10 +88,9 @@ interface CloudTranslationSessionService {
 }
 
 interface AccountApi {
-    fun requestRegistrationVerification(username: String, email: String, password: String): Int =
-        throw UnsupportedOperationException("邮箱验证码注册未实现")
-    fun confirmRegistrationVerification(email: String, code: String): RegistrationResponse =
-        throw UnsupportedOperationException("邮箱验证码注册未实现")
+    fun fetchRegistrationCaptcha(): SlideCaptchaChallenge
+    fun register(username: String, email: String, password: String, captchaId: String, captchaX: Int): RegistrationResponse
+    fun deleteAccount(username: String)
 
     fun login(identifier: String, password: String): AuthTokens
     fun logout()
@@ -114,21 +125,40 @@ class CloudApi private constructor(
         client: OkHttpClient = OkHttpClient(),
     ) : this({ endpoint }, tokenStore, installationIdStore, client)
 
-    override fun requestRegistrationVerification(username: String, email: String, password: String): Int = try {
-        publicPost(
-            "auth/registration-verifications",
-            JSONObject(RegistrationVerificationRequest(username, email, password).toJson()),
-            expected = 202,
-        ).requiredRetryAfterSeconds()
-    } catch (error: CloudApiException) {
-        if (error.statusCode == 409) throw CloudApiException("该用户名或邮箱暂不可用，请更换后重试。", 409)
-        throw error
+    /** 拼图验证码：严格解析，任何字段缺失或几何越界都视为服务响应无效。 */
+    override fun fetchRegistrationCaptcha(): SlideCaptchaChallenge {
+        val json = publicGet("auth/captcha")
+        val challengeImage = parseCaptchaImage(json.requiredObject("challenge"), expectWidthRange = 1..4096)
+        val tileJson = json.requiredObject("tile")
+        val tileImage = parseCaptchaImage(tileJson, expectWidthRange = 1..challengeImage.width)
+        val startX = tileJson.requiredInt("start_x")
+        val startY = tileJson.requiredInt("start_y")
+        val expiresInSeconds = json.requiredInt("expires_in")
+        val tolerancePx = json.requiredInt("tolerance_px")
+        val captchaId = json.requiredString("captcha_id")
+        if (expiresInSeconds <= 0 || tolerancePx < 0) throw CloudApiException("服务返回了无效的验证码有效期。")
+        if (tileImage.height !in 1..challengeImage.height) throw CloudApiException("服务返回了无效的拼图尺寸。")
+        if (startX !in 0..(challengeImage.width - tileImage.width) || startY !in 0..(challengeImage.height - tileImage.height)) {
+            throw CloudApiException("服务返回了无效的拼图位置。")
+        }
+        return SlideCaptchaChallenge(
+            captchaId = captchaId,
+            expiresInSeconds = expiresInSeconds,
+            tolerancePx = tolerancePx,
+            challenge = challengeImage,
+            tile = SlideCaptchaTile(image = tileImage, startX = startX, startY = startY),
+        )
     }
 
-    override fun confirmRegistrationVerification(email: String, code: String): RegistrationResponse = try {
+    override fun register(username: String, email: String, password: String, captchaId: String, captchaX: Int): RegistrationResponse = try {
         val response = publicPost(
-            "auth/registration-verifications/confirm",
-            JSONObject(RegistrationVerificationConfirmation(email, code).toJson()),
+            "auth/register",
+            JSONObject()
+                .put("username", username)
+                .put("email", email)
+                .put("password", password)
+                .put("captcha_id", captchaId)
+                .put("captcha_x", captchaX),
             expected = 201,
         )
         RegistrationResponse(
@@ -137,8 +167,27 @@ class CloudApi private constructor(
             tokens = parseTokens(response),
         )
     } catch (error: CloudApiException) {
-        if (error.statusCode == 409) throw CloudApiException("该用户名或邮箱暂不可用，请更换后重试。", 409)
-        throw error
+        when (error.statusCode) {
+            // captcha_failed 意味着验证码已被服务端消费，调用方必须获取新拼图。
+            400 -> throw CloudApiException("拼图位置未通过校验，请完成新的拼图。", 400)
+            409 -> throw CloudApiException("该用户名或邮箱暂不可用，请更换后重试。", 409)
+            else -> throw error
+        }
+    }
+
+    /** DELETE /api/v1/account：204 成功后本机令牌立即失效清除。 */
+    override fun deleteAccount(username: String) {
+        try {
+            authorizedRequestNoContent("account", JSONObject().put("username", username), expected = 204, method = "DELETE")
+        } catch (error: CloudApiException) {
+            when (error.statusCode) {
+                400 -> throw CloudApiException("提交的用户名无效，请检查后重试。", 400)
+                403 -> throw CloudApiException("管理员账户不支持自助删除。", 403)
+                409 -> throw CloudApiException("输入的用户名与当前账户不一致，请核对后重试。", 409)
+                else -> throw error
+            }
+        }
+        tokenStore.clear()
     }
 
     override fun login(identifier: String, password: String): AuthTokens {
@@ -266,6 +315,7 @@ class CloudApi private constructor(
     )
 
     private fun publicPost(path: String, body: JSONObject, expected: Int = 200): JSONObject = execute(path, body, null, expected)
+    private fun publicGet(path: String): JSONObject = execute(path, null, null, 200, "GET")
     private fun authorized(path: String, query: Map<String, String> = emptyMap()): JSONObject = authorizedRequest(path, null, "GET", 200, query)
     private fun authorizedPost(path: String, body: JSONObject, expected: Int = 200): JSONObject = authorizedRequest(path, body, "POST", expected)
     private fun authorizedPostNoContent(path: String, body: JSONObject, expected: Int) { authorizedRequestNoContent(path, body, expected) }
@@ -282,12 +332,12 @@ class CloudApi private constructor(
         return execute(path, body, refreshed.accessToken, expected, method, query)
     }
 
-    private fun authorizedRequestNoContent(path: String, body: JSONObject, expected: Int) {
+    private fun authorizedRequestNoContent(path: String, body: JSONObject, expected: Int, method: String = "POST") {
         val tokens = tokenStore.read() ?: throw CloudApiException("请先登录账户。", 401)
-        try { executeNoContent(path, body, tokens.accessToken, expected); return } catch (error: CloudApiException) { if (error.statusCode != 401) throw error }
+        try { executeNoContent(path, body, tokens.accessToken, expected, method); return } catch (error: CloudApiException) { if (error.statusCode != 401) throw error }
         val refreshed = refreshAfterExpiry(tokens)
         tokenStore.write(refreshed)
-        executeNoContent(path, body, refreshed.accessToken, expected)
+        executeNoContent(path, body, refreshed.accessToken, expected, method)
     }
 
     /** Refresh token 失效时立即清除本机令牌，并标记会话过期，调用方据此回到安全的重新登录状态。 */
@@ -316,9 +366,10 @@ class CloudApi private constructor(
         }
     }
 
-    private fun executeNoContent(path: String, body: JSONObject, accessToken: String, expected: Int) {
+    private fun executeNoContent(path: String, body: JSONObject, accessToken: String, expected: Int, method: String = "POST") {
         val url = endpointProvider().toHttpUrl().newBuilder().addPathSegments("api/v1/$path").build()
-        val request = Request.Builder().url(url).header("Authorization", "Bearer $accessToken").post(body.toString().toRequestBody(JSON)).build()
+        val request = Request.Builder().url(url).header("Authorization", "Bearer $accessToken")
+            .method(method, body.toString().toRequestBody(JSON)).build()
         client.newCall(request).execute().use { response ->
             val payload = response.body?.string().orEmpty()
             if (response.code != expected) throw CloudApiException(errorMessage(payload, response.code), response.code)
@@ -332,6 +383,7 @@ class CloudApi private constructor(
             "unauthorized" -> "登录状态已过期，请重新登录。"
             "invalid_credentials" -> "账号或密码错误。"
             "invalid_request" -> "提交的信息无效，请检查后重试。"
+            "rate_limited" -> "操作过于频繁，请稍后再试。"
             "conflict" -> "当前已有进行中的翻译会话，请先结束它。"
             else -> "服务请求失败（HTTP $status）。"
         }
@@ -344,5 +396,15 @@ private fun JSONObject.requiredString(name: String): String = optString(name).tr
 private fun JSONObject.requiredObject(name: String): JSONObject = optJSONObject(name)
     ?: throw CloudApiException("服务响应缺少 $name。")
 
-private fun JSONObject.requiredRetryAfterSeconds(): Int = optInt("retry_after_seconds", -1).takeIf { it >= 0 }
-    ?: throw CloudApiException("服务响应缺少 retry_after_seconds。")
+private fun JSONObject.requiredInt(name: String): Int = if (has(name) && get(name) is Int) getInt(name) else throw CloudApiException("服务响应缺少 $name。")
+
+private fun parseCaptchaImage(json: JSONObject, expectWidthRange: IntRange): SlideCaptchaImage {
+    val image = SlideCaptchaImage(
+        imageBase64 = json.requiredString("image_base64"),
+        imageType = json.requiredString("image_type"),
+        width = json.requiredInt("width"),
+        height = json.requiredInt("height"),
+    )
+    if (image.width !in expectWidthRange || image.height !in 1..4096) throw CloudApiException("服务返回了无效的验证码尺寸。")
+    return image
+}

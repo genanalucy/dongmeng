@@ -105,7 +105,7 @@ fun AccountScreen(
             item { AccountStatusCard(overview.entitlement, overview.usage) }
             item { AccountRow("使用与权益", "查看权益详情与使用记录", Icons.Outlined.WorkspacePremium) { AccountActionDispatcher.dispatch(AccountAction.USAGE, callbacks) } }
             item { AccountRow("历史记录", "查看本机保存的翻译记录", Icons.Outlined.History) { AccountActionDispatcher.dispatch(AccountAction.HISTORY, callbacks) } }
-            item { AccountRow("账户设置", "修改用户名、邮箱和手机号", Icons.Outlined.ManageAccounts) { AccountActionDispatcher.dispatch(AccountAction.SETTINGS, callbacks) } }
+            item { AccountRow("账户管理", "查看账户状态或删除账户", Icons.Outlined.ManageAccounts) { AccountActionDispatcher.dispatch(AccountAction.SETTINGS, callbacks) } }
             if (showServiceSettings) {
                 item { AccountRow("服务设置", "管理语言与播放偏好", Icons.Outlined.Settings) { AccountActionDispatcher.dispatch(AccountAction.SERVICE_SETTINGS, callbacks) } }
             }

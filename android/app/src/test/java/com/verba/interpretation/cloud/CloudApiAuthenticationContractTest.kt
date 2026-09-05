@@ -15,44 +15,46 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class CloudApiAuthenticationContractTest {
-    @Test fun requestRegistrationVerificationPostsEmailOnlyContractAndReadsRetryDelay() {
-        val fake = FakeHttp(202, "{\"retry_after_seconds\":60}")
+    @Test fun fetchRegistrationCaptchaReadsNativeSlidePuzzleContract() {
+        val fake = FakeHttp(200, """{"captcha_id":"captcha-1","expires_in":300,"tolerance_px":6,"challenge":{"image_base64":"YmFja2dyb3VuZA==","image_type":"image/jpeg","width":300,"height":220},"tile":{"image_base64":"dGlsZQ==","image_type":"image/png","width":40,"height":40,"start_x":0,"start_y":20}}""")
         val api = CloudApi("https://cloud.example", MemoryTokenStore(), FixedInstallationIdStore(), fake.client)
 
-        assertEquals(60, api.requestRegistrationVerification("alice_01", "alice@example.com", "Passw0rd"))
+        val captcha = api.fetchRegistrationCaptcha()
 
-        val request = fake.singleRequest()
-        assertEquals("POST", request.method)
-        assertEquals("/api/v1/auth/registration-verifications", request.url.encodedPath)
-        val body = JSONObject(request.body!!.jsonBody())
-        assertEquals(3, body.length())
-        assertEquals("alice_01", body.getString("username"))
-        assertEquals("alice@example.com", body.getString("email"))
-        assertEquals("Passw0rd", body.getString("password"))
-        assertFalse(body.has("phone"))
+        assertEquals("captcha-1", captcha.captchaId)
+        assertEquals(300, captcha.challenge.width)
+        assertEquals(20, captcha.tile.startY)
+        assertEquals("GET", fake.singleRequest().method)
+        assertEquals("/api/v1/auth/captcha", fake.singleRequest().url.encodedPath)
     }
 
-    @Test fun confirmRegistrationVerificationPostsOnlyEmailAndCode() {
-        val fake = FakeHttp(201, """{
-            "user":{"id":"user-1","username":"alice_01","role":"user"},
-            "trial_entitlement":{"kind":"trial","starts_at":"2026-09-02T00:00:00Z","expires_at":"2026-09-05T00:00:00Z"},
-            "access_token":"access","refresh_token":"refresh"
-        }""".trimIndent())
+    @Test fun registerPostsCaptchaCoordinateContract() {
+        val fake = FakeHttp(201, """{"user":{"id":"user-1","username":"alice_01","role":"user"},"trial_entitlement":{"kind":"trial","expires_at":"2026-09-05T00:00:00Z"},"access_token":"access","refresh_token":"refresh"}""")
         val api = CloudApi("https://cloud.example", MemoryTokenStore(), FixedInstallationIdStore(), fake.client)
 
-        val result = api.confirmRegistrationVerification("alice@example.com", "012345")
+        api.register("alice_01", "alice@example.com", "Passw0rd", "captcha-1", 42)
 
-        assertEquals(CloudUser("user-1", "alice_01", CloudRole.USER), result.user)
-        assertEquals(CloudEntitlement("trial", "2026-09-05T00:00:00Z", "2026-09-02T00:00:00Z"), result.trialEntitlement)
-        assertEquals(AuthTokens("access", "refresh"), result.tokens)
         val request = fake.singleRequest()
         assertEquals("POST", request.method)
-        assertEquals("/api/v1/auth/registration-verifications/confirm", request.url.encodedPath)
+        assertEquals("/api/v1/auth/register", request.url.encodedPath)
         val body = JSONObject(request.body!!.jsonBody())
-        assertEquals(2, body.length())
-        assertEquals("alice@example.com", body.getString("email"))
-        assertEquals("012345", body.getString("code"))
-        assertFalse(body.has("phone"))
+        assertEquals(5, body.length())
+        assertEquals(42, body.getInt("captcha_x"))
+        assertFalse(body.has("captcha_answer"))
+    }
+
+    @Test fun deleteAccountUsesExactUsernameAndClearsTokensOnNoContent() {
+        val fake = FakeHttp(204, "")
+        val store = MemoryTokenStore(AuthTokens("access", "refresh"))
+        val api = CloudApi("https://cloud.example", store, FixedInstallationIdStore(), fake.client)
+
+        api.deleteAccount("alice_01")
+
+        val request = fake.singleRequest()
+        assertEquals("DELETE", request.method)
+        assertEquals("/api/v1/account", request.url.encodedPath)
+        assertEquals("alice_01", JSONObject(request.body!!.jsonBody()).getString("username"))
+        assertNull(store.read())
     }
 
     @Test fun loginPostsIdentifierContractAndStoresTokens() {
@@ -176,11 +178,11 @@ class CloudApiAuthenticationContractTest {
         assertEquals(AuthTokens("old", "previous"), store.read())
     }
 
-    @Test fun confirmationConflictUsesAvailabilityMessageWithoutPhone() {
+    @Test fun registrationConflictUsesAvailabilityMessage() {
         val fake = FakeHttp(409, "{\"error\":\"conflict\"}")
         val api = CloudApi("https://cloud.example", MemoryTokenStore(), FixedInstallationIdStore(), fake.client)
 
-        val error = assertThrows(CloudApiException::class.java) { api.confirmRegistrationVerification("alice@example.com", "012345") }
+        val error = assertThrows(CloudApiException::class.java) { api.register("alice_01", "alice@example.com", "Passw0rd", "captcha-1", 42) }
 
         assertEquals("该用户名或邮箱暂不可用，请更换后重试。", error.message)
     }
@@ -236,4 +238,5 @@ private class MemoryTokenStore(initial: AuthTokens? = null) : TokenStore {
 
 private class FixedInstallationIdStore : InstallationIdStore {
     override fun get(): String = "install-1"
+    override fun clear() = Unit
 }
