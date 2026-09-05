@@ -73,8 +73,16 @@ class InterpretationViewModel(application: Application) : AndroidViewModel(appli
 
     fun start() = synchronized(actionLock) {
         if (mutableState.value.phase != SessionPhase.IDLE) return
-        mutableState.update { it.copy(phase = SessionPhase.STARTING, turns = emptyList(), error = null, sessionEndReason = null) }
-        openTurn(isResume = false)
+        viewModelScope.launch {
+            val userId = cloudGrant?.userId
+            if (userId != null && history.quotaExceeded(userId)) {
+                mutableState.update { it.copy(error = "历史记录已达上限，请先在历史页删除记录后继续。") }
+                return@launch
+            }
+            mutableState.update { it.copy(phase = SessionPhase.STARTING, turns = emptyList(), error = null, sessionEndReason = null) }
+            openTurn(isResume = false)
+        }
+        Unit
     }
 
     fun pause() {

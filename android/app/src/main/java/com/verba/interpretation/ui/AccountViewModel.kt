@@ -295,7 +295,9 @@ class AccountViewModel(
             mutableState.value = mutableState.value.copy(loading = true, message = null)
             try {
                 withContext(ioDispatcher) {
+                    val userId = state.user?.id
                     api.deleteAccount(AccountDeletionPolicy.normalizedConfirmation(confirmation))
+                    if (userId != null) runCatching { localHistory.discardUser(userId) }
                     loginIdentifierStore.clear()
                     installationIdStore.clear()
                 }

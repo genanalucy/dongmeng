@@ -26,6 +26,13 @@ data class AccountIdentityProfile(val username: String, val email: String, val m
 data class CloudUsage(val startedAt: String, val endedAt: String?, val durationSeconds: Long, val sourceLanguage: String?, val targetLanguage: String?)
 data class UsagePage(val items: List<CloudUsage>, val total: Int)
 
+data class HistoryPushOperation(val operationId: String, val kind: String, val sessionId: String, val turnId: String? = null, val payloadBase64: String? = null)
+data class HistoryPushResponse(val cursors: List<Long>)
+data class CloudHistorySession(val id: String, val createdAtMillis: Long, val deletedAtMillis: Long?, val title: String?, val titleUpdatedAtMillis: Long?)
+data class CloudHistoryTurn(val id: String, val sessionId: String, val createdAtMillis: Long, val deletedAtMillis: Long?, val payloadBase64: String?)
+data class CloudHistoryChange(val cursor: Long, val session: CloudHistorySession, val turn: CloudHistoryTurn?)
+data class HistoryPullResponse(val changes: List<CloudHistoryChange>, val nextCursor: Long, val hasMore: Boolean)
+
 data class IdentityUpdateRequest(
     val username: String,
     val email: String,
@@ -87,6 +94,13 @@ interface CloudTranslationSessionService {
     fun endTranslationSession(sessionId: String)
 }
 
+interface HistoryApi {
+    fun pushHistory(operations: List<HistoryPushOperation>): HistoryPushResponse
+    fun pullHistory(cursor: Long): HistoryPullResponse
+    fun deleteHistorySession(sessionId: String, operationId: String): Long
+    fun patchHistoryTitle(sessionId: String, operationId: String, title: String): Long
+}
+
 interface AccountApi {
     fun fetchRegistrationCaptcha(): SlideCaptchaChallenge
     fun register(username: String, email: String, password: String, captchaId: String, captchaX: Int): RegistrationResponse
@@ -110,7 +124,7 @@ class CloudApi private constructor(
     private val tokenStore: TokenStore,
     private val installationIdStore: InstallationIdStore,
     private val client: OkHttpClient,
-) : CloudTranslationSessionService, AccountApi {
+) : CloudTranslationSessionService, AccountApi, HistoryApi {
     constructor(
         endpointSettings: CloudEndpointSettings,
         tokenStore: TokenStore,
@@ -259,6 +273,41 @@ class CloudApi private constructor(
         authorizedRequest("account/identity", JSONObject(request.toJson()), "PATCH", 200)
     }
 
+    override fun pushHistory(operations: List<HistoryPushOperation>): HistoryPushResponse {
+        require(operations.size in 1..100)
+        val values = org.json.JSONArray()
+        operations.forEach { value ->
+            values.put(JSONObject().put("operation_id", value.operationId).put("kind", value.kind).put("session_id", value.sessionId).apply {
+                value.turnId?.let { put("turn_id", it) }
+                value.payloadBase64?.let { put("payload", it) }
+            })
+        }
+        val json = authorizedPost("history/sync/push", JSONObject().put("operations", values))
+        val cursors = json.optJSONArray("cursors") ?: throw CloudApiException("服务响应缺少 cursors。")
+        return HistoryPushResponse(List(cursors.length()) { cursors.getLong(it) })
+    }
+
+    override fun pullHistory(cursor: Long): HistoryPullResponse {
+        require(cursor >= 0)
+        val json = authorized("history/sync/pull", mapOf("cursor" to cursor.toString()))
+        val changes = json.optJSONArray("changes") ?: throw CloudApiException("服务响应缺少 changes。")
+        return HistoryPullResponse(
+            changes = List(changes.length()) { index -> parseHistoryChange(changes.getJSONObject(index)) },
+            nextCursor = json.getLong("next_cursor"),
+            hasMore = json.getBoolean("has_more"),
+        )
+    }
+
+    override fun deleteHistorySession(sessionId: String, operationId: String): Long {
+        val json = authorizedRequest("history/sessions/$sessionId", null, "DELETE", 200, emptyMap(), mapOf("Idempotency-Key" to operationId))
+        return json.getLong("cursor")
+    }
+
+    override fun patchHistoryTitle(sessionId: String, operationId: String, title: String): Long {
+        val json = authorizedRequest("history/sessions/$sessionId/title", JSONObject().put("operation_id", operationId).put("title", title), "PATCH", 200)
+        return json.getLong("cursor")
+    }
+
     override fun redeem(code: String): CloudEntitlement {
         val json = authorizedPost("redemptions", JSONObject().put("code", code), expected = 201)
         return parseEntitlement(json)
@@ -306,6 +355,25 @@ class CloudApi private constructor(
         lastUsedAt = json.optString("last_used_at").trim().ifEmpty { null },
     )
 
+    private fun parseHistoryChange(json: JSONObject): CloudHistoryChange {
+        val session = json.getJSONObject("session")
+        fun millis(value: String): Long = java.time.Instant.parse(value).toEpochMilli()
+        val remoteSession = CloudHistorySession(
+            id = session.requiredString("id"),
+            createdAtMillis = millis(session.requiredString("created_at")),
+            deletedAtMillis = session.optString("deleted_at").takeIf { it.isNotBlank() }?.let(::millis),
+            title = session.optString("title").takeIf { it.isNotBlank() },
+            titleUpdatedAtMillis = session.optString("title_updated_at").takeIf { it.isNotBlank() }?.let(::millis),
+        )
+        val turn = json.optJSONObject("turn")?.let { raw -> CloudHistoryTurn(
+            id = raw.requiredString("id"), sessionId = raw.requiredString("session_id"),
+            createdAtMillis = millis(raw.requiredString("created_at")),
+            deletedAtMillis = raw.optString("deleted_at").takeIf { it.isNotBlank() }?.let(::millis),
+            payloadBase64 = raw.optString("payload").takeIf { it.isNotBlank() },
+        ) }
+        return CloudHistoryChange(json.getLong("cursor"), remoteSession, turn)
+    }
+
     private fun parseUsage(json: JSONObject): CloudUsage = CloudUsage(
         startedAt = json.requiredString("started_at"),
         endedAt = json.optString("ended_at").trim().ifEmpty { null },
@@ -320,16 +388,16 @@ class CloudApi private constructor(
     private fun authorizedPost(path: String, body: JSONObject, expected: Int = 200): JSONObject = authorizedRequest(path, body, "POST", expected)
     private fun authorizedPostNoContent(path: String, body: JSONObject, expected: Int) { authorizedRequestNoContent(path, body, expected) }
 
-    private fun authorizedRequest(path: String, body: JSONObject?, method: String, expected: Int, query: Map<String, String> = emptyMap()): JSONObject {
+    private fun authorizedRequest(path: String, body: JSONObject?, method: String, expected: Int, query: Map<String, String> = emptyMap(), headers: Map<String, String> = emptyMap()): JSONObject {
         val tokens = tokenStore.read() ?: throw CloudApiException("请先登录账户。", 401)
         try {
-            return execute(path, body, tokens.accessToken, expected, method, query)
+            return execute(path, body, tokens.accessToken, expected, method, query, headers)
         } catch (error: CloudApiException) {
             if (error.statusCode != 401) throw error
         }
         val refreshed = refreshAfterExpiry(tokens)
         tokenStore.write(refreshed)
-        return execute(path, body, refreshed.accessToken, expected, method, query)
+        return execute(path, body, refreshed.accessToken, expected, method, query, headers)
     }
 
     private fun authorizedRequestNoContent(path: String, body: JSONObject, expected: Int, method: String = "POST") {
@@ -353,10 +421,11 @@ class CloudApi private constructor(
 
     private fun refresh(refreshToken: String): AuthTokens = parseTokens(publicPost("auth/refresh", JSONObject().put("refresh_token", refreshToken)))
 
-    private fun execute(path: String, body: JSONObject?, accessToken: String?, expected: Int, method: String = "POST", query: Map<String, String> = emptyMap()): JSONObject {
+    private fun execute(path: String, body: JSONObject?, accessToken: String?, expected: Int, method: String = "POST", query: Map<String, String> = emptyMap(), headers: Map<String, String> = emptyMap()): JSONObject {
         val url = endpointProvider().toHttpUrl().newBuilder().addPathSegments("api/v1/$path").apply { query.forEach(::addQueryParameter) }.build()
         val request = Request.Builder().url(url).apply {
             if (accessToken != null) header("Authorization", "Bearer $accessToken")
+            headers.forEach(::header)
             if (method == "GET") get() else method(method, (body ?: JSONObject()).toString().toRequestBody(JSON))
         }.build()
         client.newCall(request).execute().use { response ->

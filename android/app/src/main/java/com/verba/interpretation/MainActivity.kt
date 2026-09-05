@@ -2,6 +2,7 @@ package com.verba.interpretation
 
 import android.Manifest
 import android.content.pm.PackageManager
+import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
@@ -44,6 +45,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Pause
@@ -88,6 +92,8 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -156,6 +162,7 @@ import com.verba.interpretation.ui.FaceToFaceState
 import com.verba.interpretation.ui.FaceToFaceTurn
 import com.verba.interpretation.ui.FaceToFaceViewModel
 import com.verba.interpretation.ui.HistoryEmptyStatePolicy
+import com.verba.interpretation.ui.HistoryViewModel
 import com.verba.interpretation.ui.HistoryFilter
 import com.verba.interpretation.ui.InterpretationViewModel
 import com.verba.interpretation.ui.ProductDestination
@@ -187,10 +194,12 @@ class MainActivity : ComponentActivity() {
 private fun InterpretationApp(
     viewModel: InterpretationViewModel = viewModel(),
     accountViewModel: AccountViewModel,
+    historyViewModel: HistoryViewModel = viewModel(),
 ) {
     val interpretationState by viewModel.state.collectAsStateWithLifecycle()
     val accountState by accountViewModel.state.collectAsStateWithLifecycle()
     val navigationMode = accountState.navigationMode
+    LaunchedEffect(accountState.user?.id) { historyViewModel.load(accountState.user?.id) }
     var stack by remember(navigationMode) {
         mutableStateOf(ProductNavigationStack.initial(navigationMode))
     }
@@ -242,7 +251,7 @@ private fun InterpretationApp(
             ProductScreen.FACE_TO_FACE_WORKBENCH -> FaceToFaceWorkbench(
                 modifier = Modifier.padding(padding),
             )
-            ProductScreen.HISTORY -> HistoryPage(Modifier.padding(padding))
+            ProductScreen.HISTORY -> HistoryPage(Modifier.padding(padding), historyViewModel)
             ProductScreen.PROFILE -> ProfilePage(
                 modifier = Modifier.padding(padding),
                 onAccount = { stack = stack.push(ProductScreen.ACCOUNT) },
@@ -970,53 +979,55 @@ private fun FaceTalkButton(
 }
 
 @Composable
-private fun HistoryPage(modifier: Modifier) {
-    var query by remember { mutableStateOf("") }
-    var filter by remember { mutableStateOf(HistoryFilter.ALL) }
-    LazyColumn(
-        modifier = modifier.fillMaxSize(),
-        contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp),
-    ) {
-        item {
-            Text(
-                "回看每一次交流",
-                style = MaterialTheme.typography.headlineMedium,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.semantics { heading() },
-            )
-            Text(
-                "记录仅展示本机已保存的会话。",
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(top = 4.dp),
-            )
-        }
-        item {
-            OutlinedTextField(
-                value = query,
-                onValueChange = { query = it },
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true,
-                label = { Text("搜索历史") },
-                placeholder = { Text("搜索语言或字幕关键词") },
-                leadingIcon = { Icon(Icons.Outlined.Search, contentDescription = null) },
-            )
-        }
-        item {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                HistoryFilter.entries.forEach { option ->
-                    FilterChip(
-                        selected = filter == option,
-                        onClick = { filter = option },
-                        label = { Text(option.label) },
-                    )
-                }
-            }
-        }
-        item {
-            HistoryEmptyState(query = query, filter = filter)
+private fun HistoryPage(modifier: Modifier, viewModel: HistoryViewModel) {
+    val state by viewModel.state.collectAsStateWithLifecycle()
+    val context = LocalContext.current
+    val snackbar = remember { SnackbarHostState() }
+    var editingId by remember { mutableStateOf<String?>(null) }
+    var titleDraft by remember { mutableStateOf("") }
+    LaunchedEffect(state.pendingDelete?.id) {
+        if (state.pendingDelete != null) {
+            val action = snackbar.showSnackbar("已移至删除队列", "撤销", withDismissAction = true)
+            if (action == androidx.compose.material3.SnackbarResult.ActionPerformed) viewModel.undoDelete() else viewModel.confirmDelete()
         }
     }
+    Scaffold(snackbarHost = { SnackbarHost(snackbar) }) { inner -> LazyColumn(
+        modifier = modifier.fillMaxSize().padding(inner), contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(14.dp),
+    ) {
+        item {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("回看每一次交流", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold, modifier = Modifier.semantics { heading() })
+                    Text("已完成的文字翻译会在所有已登录设备间同步；不保存音频。", color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 4.dp))
+                }
+                IconButton(onClick = { context.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, viewModel.export()), "分享全部历史")) }, enabled = state.visibleSessions.isNotEmpty()) { Icon(Icons.Filled.Share, "分享全部") }
+                IconButton(onClick = viewModel::showClearConfirmation, enabled = state.sessions.isNotEmpty()) { Icon(Icons.Filled.Delete, "清空历史") }
+            }
+        }
+        item { OutlinedTextField(value = state.query, onValueChange = viewModel::setQuery, modifier = Modifier.fillMaxWidth(), singleLine = true, label = { Text("搜索历史") }, placeholder = { Text("搜索原文、译文或语言") }, leadingIcon = { Icon(Icons.Outlined.Search, null) }) }
+        if (state.visibleSessions.isEmpty()) item { HistoryEmptyState(state.query, HistoryFilter.ALL) }
+        items(state.visibleSessions, key = { it.id }) { session ->
+            Card(Modifier.fillMaxWidth()) { Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    if (editingId == session.id) OutlinedTextField(titleDraft, { titleDraft = it }, Modifier.weight(1f), singleLine = true, label = { Text("会话标题") }) else Column(Modifier.weight(1f)) {
+                        Text(session.title ?: if (session.kind == "face_to_face") "面对面翻译" else "同传翻译", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                        Text("${session.turns.size} 条完成记录", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    IconButton(onClick = { if (editingId == session.id) { viewModel.rename(session.id, titleDraft); editingId = null } else { editingId = session.id; titleDraft = session.title.orEmpty() } }) { Icon(Icons.Filled.Edit, if (editingId == session.id) "保存标题" else "编辑标题") }
+                    IconButton(onClick = { context.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, viewModel.export(session)), "分享历史")) }) { Icon(Icons.Filled.Share, "分享会话") }
+                    IconButton(onClick = { viewModel.requestDelete(session.id) }) { Icon(Icons.Filled.Delete, "删除会话") }
+                }
+                session.turns.forEach { turn ->
+                    Surface(color = MaterialTheme.colorScheme.surfaceVariant, shape = RoundedCornerShape(12.dp)) { Column(Modifier.padding(12.dp)) {
+                        Text("${TranslationLanguage.displayName(turn.sourceLanguage)} → ${TranslationLanguage.displayName(turn.targetLanguage)}", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                        Text(turn.sourceText, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(top = 4.dp))
+                        Text(turn.translatedText, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium, modifier = Modifier.padding(top = 6.dp))
+                    } }
+                }
+            } }
+        }
+    } }
+    if (state.clearConfirmationVisible) AlertDialog(onDismissRequest = viewModel::dismissClearConfirmation, title = { Text("清空全部历史？") }, text = { Text("所有本机会话将被删除，并同步删除云端记录。") }, confirmButton = { TextButton(viewModel::clearAll) { Text("清空") } }, dismissButton = { TextButton(viewModel::dismissClearConfirmation) { Text("取消") } })
 }
 
 @Composable
