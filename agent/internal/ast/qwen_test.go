@@ -22,7 +22,7 @@ type discardSink struct{}
 
 func (discardSink) Emit(Event) {}
 
-func TestRoutingClientUsesQwenForFrenchAndVietnamese(t *testing.T) {
+func TestRoutingClientUsesQwenForAllShippedPairs(t *testing.T) {
 	volc, qwen := &recordingClient{}, &recordingClient{}
 	router := routingClient{volc: volc, qwen: qwen}
 	for _, request := range []StartRequest{
@@ -34,7 +34,7 @@ func TestRoutingClientUsesQwenForFrenchAndVietnamese(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if volc.starts != 1 || qwen.starts != 2 {
+	if volc.starts != 0 || qwen.starts != 3 {
 		t.Fatalf("volc=%d qwen=%d", volc.starts, qwen.starts)
 	}
 }

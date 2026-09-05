@@ -23,16 +23,16 @@ func (e QwenError) Error() string { return e.Code }
 
 type routingClient struct{ volc, qwen Client }
 
-// NewRoutingClient preserves Volcengine for Chinese-English and uses Qwen for pairs containing French or Vietnamese.
+// NewRoutingClient uses the configured Qwen realtime client for every shipped
+// language pair. The Volcengine client remains injectable for an official AST
+// codec build, but the default Agent build deliberately has no such codec and
+// must never route a supported product pair to ErrCodecUnavailable.
 func NewRoutingClient(volc Client, cfg config.Config) Client {
 	return routingClient{volc: volc, qwen: NewQwenClient(cfg)}
 }
 
 func (c routingClient) Start(ctx context.Context, request StartRequest, sink EventSink) (Session, error) {
-	if request.SourceLanguage == "fr" || request.SourceLanguage == "vi" || request.TargetLanguage == "fr" || request.TargetLanguage == "vi" {
-		return c.qwen.Start(ctx, request, sink)
-	}
-	return c.volc.Start(ctx, request, sink)
+	return c.qwen.Start(ctx, request, sink)
 }
 
 type qwenClient struct{ apiKey, host string }
