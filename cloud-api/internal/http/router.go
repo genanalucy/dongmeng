@@ -103,7 +103,17 @@ func NewRouter(options RouterOptions) http.Handler {
 		return router
 	}
 	service := auth.AuthorizationService{Store: options.Store, EntitlementLifecycle: options.Store, Tokens: options.Tokens, MaxConcurrentSessions: auth.TwoActiveTranslationSessionLimit}
-	api := api{store: options.Store, tokens: options.Tokens, authorizer: service, verification: verification, registrationVerification: registrationVerification, captcha: options.Captcha, logger: logger, now: now}
+	api := api{store: options.Store, tokens: options.Tokens, authorizer: service, sessionAuthorizer: service, agentServiceToken: options.Config.AgentServiceToken, verification: verification, registrationVerification: registrationVerification, captcha: options.Captcha, logger: logger, now: now}
+	// The internal Agent service boundary is mounted only when the deployment
+	// configures the shared service token. It stays outside the public
+	// /api/v1 surface, and the public reverse proxy must additionally be
+	// configured never to route /internal/ paths.
+	if options.Config.AgentServiceToken != "" {
+		router.Group(func(r chi.Router) {
+			r.Use(api.agentServiceAuth)
+			r.Post(AgentInternalAuthorizePath, api.agentSessionAuthorize)
+		})
+	}
 	router.Get("/api/v1/auth/captcha", api.captchaIssue)
 	router.Post("/api/v1/auth/register", api.register)
 	router.Post("/api/v1/auth/login", api.login)
@@ -117,6 +127,7 @@ func NewRouter(options RouterOptions) http.Handler {
 		r.Get("/api/v1/account/usage", api.accountUsage)
 		r.Get("/api/v1/account/identity", api.accountIdentityProfile)
 		r.Patch("/api/v1/account/identity", api.accountIdentity)
+		r.Delete("/api/v1/account", api.deleteAccount)
 		r.Get("/api/v1/entitlements/current", api.entitlement)
 		r.Post("/api/v1/redemptions", api.redeem)
 		r.Post("/api/v1/translation-sessions", api.session)

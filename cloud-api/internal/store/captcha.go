@@ -4,9 +4,7 @@ import (
 	"context"
 	"errors"
 	"math"
-	"strings"
 	"time"
-	"unicode/utf8"
 
 	"github.com/dngmeng/cloud-api/internal/auth"
 	"github.com/dngmeng/cloud-api/internal/domain"
@@ -141,9 +139,8 @@ func (p *Postgres) CreateRegistrationCaptcha(ctx context.Context, x domain.Creat
 // usable; consumption stays tied to the committed registration in
 // RegisterWithCaptcha. Expiry and attempt exhaustion remain terminal.
 func (p *Postgres) ReserveRegistrationCaptcha(ctx context.Context, x domain.ReserveRegistrationCaptchaParams) error {
-	answer := strings.TrimSpace(x.CaptchaAnswer)
 	now := x.Now.UTC()
-	if x.CaptchaID == uuid.Nil || answer == "" || len(answer) > auth.CaptchaAnswerMaxBytes || !utf8.ValidString(answer) || len(x.AnswerPepper) == 0 || now.IsZero() {
+	if x.CaptchaID == uuid.Nil || !auth.ValidCaptchaCoordinate(x.CaptchaX) || len(x.AnswerPepper) == 0 || now.IsZero() {
 		return domain.ErrInvalid
 	}
 	failed := false
@@ -166,7 +163,7 @@ func (p *Postgres) ReserveRegistrationCaptcha(ctx context.Context, x domain.Rese
 			failed = true
 			return nil
 		}
-		if !auth.CaptchaAnswerMatches(x.AnswerPepper, answerSalt, answerHash, answer) {
+		if !auth.CaptchaCoordinateMatches(x.AnswerPepper, answerSalt, answerHash, x.CaptchaX) {
 			// A wrong answer burns one of the challenge's bounded attempts even
 			// though the request never reaches password hashing; a correct
 			// answer mutates nothing so retries and conflicts stay free.
@@ -210,9 +207,8 @@ func (p *Postgres) RegisterWithCaptcha(ctx context.Context, x domain.RegisterWit
 	if err != nil {
 		return user, trial, err
 	}
-	answer := strings.TrimSpace(x.CaptchaAnswer)
 	now := x.Now.UTC()
-	if x.PasswordHash == "" || x.CaptchaID == uuid.Nil || answer == "" || len(answer) > auth.CaptchaAnswerMaxBytes || !utf8.ValidString(answer) || len(x.AnswerPepper) == 0 || now.IsZero() {
+	if x.PasswordHash == "" || x.CaptchaID == uuid.Nil || !auth.ValidCaptchaCoordinate(x.CaptchaX) || len(x.AnswerPepper) == 0 || now.IsZero() {
 		return user, trial, domain.ErrInvalid
 	}
 	failed := false
@@ -238,7 +234,7 @@ func (p *Postgres) RegisterWithCaptcha(ctx context.Context, x domain.RegisterWit
 		if err := t.QueryRow(ctx, `UPDATE registration_captchas SET attempt_count=attempt_count+1,updated_at=$2 WHERE id=$1 RETURNING attempt_count`, x.CaptchaID, now).Scan(&attempts); err != nil {
 			return storeErr(err)
 		}
-		if !auth.CaptchaAnswerMatches(x.AnswerPepper, answerSalt, answerHash, answer) {
+		if !auth.CaptchaCoordinateMatches(x.AnswerPepper, answerSalt, answerHash, x.CaptchaX) {
 			if attempts >= auth.CaptchaMaxAttempts {
 				if _, err := t.Exec(ctx, `DELETE FROM registration_captchas WHERE id=$1`, x.CaptchaID); err != nil {
 					return storeErr(err)

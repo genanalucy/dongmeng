@@ -29,8 +29,14 @@ func TestNewCaptchaServiceBuildsIssuingPrimitiveFromValidConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Issue() error = %v", err)
 	}
-	if draft.Challenge == "" || len(draft.AnswerHash) != 32 || len(draft.AnswerSalt) == 0 || !draft.ExpiresAt.After(time.Now().Add(auth.CaptchaTTL-time.Minute)) {
+	if len(draft.MasterImage) == 0 || len(draft.TileImage) == 0 || len(draft.AnswerHash) != 32 || len(draft.AnswerSalt) == 0 || !draft.ExpiresAt.After(time.Now().Add(auth.CaptchaTTL-time.Minute)) {
 		t.Fatalf("draft = %+v", draft)
+	}
+	if !auth.ValidCaptchaCoordinate(draft.TargetX) {
+		t.Fatalf("draft target %d escapes the challenge canvas", draft.TargetX)
+	}
+	if !auth.CaptchaCoordinateMatches(service.AnswerPepper, draft.AnswerSalt, draft.AnswerHash, draft.TargetX) {
+		t.Fatal("issued draft does not verify against its own target coordinate")
 	}
 }
 

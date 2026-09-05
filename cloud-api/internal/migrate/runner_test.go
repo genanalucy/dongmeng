@@ -101,10 +101,10 @@ func TestRepositoryMigrationsClassifyConcurrentIndexOutsideTransaction(t *testin
 	if err != nil {
 		t.Fatalf("discover repository migrations: %v", err)
 	}
-	if len(migrations) != 9 {
-		t.Fatalf("migration count = %d, want 9", len(migrations))
+	if len(migrations) != 10 {
+		t.Fatalf("migration count = %d, want 10", len(migrations))
 	}
-	for index, version := range []string{"000001", "000002", "000003", "000004", "000005", "000006", "000007", "000008"} {
+	for index, version := range []string{"000001", "000002", "000003", "000004", "000005", "000006", "000007", "000008", "000009", "000010"} {
 		if migrations[index].Version != version {
 			t.Fatalf("migration[%d].Version = %q, want %q", index, migrations[index].Version, version)
 		}

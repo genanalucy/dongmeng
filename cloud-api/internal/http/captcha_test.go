@@ -3,11 +3,18 @@ package httpapi
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"image"
+	"image/color"
+	_ "image/jpeg"
+	_ "image/png"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -16,6 +23,8 @@ import (
 	"github.com/dngmeng/cloud-api/internal/config"
 	"github.com/dngmeng/cloud-api/internal/domain"
 	"github.com/google/uuid"
+	"github.com/wenlng/go-captcha/v2/base/imagedata"
+	"github.com/wenlng/go-captcha/v2/slide"
 )
 
 type captchaChargeCall struct {
@@ -92,7 +101,7 @@ func (s *captchaHTTPStore) CreateRefreshToken(_ context.Context, params domain.C
 
 const (
 	captchaTestNow      = "2026-09-05T06:07:08Z"
-	captchaTestAnswer   = "AB3CD"
+	captchaTestTargetX  = 137
 	captchaTestPassword = "password1"
 )
 
@@ -101,12 +110,43 @@ func captchaTestClock() time.Time {
 	return now
 }
 
+// pinnedSlideGenerator keeps the hidden target deterministic so HTTP tests
+// can submit a correct drag coordinate, exactly like a client that solved
+// the rendered challenge would.
+type pinnedSlideGenerator struct{}
+
+func (pinnedSlideGenerator) Generate() (slide.CaptchaData, error) {
+	return pinnedSlideData{}, nil
+}
+
+type pinnedSlideData struct{}
+
+func (pinnedSlideData) GetData() *slide.Block {
+	return &slide.Block{X: captchaTestTargetX, Y: 96, Width: 64, Height: 64, DX: 7, DY: 96}
+}
+func (pinnedSlideData) GetMasterImage() imagedata.JPEGImageData {
+	return imagedata.NewJPEGImageData(solidImage(auth.CaptchaImageWidth, auth.CaptchaImageHeight))
+}
+func (pinnedSlideData) GetTileImage() imagedata.PNGImageData {
+	return imagedata.NewPNGImageData(solidImage(64, 64))
+}
+
+func solidImage(width, height int) image.Image {
+	canvas := image.NewRGBA(image.Rect(0, 0, width, height))
+	for x := 0; x < width; x++ {
+		for y := 0; y < height; y++ {
+			canvas.Set(x, y, color.RGBA{R: uint8(x % 256), G: uint8(y % 256), B: 0x7F, A: 0xFF})
+		}
+	}
+	return canvas
+}
+
 func newCaptchaTestService(t *testing.T) *auth.CaptchaService {
 	t.Helper()
 	service, err := auth.NewCaptchaService(auth.CaptchaService{
 		AnswerPepper:       bytes.Repeat([]byte("p"), auth.MinimumSecretBytes),
 		RateLimitKeySecret: bytes.Repeat([]byte("k"), auth.MinimumSecretBytes),
-		GenerateChallenge:  func() (string, error) { return captchaTestAnswer, nil },
+		GenerateSlide:      pinnedSlideGenerator{},
 		GenerateSalt:       func() ([]byte, error) { return bytes.Repeat([]byte("s"), 32), nil },
 		Clock:              captchaTestClock,
 	})
@@ -135,44 +175,108 @@ func newCaptchaRouter(t *testing.T, store *captchaHTTPStore, options RouterOptio
 	return NewRouter(options)
 }
 
-func captchaGET(t *testing.T, router http.Handler) (captchaID string, image string, expiresIn float64, response *httptest.ResponseRecorder) {
+type captchaImagePayload struct {
+	ImageBase64 string `json:"image_base64"`
+	ImageType   string `json:"image_type"`
+	Width       int    `json:"width"`
+	Height      int    `json:"height"`
+}
+
+type captchaIssuePayload struct {
+	CaptchaID   string              `json:"captcha_id"`
+	ExpiresIn   float64             `json:"expires_in"`
+	TolerancePx int                 `json:"tolerance_px"`
+	Challenge   captchaImagePayload `json:"challenge"`
+	Tile        struct {
+		captchaImagePayload
+		StartX int `json:"start_x"`
+		StartY int `json:"start_y"`
+	} `json:"tile"`
+}
+
+func captchaGET(t *testing.T, router http.Handler) (payload captchaIssuePayload, response *httptest.ResponseRecorder) {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/captcha", nil)
 	req.RemoteAddr = "127.0.0.1:12345"
 	recorder := httptest.NewRecorder()
 	router.ServeHTTP(recorder, req)
-	var payload struct {
-		CaptchaID string  `json:"captcha_id"`
-		Image     string  `json:"image"`
-		ImageType string  `json:"image_type"`
-		ExpiresIn float64 `json:"expires_in"`
-	}
 	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
 		t.Fatalf("captcha response is not JSON: %s", recorder.Body.String())
 	}
-	return payload.CaptchaID, payload.Image, payload.ExpiresIn, recorder
+	return payload, recorder
 }
 
-func TestCaptchaIssueReturnsBoundedChallengeMaterial(t *testing.T) {
+func TestCaptchaIssueReturnsAndroidSlideChallengeMaterial(t *testing.T) {
 	store := &captchaHTTPStore{}
 	router := newCaptchaRouter(t, store, RouterOptions{})
 
-	captchaID, image, expiresIn, response := captchaGET(t, router)
+	payload, response := captchaGET(t, router)
 	if response.Code != http.StatusOK {
 		t.Fatalf("status = %d body = %s", response.Code, response.Body.String())
 	}
-	if _, err := uuid.Parse(captchaID); err != nil {
-		t.Fatalf("captcha_id = %q", captchaID)
+	if _, err := uuid.Parse(payload.CaptchaID); err != nil {
+		t.Fatalf("captcha_id = %q", payload.CaptchaID)
 	}
-	if !strings.HasPrefix(image, "<svg") || !strings.Contains(image, "</svg>") {
-		t.Fatalf("image is not an SVG document: %q", image[:min(32, len(image))])
+	if payload.ExpiresIn != 300 {
+		t.Fatalf("expires_in = %v, want 300", payload.ExpiresIn)
 	}
-	if expiresIn != 300 {
-		t.Fatalf("expires_in = %v, want 300", expiresIn)
+	if payload.TolerancePx != auth.CaptchaTolerance {
+		t.Fatalf("tolerance_px = %d, want %d", payload.TolerancePx, auth.CaptchaTolerance)
 	}
-	if response.Header().Get("Cache-Control") != "no-store" {
-		t.Fatal("captcha response must not be cached")
+	// The challenge image must be a decodable JPEG of the declared canvas so
+	// an Android client can render it from base64 without any negotiation.
+	master, format, err := decodeImage(payload.Challenge.ImageBase64)
+	if err != nil || format != "jpeg" {
+		t.Fatalf("challenge image is not a decodable JPEG: %v", err)
 	}
+	if payload.Challenge.ImageType != "image/jpeg" || payload.Challenge.Width != auth.CaptchaImageWidth || payload.Challenge.Height != auth.CaptchaImageHeight {
+		t.Fatalf("challenge envelope = %+v", payload.Challenge)
+	}
+	if master.Bounds().Dx() != payload.Challenge.Width || master.Bounds().Dy() != payload.Challenge.Height {
+		t.Fatalf("challenge image bounds %v disagree with %dx%d", master.Bounds(), payload.Challenge.Width, payload.Challenge.Height)
+	}
+	// The tile must be a decodable PNG with alpha and an in-canvas start.
+	tile, format, err := decodeImage(payload.Tile.ImageBase64)
+	if err != nil || format != "png" {
+		t.Fatalf("tile image is not a decodable PNG: %v", err)
+	}
+	if payload.Tile.ImageType != "image/png" || payload.Tile.Width != tile.Bounds().Dx() || payload.Tile.Height != tile.Bounds().Dy() {
+		t.Fatalf("tile envelope = %+v bounds = %v", payload.Tile, tile.Bounds())
+	}
+	if payload.Tile.StartX < 0 || payload.Tile.StartX+payload.Tile.Width > auth.CaptchaImageWidth || payload.Tile.StartY < 0 || payload.Tile.StartY+payload.Tile.Height > auth.CaptchaImageHeight {
+		t.Fatalf("tile start %d,%d escapes the challenge canvas", payload.Tile.StartX, payload.Tile.StartY)
+	}
+	// The hidden target coordinate must not leak: the issue response exposes
+	// exactly the client-rendering contract and nothing else.
+	var envelope map[string]json.RawMessage
+	if err := json.Unmarshal(response.Body.Bytes(), &envelope); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"captcha_id", "expires_in", "tolerance_px", "challenge", "tile"} {
+		if _, ok := envelope[key]; !ok {
+			t.Fatalf("issue response missing %q", key)
+		}
+	}
+	if len(envelope) != 5 {
+		t.Fatalf("issue response carries unexpected keys: %v", envelopeKeys(envelope))
+	}
+	assertImageKeys := func(name string, raw json.RawMessage, want []string) {
+		t.Helper()
+		var nested map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &nested); err != nil {
+			t.Fatalf("%s is not an object: %v", name, err)
+		}
+		if len(nested) != len(want) {
+			t.Fatalf("%s keys = %v, want exactly %v", name, envelopeKeys(nested), want)
+		}
+		for _, key := range want {
+			if _, ok := nested[key]; !ok {
+				t.Fatalf("%s missing %q", name, key)
+			}
+		}
+	}
+	assertImageKeys("challenge", envelope["challenge"], []string{"image_base64", "image_type", "width", "height"})
+	assertImageKeys("tile", envelope["tile"], []string{"image_base64", "image_type", "width", "height", "start_x", "start_y"})
 	if len(store.created) != 1 {
 		t.Fatalf("create calls = %d", len(store.created))
 	}
@@ -202,10 +306,48 @@ func TestCaptchaIssueReturnsBoundedChallengeMaterial(t *testing.T) {
 	if !params.Now.Equal(captchaTestClock()) {
 		t.Fatalf("now = %v", params.Now)
 	}
-	// Only hash material is persisted: neither the challenge nor its SVG.
-	if strings.Contains(string(params.AnswerHash), captchaTestAnswer) {
-		t.Fatal("persisted hash leaked the challenge")
+	// Only hash material is persisted: neither the target coordinate nor the
+	// rendered images are stored.
+	if bytes.Contains(params.AnswerHash, []byte(fmt.Sprint(captchaTestTargetX))) {
+		t.Fatal("persisted hash leaked the target coordinate")
 	}
+}
+
+// The issue response must never be cacheable by any intermediary: it is
+// single-use challenge material bound to one IP window.
+func TestCaptchaIssueResponseIsNeverCacheable(t *testing.T) {
+	router := newCaptchaRouter(t, &captchaHTTPStore{}, RouterOptions{})
+	for range 2 {
+		_, response := captchaGET(t, router)
+		if response.Code != http.StatusOK {
+			t.Fatalf("status = %d", response.Code)
+		}
+		if cache := response.Header().Get("Cache-Control"); cache != "no-store" {
+			t.Fatalf("Cache-Control = %q, want no-store", cache)
+		}
+		for _, header := range []string{"ETag", "Last-Modified", "Expires"} {
+			if value := response.Header().Get(header); value != "" {
+				t.Fatalf("%s = %q on captcha material", header, value)
+			}
+		}
+	}
+}
+
+func decodeImage(encoded string) (image.Image, string, error) {
+	raw, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
+		return nil, "", err
+	}
+	return image.Decode(bytes.NewReader(raw))
+}
+
+func envelopeKeys(envelope map[string]json.RawMessage) []string {
+	keys := make([]string, 0, len(envelope))
+	for key := range envelope {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 func TestCaptchaIssueUsesForwardedIPOnlyFromLoopback(t *testing.T) {
@@ -273,7 +415,7 @@ func TestCaptchaEndpointsAreFailClosedWithoutService(t *testing.T) {
 		t.Fatalf("issue response = %d %s", response.Code, response.Body.String())
 	}
 
-	body := `{"username":"example_user","email":"user@example.com","password":"password1","captcha_id":"` + uuid.NewString() + `","captcha_answer":"AB3CD"}`
+	body := `{"username":"example_user","email":"user@example.com","password":"password1","captcha_id":"` + uuid.NewString() + `","captcha_x":137}`
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/register", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	response = httptest.NewRecorder()
@@ -295,7 +437,9 @@ func TestRegisterCreatesFormalUserCredentialTrialAndTokens(t *testing.T) {
 	}}
 	router := newCaptchaRouter(t, store, RouterOptions{})
 
-	body := `{"username":"Example_User","email":"User@Example.COM","password":"` + captchaTestPassword + `","captcha_id":"` + captchaID.String() + `","captcha_answer":"ab3cd"}`
+	// A coordinate inside the tolerance window of the pinned target solves
+	// the challenge exactly like a real drag.
+	body := `{"username":"Example_User","email":"User@Example.COM","password":"` + captchaTestPassword + `","captcha_id":"` + captchaID.String() + `","captcha_x":` + fmt.Sprint(captchaTestTargetX+auth.CaptchaTolerance) + `}`
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/register", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.RemoteAddr = "127.0.0.1:12345"
@@ -330,7 +474,7 @@ func TestRegisterCreatesFormalUserCredentialTrialAndTokens(t *testing.T) {
 		t.Fatalf("reservations = %d", len(store.reservations))
 	}
 	reservation := store.reservations[0]
-	if reservation.CaptchaID != captchaID || reservation.CaptchaAnswer != "ab3cd" {
+	if reservation.CaptchaID != captchaID || reservation.CaptchaX != captchaTestTargetX+auth.CaptchaTolerance {
 		t.Fatalf("reservation = %+v", reservation)
 	}
 	if len(reservation.AnswerPepper) != auth.MinimumSecretBytes || !reservation.Now.Equal(captchaTestClock()) {
@@ -343,8 +487,8 @@ func TestRegisterCreatesFormalUserCredentialTrialAndTokens(t *testing.T) {
 	if params.CaptchaID != captchaID {
 		t.Fatalf("captcha id = %v", params.CaptchaID)
 	}
-	if params.CaptchaAnswer != "ab3cd" {
-		t.Fatalf("raw answer = %q", params.CaptchaAnswer)
+	if params.CaptchaX != captchaTestTargetX+auth.CaptchaTolerance {
+		t.Fatalf("submitted coordinate = %d", params.CaptchaX)
 	}
 	if valid, err := auth.VerifyPassword(params.PasswordHash, captchaTestPassword); err != nil || !valid {
 		t.Fatalf("stored password hash does not verify: %v", err)
@@ -360,7 +504,7 @@ func TestRegisterCreatesFormalUserCredentialTrialAndTokens(t *testing.T) {
 func TestRegisterGatesExpensiveWorkBehindChargeAndReservation(t *testing.T) {
 	captchaID := uuid.New()
 	body := func() string {
-		return `{"username":"example_user","email":"user@example.com","password":"password1","captcha_id":"` + captchaID.String() + `","captcha_answer":"AB3CD"}`
+		return `{"username":"example_user","email":"user@example.com","password":"password1","captcha_id":"` + captchaID.String() + `","captcha_x":` + fmt.Sprint(captchaTestTargetX) + `}`
 	}
 
 	t.Run("window charge rejection stops the flow", func(t *testing.T) {
@@ -426,7 +570,7 @@ func TestRegisterErrorContractIsGenericAndStable(t *testing.T) {
 		wantStatus  int
 		wantBody    string
 	}{
-		{name: "wrong answer", registerErr: domain.ErrCaptchaFailed, wantStatus: http.StatusBadRequest, wantBody: "captcha_failed"},
+		{name: "wrong coordinate", registerErr: domain.ErrCaptchaFailed, wantStatus: http.StatusBadRequest, wantBody: "captcha_failed"},
 		{name: "expired or exhausted", registerErr: domain.ErrCaptchaFailed, wantStatus: http.StatusBadRequest, wantBody: "captcha_failed"},
 		{name: "rate limited", registerErr: domain.ErrRateLimited, wantStatus: http.StatusTooManyRequests, wantBody: "rate_limited"},
 		{name: "conflict", registerErr: domain.ErrConflict, wantStatus: http.StatusConflict, wantBody: "conflict"},
@@ -437,7 +581,7 @@ func TestRegisterErrorContractIsGenericAndStable(t *testing.T) {
 				return domain.User{}, domain.Entitlement{}, test.registerErr
 			}}
 			router := newCaptchaRouter(t, store, RouterOptions{})
-			body := `{"username":"example_user","email":"user@example.com","password":"password1","captcha_id":"` + captchaID.String() + `","captcha_answer":"AB3CD"}`
+			body := `{"username":"example_user","email":"user@example.com","password":"password1","captcha_id":"` + captchaID.String() + `","captcha_x":137}`
 			req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/register", strings.NewReader(body))
 			req.Header.Set("Content-Type", "application/json")
 			response := httptest.NewRecorder()
@@ -458,17 +602,21 @@ func TestRegisterIsStrictJSONWithCurrentBodyLimit(t *testing.T) {
 		return domain.User{ID: uuid.New(), Role: string(domain.RoleUser)}, domain.Entitlement{}, nil
 	}}
 	router := newCaptchaRouter(t, store, RouterOptions{})
-	valid := `{"username":"example_user","email":"user@example.com","password":"password1","captcha_id":"` + captchaID.String() + `","captcha_answer":"AB3CD"}`
+	valid := `{"username":"example_user","email":"user@example.com","password":"password1","captcha_id":"` + captchaID.String() + `","captcha_x":137}`
 	for _, test := range []struct {
 		name string
 		body string
 	}{
-		{name: "unknown field", body: `{"username":"example_user","email":"user@example.com","password":"password1","captcha_id":"` + captchaID.String() + `","captcha_answer":"AB3CD","extra":1}`},
-		{name: "missing captcha answer", body: `{"username":"example_user","email":"user@example.com","password":"password1","captcha_id":"` + captchaID.String() + `"}`},
-		{name: "missing captcha id", body: `{"username":"example_user","email":"user@example.com","password":"password1","captcha_answer":"AB3CD"}`},
+		{name: "unknown field", body: `{"username":"example_user","email":"user@example.com","password":"password1","captcha_id":"` + captchaID.String() + `","captcha_x":137,"extra":1}`},
+		{name: "missing coordinate", body: `{"username":"example_user","email":"user@example.com","password":"password1","captcha_id":"` + captchaID.String() + `"}`},
+		{name: "null coordinate", body: `{"username":"example_user","email":"user@example.com","password":"password1","captcha_id":"` + captchaID.String() + `","captcha_x":null}`},
+		{name: "string coordinate", body: `{"username":"example_user","email":"user@example.com","password":"password1","captcha_id":"` + captchaID.String() + `","captcha_x":"137"}`},
+		{name: "fractional coordinate", body: `{"username":"example_user","email":"user@example.com","password":"password1","captcha_id":"` + captchaID.String() + `","captcha_x":137.5}`},
+		{name: "negative coordinate", body: `{"username":"example_user","email":"user@example.com","password":"password1","captcha_id":"` + captchaID.String() + `","captcha_x":-1}`},
+		{name: "coordinate beyond canvas", body: `{"username":"example_user","email":"user@example.com","password":"password1","captcha_id":"` + captchaID.String() + `","captcha_x":` + fmt.Sprint(auth.CaptchaImageWidth+1) + `}`},
+		{name: "missing captcha id", body: `{"username":"example_user","email":"user@example.com","password":"password1","captcha_x":137}`},
 		{name: "multiple values", body: valid + valid},
 		{name: "malformed json", body: valid[:20]},
-		{name: "oversized answer", body: `{"username":"example_user","email":"user@example.com","password":"password1","captcha_id":"` + captchaID.String() + `","captcha_answer":"` + strings.Repeat("A", 65) + `"}`},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			store.calls = nil
@@ -498,7 +646,7 @@ func TestRegisterIsStrictJSONWithCurrentBodyLimit(t *testing.T) {
 		t.Fatalf("non-JSON content type response = %d", response.Code)
 	}
 
-	oversized := `{"username":"example_user","email":"user@example.com","password":"password1","captcha_id":"` + captchaID.String() + `","captcha_answer":"` + strings.Repeat("A", int(maxBodyBytes)) + `"}`
+	oversized := `{"username":"example_user","email":"user@example.com","password":"` + strings.Repeat("A", int(maxBodyBytes)) + `","captcha_id":"` + captchaID.String() + `","captcha_x":137}`
 	req = httptest.NewRequest(http.MethodPost, "/api/v1/auth/register", strings.NewReader(oversized))
 	req.Header.Set("Content-Type", "application/json")
 	response = httptest.NewRecorder()
@@ -514,21 +662,22 @@ func TestRegisterRejectsInvalidIdentityAndCaptchaInput(t *testing.T) {
 	}}
 	router := newCaptchaRouter(t, store, RouterOptions{})
 	for _, test := range []struct {
-		name, username, email, password, captchaID, answer string
+		name, username, email, password, captchaID string
+		captchaX                                   int
 	}{
-		{name: "bad username", username: "x", email: "user@example.com", password: "password1", captchaID: uuid.NewString(), answer: "AB3CD"},
-		{name: "bad email", username: "example_user", email: "not-an-email", password: "password1", captchaID: uuid.NewString(), answer: "AB3CD"},
-		{name: "short password", username: "example_user", email: "user@example.com", password: "short", captchaID: uuid.NewString(), answer: "AB3CD"},
-		{name: "malformed captcha id", username: "example_user", email: "user@example.com", password: "password1", captchaID: "not-a-uuid", answer: "AB3CD"},
-		{name: "non canonical captcha id", username: "example_user", email: "user@example.com", password: "password1", captchaID: strings.ToUpper(uuid.NewString()), answer: "AB3CD"},
-		{name: "nil captcha id", username: "example_user", email: "user@example.com", password: "password1", captchaID: uuid.Nil.String(), answer: "AB3CD"},
+		{name: "bad username", username: "x", email: "user@example.com", password: "password1", captchaID: uuid.NewString(), captchaX: 137},
+		{name: "bad email", username: "example_user", email: "not-an-email", password: "password1", captchaID: uuid.NewString(), captchaX: 137},
+		{name: "short password", username: "example_user", email: "user@example.com", password: "short", captchaID: uuid.NewString(), captchaX: 137},
+		{name: "malformed captcha id", username: "example_user", email: "user@example.com", password: "password1", captchaID: "not-a-uuid", captchaX: 137},
+		{name: "non canonical captcha id", username: "example_user", email: "user@example.com", password: "password1", captchaID: strings.ToUpper(uuid.NewString()), captchaX: 137},
+		{name: "nil captcha id", username: "example_user", email: "user@example.com", password: "password1", captchaID: uuid.Nil.String(), captchaX: 137},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			store.calls = nil
 			store.registerCharges = nil
 			store.reservations = nil
 			store.registrants = nil
-			body := `{"username":"` + test.username + `","email":"` + test.email + `","password":"` + test.password + `","captcha_id":"` + test.captchaID + `","captcha_answer":"` + test.answer + `"}`
+			body := `{"username":"` + test.username + `","email":"` + test.email + `","password":"` + test.password + `","captcha_id":"` + test.captchaID + `","captcha_x":` + fmt.Sprint(test.captchaX) + `}`
 			req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/register", strings.NewReader(body))
 			req.Header.Set("Content-Type", "application/json")
 			response := httptest.NewRecorder()
@@ -556,11 +705,11 @@ func TestCaptchaFlowNeverLogsSensitiveMaterial(t *testing.T) {
 	}}
 	router := newCaptchaRouter(t, store, RouterOptions{Logger: logger})
 
-	captchaID, image, _, _ := captchaGET(t, router)
-	if image == "" {
+	payload, issue := captchaGET(t, router)
+	if issue.Code != http.StatusOK || payload.Challenge.ImageBase64 == "" {
 		t.Fatal("issue failed before the log assertion")
 	}
-	body := `{"username":"example_user","email":"user@example.com","password":"` + captchaTestPassword + `","captcha_id":"` + captchaID + `","captcha_answer":"ab3cd"}`
+	body := `{"username":"example_user","email":"user@example.com","password":"` + captchaTestPassword + `","captcha_id":"` + payload.CaptchaID + `","captcha_x":` + fmt.Sprint(captchaTestTargetX) + `}`
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/register", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.RemoteAddr = "127.0.0.1:12345"
@@ -570,9 +719,13 @@ func TestCaptchaFlowNeverLogsSensitiveMaterial(t *testing.T) {
 		t.Fatalf("status = %d body = %s", response.Code, response.Body.String())
 	}
 	logOutput := logs.String()
-	for _, secret := range []string{captchaTestAnswer, "ab3cd", captchaTestPassword, "user@example.com", captchaID, "<svg", "svg xmlns"} {
+	for _, secret := range []string{
+		captchaTestPassword, "user@example.com", payload.CaptchaID,
+		payload.Challenge.ImageBase64, payload.Tile.ImageBase64,
+		payload.Challenge.ImageBase64[:64], `"target"`, `target_x`,
+	} {
 		if strings.Contains(logOutput, secret) {
-			t.Fatalf("log leaked %q: %s", secret, logOutput)
+			t.Fatalf("log leaked %q: %s", secret[:min(24, len(secret))], logOutput)
 		}
 	}
 }
@@ -587,7 +740,7 @@ func TestRegisterUsesForwardedIPOnlyFromLoopback(t *testing.T) {
 				return domain.User{}, domain.Entitlement{}, domain.ErrCaptchaFailed
 			}}
 			router := newCaptchaRouter(t, store, RouterOptions{})
-			body := `{"username":"example_user","email":"user@example.com","password":"password1","captcha_id":"` + uuid.NewString() + `","captcha_answer":"AB3CD"}`
+			body := `{"username":"example_user","email":"user@example.com","password":"password1","captcha_id":"` + uuid.NewString() + `","captcha_x":137}`
 			req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/register", strings.NewReader(body))
 			req.Header.Set("Content-Type", "application/json")
 			req.RemoteAddr = test.remote

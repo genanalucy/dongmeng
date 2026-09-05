@@ -62,7 +62,11 @@ type Config struct {
 	// CaptchaSecret backs captcha answer hashing and per-IP rate-limit keys.
 	// It is required unconditionally because captcha registration is the only
 	// registration path; a missing secret must stop startup, not weaken it.
-	CaptchaSecret     string
+	CaptchaSecret string
+	// AgentServiceToken authenticates the internal Agent service boundary at
+	// POST /internal/v1/agent/translation-sessions/authorize. The route is
+	// mounted only when it is set, and production requires it (fail closed).
+	AgentServiceToken string
 	HistoryEnabled    bool
 	HistoryRootKey    []byte
 	HistoryKeyVersion int
@@ -95,6 +99,7 @@ func Load() (Config, error) {
 		SMTPSendTimeout:                  defaultSMTPSendTimeout,
 		EmailVerificationRateLimitSecret: os.Getenv("EMAIL_VERIFICATION_RATE_LIMIT_SECRET"),
 		CaptchaSecret:                    strings.TrimSpace(os.Getenv("CAPTCHA_SECRET")),
+		AgentServiceToken:                strings.TrimSpace(os.Getenv("CLOUD_API_AGENT_SERVICE_TOKEN")),
 	}
 	historyRootKey, err := base64StdEnv("HISTORY_ROOT_KEY")
 	if err != nil {
@@ -228,6 +233,16 @@ func (c Config) Validate() error {
 	}
 	if len(c.CaptchaSecret) < 32 {
 		problems = append(problems, "CAPTCHA_SECRET must be at least 32 bytes")
+	}
+	// The internal Agent authorization boundary fails closed: when the shared
+	// service token is configured it must meet the same minimum entropy as the
+	// other signing secrets, and production deployments must configure it so
+	// the Agent can always reach an authenticated authorization endpoint.
+	if c.AgentServiceToken != "" && len(c.AgentServiceToken) < 32 {
+		problems = append(problems, "CLOUD_API_AGENT_SERVICE_TOKEN must be at least 32 bytes")
+	}
+	if c.Environment == "production" && c.AgentServiceToken == "" {
+		problems = append(problems, "CLOUD_API_AGENT_SERVICE_TOKEN is required in production")
 	}
 	// History fail-closed gate: an enabled runtime refuses to start without a
 	// high-entropy root key and a positive key version. Key material itself is

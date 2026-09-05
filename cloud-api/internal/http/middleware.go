@@ -196,10 +196,14 @@ func NewLimiter(rate float64, burst int) *Limiter {
 }
 
 // Middleware rejects exhausted clients with 429. Health probes and CORS
-// preflights are excluded to keep infrastructure checks deterministic.
+// preflights are excluded to keep infrastructure checks deterministic. The
+// /internal/ service boundary is excluded too: it is authenticated by its own
+// constant-time shared service token, and rate limiting it by direct peer
+// would collapse every Agent's per-session authorization polls into one
+// public bucket.
 func (l *Limiter) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodOptions || r.URL.Path == "/healthz" || r.URL.Path == "/readyz" {
+		if r.Method == http.MethodOptions || r.URL.Path == "/healthz" || r.URL.Path == "/readyz" || strings.HasPrefix(r.URL.Path, "/internal/") {
 			next.ServeHTTP(w, r)
 			return
 		}

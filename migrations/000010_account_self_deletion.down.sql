@@ -1,0 +1,6 @@
+BEGIN;
+
+ALTER TABLE users DROP CONSTRAINT IF EXISTS users_deletion_valid;
+ALTER TABLE users DROP COLUMN IF EXISTS deleted_at;
+
+COMMIT;

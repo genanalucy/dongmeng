@@ -625,19 +625,21 @@ type RegistrationCaptcha struct {
 type RegisterWithCaptchaParams struct {
 	Username, Email, PasswordHash string
 	CaptchaID                     uuid.UUID
-	CaptchaAnswer                 string
-	AnswerPepper                  []byte
-	Now                           time.Time
+	// CaptchaX is the client's submitted final tile position in challenge
+	// pixels; the hidden target itself is never carried in cleartext.
+	CaptchaX     int
+	AnswerPepper []byte
+	Now          time.Time
 }
 
 // ReserveRegistrationCaptchaParams carries only the material needed to
 // validate and reserve one challenge answer before any password hashing
 // costs are paid.
 type ReserveRegistrationCaptchaParams struct {
-	CaptchaID     uuid.UUID
-	CaptchaAnswer string
-	AnswerPepper  []byte
-	Now           time.Time
+	CaptchaID    uuid.UUID
+	CaptchaX     int
+	AnswerPepper []byte
+	Now          time.Time
 }
 
 type CreateRefreshParams struct {

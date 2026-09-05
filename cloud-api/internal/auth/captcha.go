@@ -6,12 +6,14 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"fmt"
-	"math"
-	"math/big"
-	"strings"
+	"strconv"
 	"time"
 
 	"github.com/dngmeng/cloud-api/internal/domain"
+	"github.com/wenlng/go-captcha-assets/resources/imagesv2"
+	"github.com/wenlng/go-captcha-assets/resources/tiles"
+	"github.com/wenlng/go-captcha/v2/base/option"
+	"github.com/wenlng/go-captcha/v2/slide"
 )
 
 const (
@@ -24,54 +26,76 @@ const (
 	CaptchaIssueIPPerHour    = 30
 	CaptchaRegisterIPPerHour = 10
 
-	CaptchaChallengeLength = 5
-	captchaSaltLength      = 32
-	// CaptchaAnswerMaxBytes bounds submitted answers before any hashing; the
-	// challenge itself is only CaptchaChallengeLength characters.
-	CaptchaAnswerMaxBytes = 64
+	captchaSaltLength = 32
+	// CaptchaTolerance is the pixel window on either side of the target
+	// coordinate in which a submitted drag position still verifies. It
+	// mirrors the padding parameter of the library's slide.Validate: a
+	// submitted coordinate passes exactly when
+	// |submitted - target| <= CaptchaTolerance.
+	CaptchaTolerance = 6
+	// CaptchaImageWidth and CaptchaImageHeight fix the rendered slide
+	// challenge canvas. The client submits coordinates in this pixel space,
+	// so validation bounds and generation must share one size.
+	CaptchaImageWidth  = 300
+	CaptchaImageHeight = 220
 )
 
-// captchaAlphabet is the unambiguous uppercase alphanumeric set: I, O, 0, and
-// 1 are excluded so rendered challenges stay human-readable. Matching is
-// case-insensitive because answers are normalized before hashing.
-const captchaAlphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
-
-var captchaAlphabetMembership [256]bool
-
-func init() {
-	for index := 0; index < len(captchaAlphabet); index++ {
-		captchaAlphabetMembership[captchaAlphabet[index]] = true
-	}
-}
-
-// CaptchaDraft is the issue-time material for one challenge. The challenge
-// text exists only here and in the rendered SVG response; persistence receives
-// only AnswerHash and AnswerSalt.
+// CaptchaDraft is the issue-time material for one slide challenge. The
+// target coordinate exists only in memory here; persistence receives only
+// AnswerHash and AnswerSalt, never the coordinate itself.
 type CaptchaDraft struct {
-	Challenge  string
+	// MasterImage is the rendered background with the target notch as a
+	// self-contained JPEG of MasterWidth x MasterHeight pixels.
+	MasterImage []byte
+	// TileImage is the draggable puzzle piece as a transparent PNG of
+	// TileWidth x TileHeight pixels.
+	TileImage []byte
+	// MasterWidth/MasterHeight is the pixel space of MasterImage and of the
+	// submitted answer coordinate.
+	MasterWidth, MasterHeight int
+	// TileWidth/TileHeight is the size of TileImage.
+	TileWidth, TileHeight int
+	// TileStartX/TileStartY is where the client initially renders the tile:
+	// the drag moves it horizontally toward the hidden target.
+	TileStartX, TileStartY int
+	// TargetX is the notch coordinate the client must match. It never
+	// reaches persistence in cleartext.
+	TargetX    int
 	AnswerHash []byte
 	AnswerSalt []byte
 	ExpiresAt  time.Time
 }
 
-// CaptchaService dependencies are injected to keep challenge randomness,
+// SlideGenerator produces one go-captcha slide challenge per call. It is an
+// interface so tests can pin the target coordinate while production uses the
+// official library generator.
+type SlideGenerator interface {
+	Generate() (slide.CaptchaData, error)
+}
+
+// CaptchaService dependencies are injected to keep challenge generation,
 // hashing, and time testable without persistence or HTTP wiring.
 type CaptchaService struct {
 	AnswerPepper       []byte
 	RateLimitKeySecret []byte
-	GenerateChallenge  func() (string, error)
+	GenerateSlide      SlideGenerator
 	GenerateSalt       func() ([]byte, error)
 	Clock              func() time.Time
 }
 
-// NewCaptchaService validates the fail-closed secrets and installs
-// cryptographic defaults for the generator and clock.
+// NewCaptchaService validates the fail-closed secrets and installs the
+// official go-captcha slide generator plus cryptographic salt and clock
+// defaults.
 func NewCaptchaService(service CaptchaService) (CaptchaService, error) {
 	if len(service.AnswerPepper) < MinimumSecretBytes || len(service.RateLimitKeySecret) < MinimumSecretBytes {
 		return CaptchaService{}, fmt.Errorf("%w: captcha secrets must be at least %d bytes", domain.ErrInvalid, MinimumSecretBytes)
 	}
-	if service.GenerateChallenge == nil {
-		service.GenerateChallenge = generateCaptchaChallenge
+	if service.GenerateSlide == nil {
+		generator, err := NewDefaultSlideGenerator()
+		if err != nil {
+			return CaptchaService{}, err
+		}
+		service.GenerateSlide = generator
 	}
 	if service.GenerateSalt == nil {
 		service.GenerateSalt = generateCaptchaSalt
@@ -82,14 +106,60 @@ func NewCaptchaService(service CaptchaService) (CaptchaService, error) {
 	return service, nil
 }
 
-// Issue creates one challenge with its salted answer hash and expiry.
-func (s CaptchaService) Issue() (CaptchaDraft, error) {
-	challenge, err := s.GenerateChallenge()
+// NewDefaultSlideGenerator assembles the official open-source slide captcha
+// (github.com/wenlng/go-captcha/v2) with the companion asset pack published
+// by the same author: photographed backgrounds and the tile overlay, shadow,
+// and mask triple. Make() selects the horizontal slide mode, so the client
+// only drags along the x axis and the verifiable answer stays one
+// dimensional.
+func NewDefaultSlideGenerator() (SlideGenerator, error) {
+	backgrounds, err := imagesv2.GetImages()
 	if err != nil {
-		return CaptchaDraft{}, fmt.Errorf("generate captcha challenge: %w", err)
+		return nil, fmt.Errorf("load go-captcha background assets: %w", err)
 	}
-	if _, err := ParseCaptchaAnswer(challenge); err != nil {
-		return CaptchaDraft{}, err
+	tileAssets, err := tiles.GetTiles()
+	if err != nil {
+		return nil, fmt.Errorf("load go-captcha tile assets: %w", err)
+	}
+	graphs := make([]*slide.GraphImage, 0, len(tileAssets))
+	for _, tileAsset := range tileAssets {
+		graphs = append(graphs, &slide.GraphImage{
+			OverlayImage: tileAsset.OverlayImage,
+			ShadowImage:  tileAsset.ShadowImage,
+			MaskImage:    tileAsset.MaskImage,
+		})
+	}
+	builder := slide.NewBuilder(slide.WithImageSize(option.Size{Width: CaptchaImageWidth, Height: CaptchaImageHeight}))
+	builder.SetResources(slide.WithBackgrounds(backgrounds), slide.WithGraphImages(graphs))
+	return builder.Make(), nil
+}
+
+// Issue generates one slide challenge, encodes its images, and derives the
+// salted hash of the target coordinate plus expiry. Image assets are
+// produced entirely by the go-captcha library; the answer is persisted only
+// through captchaAnswerHash.
+func (s CaptchaService) Issue() (CaptchaDraft, error) {
+	data, err := s.GenerateSlide.Generate()
+	if err != nil {
+		return CaptchaDraft{}, fmt.Errorf("generate slide captcha: %w", err)
+	}
+	block := data.GetData()
+	if block == nil {
+		return CaptchaDraft{}, fmt.Errorf("%w: slide captcha produced no block data", domain.ErrInvalid)
+	}
+	if block.X < CaptchaTolerance || block.X > CaptchaImageWidth-CaptchaTolerance ||
+		block.Width <= 0 || block.Height <= 0 ||
+		block.Y < 0 || block.Y+block.Height > CaptchaImageHeight ||
+		block.DX < 0 || block.DX+block.Width > CaptchaImageWidth || block.DY != block.Y {
+		return CaptchaDraft{}, fmt.Errorf("%w: slide captcha block escapes the challenge canvas", domain.ErrInvalid)
+	}
+	master, err := data.GetMasterImage().ToBytes()
+	if err != nil {
+		return CaptchaDraft{}, fmt.Errorf("encode slide master image: %w", err)
+	}
+	tile, err := data.GetTileImage().ToBytes()
+	if err != nil {
+		return CaptchaDraft{}, fmt.Errorf("encode slide tile image: %w", err)
 	}
 	salt, err := s.GenerateSalt()
 	if err != nil {
@@ -98,7 +168,7 @@ func (s CaptchaService) Issue() (CaptchaDraft, error) {
 	if len(salt) < 16 || len(salt) > 64 {
 		return CaptchaDraft{}, fmt.Errorf("%w: captcha salt length is out of range", domain.ErrInvalid)
 	}
-	answerHash, err := captchaAnswerHash(s.AnswerPepper, salt, challenge)
+	answerHash, err := captchaAnswerHash(s.AnswerPepper, salt, canonicalSlideAnswer(block.X))
 	if err != nil {
 		return CaptchaDraft{}, err
 	}
@@ -106,38 +176,56 @@ func (s CaptchaService) Issue() (CaptchaDraft, error) {
 	if now.IsZero() {
 		return CaptchaDraft{}, fmt.Errorf("%w: captcha clock is required", domain.ErrInvalid)
 	}
-	return CaptchaDraft{Challenge: challenge, AnswerHash: answerHash, AnswerSalt: salt, ExpiresAt: now.Add(CaptchaTTL)}, nil
+	return CaptchaDraft{
+		MasterImage:  master,
+		MasterWidth:  CaptchaImageWidth,
+		MasterHeight: CaptchaImageHeight,
+		TileImage:    tile,
+		TileWidth:    block.Width,
+		TileHeight:   block.Height,
+		TileStartX:   block.DX,
+		TileStartY:   block.DY,
+		TargetX:      block.X,
+		AnswerHash:   answerHash,
+		AnswerSalt:   salt,
+		ExpiresAt:    now.Add(CaptchaTTL),
+	}, nil
 }
 
-// ParseCaptchaAnswer validates and canonicalizes a challenge-shaped value.
-func ParseCaptchaAnswer(value string) (string, error) {
-	normalized := NormalizeCaptchaAnswer(value)
-	if len(normalized) != CaptchaChallengeLength {
-		return "", fmt.Errorf("%w: captcha answer must be %d characters from the unambiguous alphabet", domain.ErrInvalid, CaptchaChallengeLength)
-	}
-	for index := 0; index < len(normalized); index++ {
-		if !captchaAlphabetMembership[normalized[index]] {
-			return "", fmt.Errorf("%w: captcha answer contains a character outside the unambiguous alphabet", domain.ErrInvalid)
-		}
-	}
-	return normalized, nil
+// ValidCaptchaCoordinate reports whether a submitted drag coordinate lies in
+// the challenge's pixel space. It bounds client input before any hashing or
+// persistence work runs.
+func ValidCaptchaCoordinate(x int) bool {
+	return x >= 0 && x <= CaptchaImageWidth
 }
 
-// NormalizeCaptchaAnswer canonicalizes user input before hashing or storage
-// comparison: surrounding whitespace is trimmed and letters are uppercased so
-// matching is case-insensitive.
-func NormalizeCaptchaAnswer(value string) string {
-	return strings.ToUpper(strings.TrimSpace(value))
-}
-
-// CaptchaAnswerMatches reports whether the raw submitted answer verifies
-// against the persisted salted hash in constant time.
-func CaptchaAnswerMatches(pepper, salt, expectedHash []byte, rawAnswer string) bool {
-	if len(pepper) == 0 || len(salt) == 0 || len(expectedHash) != sha256.Size {
+// CaptchaCoordinateMatches reports whether the submitted final tile position
+// verifies against the persisted salted hash of the hidden target. Because
+// persistence stores only the hash, verification expands the submitted
+// coordinate to every position the tolerance admits and compares each
+// candidate's hash in constant time; the match rule is exactly the library's
+// slide.Validate padding comparison |submitted - target| <= tolerance on the
+// drag axis.
+func CaptchaCoordinateMatches(pepper, salt, expectedHash []byte, submittedX int) bool {
+	if len(pepper) == 0 || len(salt) == 0 || len(expectedHash) != sha256.Size || !ValidCaptchaCoordinate(submittedX) {
 		return false
 	}
-	actualHash, err := captchaAnswerHash(pepper, salt, NormalizeCaptchaAnswer(rawAnswer))
-	return err == nil && subtle.ConstantTimeCompare(expectedHash, actualHash) == 1
+	for candidate := submittedX - CaptchaTolerance; candidate <= submittedX+CaptchaTolerance; candidate++ {
+		if !ValidCaptchaCoordinate(candidate) {
+			continue
+		}
+		actualHash, err := captchaAnswerHash(pepper, salt, canonicalSlideAnswer(candidate))
+		if err == nil && subtle.ConstantTimeCompare(expectedHash, actualHash) == 1 {
+			return true
+		}
+	}
+	return false
+}
+
+// canonicalSlideAnswer domain-separates the hashed answer so slide targets
+// can never collide with other HMAC uses of the shared captcha secret.
+func canonicalSlideAnswer(x int) string {
+	return "slide:x:" + strconv.Itoa(x)
 }
 
 func captchaAnswerHash(pepper, salt []byte, normalizedAnswer string) ([]byte, error) {
@@ -150,171 +238,10 @@ func captchaAnswerHash(pepper, salt []byte, normalizedAnswer string) ([]byte, er
 	return mac.Sum(nil), nil
 }
 
-func generateCaptchaChallenge() (string, error) {
-	challenge := make([]byte, CaptchaChallengeLength)
-	alphabetSize := big.NewInt(int64(len(captchaAlphabet)))
-	for index := range challenge {
-		value, err := rand.Int(rand.Reader, alphabetSize)
-		if err != nil {
-			return "", fmt.Errorf("generate captcha challenge: %w", err)
-		}
-		challenge[index] = captchaAlphabet[value.Int64()]
-	}
-	return string(challenge), nil
-}
-
 func generateCaptchaSalt() ([]byte, error) {
 	salt := make([]byte, captchaSaltLength)
 	if _, err := rand.Read(salt); err != nil {
 		return nil, fmt.Errorf("generate captcha salt: %w", err)
 	}
 	return salt, nil
-}
-
-// captchaJitter returns a uniformly random offset in [-limit, limit] sourced
-// from the cryptographic reader; failures collapse to zero, never to panic.
-func captchaJitter(limit int64) int64 {
-	value, err := rand.Int(rand.Reader, big.NewInt(2*limit+1))
-	if err != nil {
-		return 0
-	}
-	return value.Int64() - limit
-}
-
-const (
-	captchaSVGWidth  = 160
-	captchaSVGHeight = 56
-	captchaSVGNS     = "http://www.w3.org/2000/svg"
-	// captchaGlyphGridW/H define the design grid every stroke glyph is
-	// authored on; rendering scales and rotates that grid per character.
-	captchaGlyphGridW = 9.0
-	captchaGlyphGridH = 12.0
-	// captchaStrokeWidth is the stroke weight in rendered pixels.
-	captchaStrokeWidth = 2.3
-)
-
-// captchaForegroundPalette holds dark, high-contrast render colors.
-var captchaForegroundPalette = []uint32{0x2B3A55, 0x3F3F46, 0x1F3B26, 0x4A2B2B, 0x243B53}
-
-// captchaPoint is one authoring-grid vertex of a glyph stroke.
-type captchaPoint struct{ X, Y float64 }
-
-// captchaGlyph is one character expressed as polyline strokes. Coordinates
-// live on the captchaGlyphGridW x captchaGlyphGridH grid with the baseline at
-// Y = captchaGlyphGridH.
-type captchaGlyph [][]captchaPoint
-
-// captchaGlyphs carries stroke outlines for every character of
-// captchaAlphabet. Glyphs are pure geometry: the SVG never carries the
-// answer as text, title, description, or metadata, so parsing the XML yields
-// no machine-readable characters of the challenge.
-var captchaGlyphs = map[byte]captchaGlyph{
-	'A': {{{0, 12}, {4.5, 0}, {9, 12}}, {{1.8, 7.6}, {7.2, 7.6}}},
-	'B': {{{0, 0}, {0, 12}}, {{0, 0}, {6, 0}, {8.5, 2}, {8.5, 4}, {6, 6}, {0, 6}}, {{0, 6}, {6.6, 6}, {9, 8}, {9, 10}, {6.6, 12}, {0, 12}}},
-	'C': {{{9, 2.4}, {6.2, 0}, {3, 0}, {0, 3}, {0, 9}, {3, 12}, {6.2, 12}, {9, 9.6}}},
-	'D': {{{0, 0}, {0, 12}}, {{0, 0}, {5.5, 0}, {9, 3.6}, {9, 8.4}, {5.5, 12}, {0, 12}}},
-	'E': {{{9, 0}, {0, 0}, {0, 12}, {9, 12}}, {{0, 6}, {6.6, 6}}},
-	'F': {{{9, 0}, {0, 0}, {0, 12}}, {{0, 6}, {6.6, 6}}},
-	'G': {{{9, 2.4}, {6.2, 0}, {3, 0}, {0, 3}, {0, 9}, {3, 12}, {6.2, 12}, {9, 9.6}, {9, 6}, {5.2, 6}}},
-	'H': {{{0, 0}, {0, 12}}, {{9, 0}, {9, 12}}, {{0, 6}, {9, 6}}},
-	'J': {{{9, 0}, {9, 9}, {6.6, 12}, {3.2, 12}, {0.8, 9.9}}},
-	'K': {{{0, 0}, {0, 12}}, {{9, 0}, {0, 6.6}}, {{2.4, 4.9}, {9, 12}}},
-	'L': {{{0, 0}, {0, 12}, {9, 12}}},
-	'M': {{{0, 12}, {0, 0}, {4.5, 6.5}, {9, 0}, {9, 12}}},
-	'N': {{{0, 12}, {0, 0}, {9, 12}, {9, 0}}},
-	'P': {{{0, 12}, {0, 0}}, {{0, 0}, {6, 0}, {9, 2.6}, {9, 4.6}, {6, 7}, {0, 7}}},
-	'Q': {{{4.5, 0}, {6.9, 0.9}, {8.2, 3}, {8.2, 4.8}, {6.9, 6.9}, {4.5, 7.8}, {2.1, 6.9}, {0.8, 4.8}, {0.8, 3}, {2.1, 0.9}, {4.5, 0}}, {{5.6, 6.4}, {8.8, 11.4}}},
-	'R': {{{0, 12}, {0, 0}, {6, 0}, {9, 2.6}, {9, 4.6}, {6, 7}, {0, 7}}, {{2.6, 4.9}, {9, 12}}},
-	'S': {{{8.6, 2.1}, {6, 0}, {3, 0}, {0.6, 2}, {0.6, 4}, {3, 5.9}, {6, 5.9}, {8.6, 7.9}, {8.6, 10}, {6, 12}, {3, 12}, {0.6, 9.9}}},
-	'T': {{{0, 0}, {9, 0}}, {{4.5, 0}, {4.5, 12}}},
-	'U': {{{0, 0}, {0, 9}, {2.6, 11.6}, {6.4, 11.6}, {9, 9}, {9, 0}}},
-	'V': {{{0, 0}, {4.5, 12}, {9, 0}}},
-	'W': {{{0, 0}, {1.9, 12}, {4.5, 5.2}, {7.1, 12}, {9, 0}}},
-	'X': {{{0, 0}, {9, 12}}, {{0, 12}, {9, 0}}},
-	'Y': {{{0, 0}, {4.5, 6.2}, {9, 0}}, {{4.5, 6.2}, {4.5, 12}}},
-	'Z': {{{0.4, 0}, {8.6, 0}, {0.4, 12}, {8.6, 12}}},
-	'2': {{{0.4, 2.6}, {2.8, 0}, {6.2, 0}, {8.6, 2.6}, {8.6, 4.8}, {0.4, 9.4}, {0.4, 12}, {8.6, 12}}},
-	'3': {{{0.5, 1.8}, {3.2, 0}, {5.8, 0}, {8.5, 2.4}, {8.5, 4.4}, {6.2, 6.1}, {8.5, 7.9}, {8.5, 9.7}, {5.8, 12}, {3.2, 12}, {0.5, 10.2}}},
-	'4': {{{6.8, 0}, {0.4, 7.6}, {8.8, 7.6}}, {{6.8, 3.4}, {6.8, 12}}},
-	'5': {{{8.6, 0}, {0.6, 0}, {0.6, 5.4}, {5.4, 5.4}, {8.6, 7.8}, {8.6, 9.9}, {5.8, 12}, {2.6, 12}, {0.6, 10.4}}},
-	'6': {{{8.4, 1.6}, {5.2, 0}, {2.2, 2.2}, {2.2, 8.8}, {4.6, 11.8}, {7, 11.8}, {8.8, 9.7}, {8.8, 8}, {7, 6.4}, {4.4, 6.4}, {2.2, 8.2}}},
-	'7': {{{0.4, 0}, {8.6, 0}, {3.6, 12}}},
-	'8': {{{4.5, 0}, {6.6, 0.8}, {7.6, 2.5}, {6.9, 4.4}, {4.5, 5.9}, {2.1, 4.4}, {1.4, 2.5}, {2.4, 0.8}, {4.5, 0}}, {{4.5, 5.9}, {7.2, 7.1}, {8.2, 9.2}, {7.2, 11.2}, {4.5, 12}, {1.8, 11.2}, {0.8, 9.2}, {1.8, 7.1}, {4.5, 5.9}}},
-	'9': {{{1.6, 10.4}, {4.8, 12}, {7.8, 9.8}, {7.8, 3.2}, {5.4, 0.2}, {3, 0.2}, {1.2, 2}, {1.2, 3.8}, {3, 5.4}, {5.6, 5.4}, {7.8, 3.6}}},
-}
-
-// RenderCaptchaSVG renders one challenge locally as a self-contained SVG.
-// Characters are emitted as rotated, jittered stroke outlines (path data),
-// never as text nodes: the answer is not recoverable by parsing the XML or by
-// reading accessibility metadata. The accessibility label stays generic so
-// assistive technology announces the challenge's purpose without disclosing
-// its answer. It references no external resources and returns the empty
-// string for malformed challenges instead of emitting attacker-controlled
-// content.
-func RenderCaptchaSVG(challenge string) string {
-	if _, err := ParseCaptchaAnswer(challenge); err != nil {
-		return ""
-	}
-	var svg strings.Builder
-	fmt.Fprintf(&svg, `<svg xmlns=%q width="%d" height="%d" viewBox="0 0 %d %d" role="img" aria-label="captcha image">`, captchaSVGNS, captchaSVGWidth, captchaSVGHeight, captchaSVGWidth, captchaSVGHeight)
-	fmt.Fprintf(&svg, `<rect width="%d" height="%d" rx="4" fill="#F2F4F7"/>`, captchaSVGWidth, captchaSVGHeight)
-	for line := 0; line < 3; line++ {
-		fmt.Fprintf(&svg, `<line x1="%d" y1="%d" x2="%d" y2="%d" stroke="#C8CED6" stroke-width="1"/>`,
-			captchaSVGCoord(captchaSVGWidth), captchaSVGCoord(captchaSVGHeight),
-			captchaSVGCoord(captchaSVGWidth), captchaSVGCoord(captchaSVGHeight))
-	}
-	const margin = 12
-	step := (captchaSVGWidth - 2*margin) / len(challenge)
-	for index := 0; index < len(challenge); index++ {
-		glyph, ok := captchaGlyphs[challenge[index]]
-		if !ok {
-			// ParseCaptchaAnswer already bounds the alphabet, so a missing
-			// glyph is a programming error that must fail closed.
-			return ""
-		}
-		x := float64(margin + step*index + step/2 + int(captchaJitter(4)))
-		baseline := float64(36 + int(captchaJitter(5)))
-		size := float64(25 + int(captchaJitter(3)))
-		rotation := float64(captchaJitter(18))
-		color := captchaForegroundPalette[captchaPaletteIndex()]
-		scale := size / captchaGlyphGridH
-		// The glyph origin maps the design grid's baseline onto the jittered
-		// baseline; rotation pivots on the glyph's visual center.
-		originX := x - captchaGlyphGridW*scale/2
-		originY := baseline - captchaGlyphGridH*scale
-		centerX := x
-		centerY := baseline - size/2
-		radians := rotation * math.Pi / 180
-		cos, sin := math.Cos(radians), math.Sin(radians)
-		var path strings.Builder
-		for _, stroke := range glyph {
-			for pointIndex, point := range stroke {
-				sx := originX + point.X*scale
-				sy := originY + point.Y*scale
-				dx, dy := sx-centerX, sy-centerY
-				rx := centerX + dx*cos - dy*sin
-				ry := centerY + dx*sin + dy*cos
-				if pointIndex == 0 {
-					fmt.Fprintf(&path, "M%.1f %.1f", rx, ry)
-					continue
-				}
-				fmt.Fprintf(&path, "L%.1f %.1f", rx, ry)
-			}
-		}
-		fmt.Fprintf(&svg, `<path d="%s" fill="none" stroke="#%06x" stroke-width="%.1f" stroke-linecap="round" stroke-linejoin="round"/>`, path.String(), color, captchaStrokeWidth)
-	}
-	svg.WriteString(`</svg>`)
-	return svg.String()
-}
-
-func captchaSVGCoord(limit int) int {
-	return int(captchaJitter(int64(limit/2)) + int64(limit/2))
-}
-
-func captchaPaletteIndex() int {
-	value, err := rand.Int(rand.Reader, big.NewInt(int64(len(captchaForegroundPalette))))
-	if err != nil {
-		return 0
-	}
-	return int(value.Int64())
 }

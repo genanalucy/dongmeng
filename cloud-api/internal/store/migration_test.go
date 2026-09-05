@@ -66,6 +66,46 @@ func TestRefreshExpiryIndexUsesIncrementalNonBlockingMigration(t *testing.T) {
 	}
 }
 
+func TestAccountSelfDeletionMigrationTombstonesWithoutRowRemoval(t *testing.T) {
+	up, err := os.ReadFile("../../../migrations/000010_account_self_deletion.up.sql")
+	if err != nil {
+		t.Fatalf("read account self-deletion migration: %v", err)
+	}
+	schema := string(up)
+	for _, fragment := range []string{
+		// Deletion is a tombstone column, never a row removal, so the
+		// append-only audit_logs FK and redeemed redemption_codes RESTRICT stay
+		// intact.
+		"ALTER TABLE users ADD COLUMN IF NOT EXISTS deleted_at timestamptz",
+		"CONSTRAINT users_deletion_valid",
+		// A deleted account is always disabled no later than its tombstone, so
+		// every existing enabled-only lookup excludes it.
+		"deleted_at IS NULL OR (deleted_at >= created_at AND disabled_at IS NOT NULL AND disabled_at <= deleted_at)",
+		// The column is new, so validation must complete in the same migration.
+		"VALIDATE CONSTRAINT users_deletion_valid",
+	} {
+		if !strings.Contains(schema, fragment) {
+			t.Errorf("account self-deletion migration missing %q", fragment)
+		}
+	}
+	if strings.Contains(schema, "DROP") || strings.Contains(schema, "DELETE FROM") {
+		t.Error("account self-deletion migration must not remove user rows")
+	}
+
+	down, err := os.ReadFile("../../../migrations/000010_account_self_deletion.down.sql")
+	if err != nil {
+		t.Fatalf("read account self-deletion rollback: %v", err)
+	}
+	for _, fragment := range []string{
+		"DROP CONSTRAINT IF EXISTS users_deletion_valid",
+		"DROP COLUMN IF EXISTS deleted_at",
+	} {
+		if !strings.Contains(string(down), fragment) {
+			t.Errorf("account self-deletion rollback missing %q", fragment)
+		}
+	}
+}
+
 func TestTwoDeviceGovernanceMigrationPersistsTerminationReasons(t *testing.T) {
 	up, err := os.ReadFile("../../../migrations/000009_two_device_session_governance.up.sql")
 	if err != nil {

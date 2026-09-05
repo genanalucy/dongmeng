@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"io"
@@ -57,6 +58,8 @@ type api struct {
 	store                    businessStore
 	tokens                   auth.TokenIssuer
 	authorizer               authService
+	sessionAuthorizer        agentSessionAuthorizer
+	agentServiceToken        string
 	verification             PhoneVerificationService
 	registrationVerification *auth.EmailRegistrationService
 	captcha                  *auth.CaptchaService
@@ -182,8 +185,8 @@ func registrationVerificationUnavailable(w http.ResponseWriter, r *http.Request)
 
 func (a api) warnCaptcha(r *http.Request, stage string) {
 	if a.logger != nil {
-		// Only bounded metadata: never the challenge, answer, captcha id,
-		// password, email, or SVG body.
+		// Only bounded metadata: never the challenge images, target
+		// coordinate, captcha id, password, or email.
 		a.logger.Warn("captcha registration did not complete", "request_id", RequestIDFromContext(r.Context()), "stage", stage)
 	}
 }
@@ -231,12 +234,6 @@ func (a api) captchaIssue(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, http.StatusInternalServerError, "internal_error")
 		return
 	}
-	svg := auth.RenderCaptchaSVG(draft.Challenge)
-	if svg == "" {
-		a.warnCaptcha(r, "render")
-		writeError(w, r, http.StatusInternalServerError, "internal_error")
-		return
-	}
 	captcha, err := a.store.CreateRegistrationCaptcha(r.Context(), domain.CreateRegistrationCaptchaParams{
 		AnswerHash: draft.AnswerHash,
 		AnswerSalt: draft.AnswerSalt,
@@ -248,30 +245,51 @@ func (a api) captchaIssue(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, http.StatusInternalServerError, "internal_error")
 		return
 	}
+	// The Android-native contract: both rendered images arrive as standard
+	// base64 payloads with explicit MIME types, pixel sizes, the tile's start
+	// position, and the server tolerance, so a client renders the challenge
+	// from this one JSON document without any JavaScript or extra requests.
+	// The hidden target coordinate is never part of the response.
 	writeJSON(w, http.StatusOK, map[string]any{
-		"captcha_id": captcha.ID,
-		"image":      svg,
-		"image_type": "image/svg+xml",
-		"expires_in": int(auth.CaptchaTTL.Seconds()),
+		"captcha_id":   captcha.ID,
+		"expires_in":   int(auth.CaptchaTTL.Seconds()),
+		"tolerance_px": auth.CaptchaTolerance,
+		"challenge": map[string]any{
+			"image_base64": base64.StdEncoding.EncodeToString(draft.MasterImage),
+			"image_type":   "image/jpeg",
+			"width":        draft.MasterWidth,
+			"height":       draft.MasterHeight,
+		},
+		"tile": map[string]any{
+			"image_base64": base64.StdEncoding.EncodeToString(draft.TileImage),
+			"image_type":   "image/png",
+			"width":        draft.TileWidth,
+			"height":       draft.TileHeight,
+			"start_x":      draft.TileStartX,
+			"start_y":      draft.TileStartY,
+		},
 	})
 }
 
 func (a api) register(w http.ResponseWriter, r *http.Request) {
 	var x struct {
-		Username      string `json:"username"`
-		Email         string `json:"email"`
-		Password      string `json:"password"`
-		CaptchaID     string `json:"captcha_id"`
-		CaptchaAnswer string `json:"captcha_answer"`
+		Username  string `json:"username"`
+		Email     string `json:"email"`
+		Password  string `json:"password"`
+		CaptchaID string `json:"captcha_id"`
+		// CaptchaX is the submitted final tile position in challenge pixels;
+		// a pointer distinguishes a missing field from the valid value 0.
+		CaptchaX *int `json:"captcha_x"`
 	}
-	if decode(w, r, &x) != nil || x.Username == "" || x.Email == "" || x.Password == "" || x.CaptchaID == "" || x.CaptchaAnswer == "" {
+	if decode(w, r, &x) != nil || x.Username == "" || x.Email == "" || x.Password == "" || x.CaptchaID == "" || x.CaptchaX == nil {
 		inputError(w, r)
 		return
 	}
-	if len(x.CaptchaAnswer) > auth.CaptchaAnswerMaxBytes {
+	if !auth.ValidCaptchaCoordinate(*x.CaptchaX) {
 		inputError(w, r)
 		return
 	}
+	captchaX := *x.CaptchaX
 	input, err := domain.ParseRegistrationVerificationInput(x.Username, x.Email, x.Password)
 	if err != nil {
 		inputError(w, r)
@@ -306,10 +324,10 @@ func (a api) register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := a.store.ReserveRegistrationCaptcha(r.Context(), domain.ReserveRegistrationCaptchaParams{
-		CaptchaID:     captchaID,
-		CaptchaAnswer: x.CaptchaAnswer,
-		AnswerPepper:  a.captcha.AnswerPepper,
-		Now:           now,
+		CaptchaID:    captchaID,
+		CaptchaX:     captchaX,
+		AnswerPepper: a.captcha.AnswerPepper,
+		Now:          now,
 	}); err != nil {
 		switch {
 		case errors.Is(err, domain.ErrCaptchaFailed):
@@ -328,13 +346,13 @@ func (a api) register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	user, trial, err := a.store.RegisterWithCaptcha(r.Context(), domain.RegisterWithCaptchaParams{
-		Username:      input.Username.String(),
-		Email:         input.Email.String(),
-		PasswordHash:  passwordHash,
-		CaptchaID:     captchaID,
-		CaptchaAnswer: x.CaptchaAnswer,
-		AnswerPepper:  a.captcha.AnswerPepper,
-		Now:           now,
+		Username:     input.Username.String(),
+		Email:        input.Email.String(),
+		PasswordHash: passwordHash,
+		CaptchaID:    captchaID,
+		CaptchaX:     captchaX,
+		AnswerPepper: a.captcha.AnswerPepper,
+		Now:          now,
 	})
 	if err != nil {
 		switch {
@@ -759,6 +777,41 @@ func (a api) accountIdentity(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, publicUser(user))
+}
+
+// deleteAccount implements DELETE /api/v1/account: authenticated
+// self-service account deletion with exact-username confirmation. The
+// confirmation is parsed and canonicalized like every other username input,
+// then compared by the store only against the token subject's own current
+// username; no client-supplied identifier can ever select a different
+// account. Admin principals are rejected outright, and the store re-checks
+// the persisted role inside the deletion transaction. Success returns 204
+// with no body; the caller's access and refresh tokens are dead from this
+// commit onward because the account row is disabled and every refresh family
+// is revoked.
+func (a api) deleteAccount(w http.ResponseWriter, r *http.Request) {
+	var request struct {
+		Username string `json:"username"`
+	}
+	if decode(w, r, &request) != nil {
+		inputError(w, r)
+		return
+	}
+	username, err := domain.ParseUsername(request.Username)
+	if err != nil {
+		inputError(w, r)
+		return
+	}
+	p, _ := current(r)
+	if p.role.IsAdmin() {
+		writeError(w, r, http.StatusForbidden, "forbidden")
+		return
+	}
+	if err := a.store.DeleteAccount(r.Context(), domain.DeleteAccountParams{UserID: p.id, Username: username.String(), Now: a.now()}); err != nil {
+		domainError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (a api) entitlement(w http.ResponseWriter, r *http.Request) {

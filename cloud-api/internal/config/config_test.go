@@ -151,6 +151,29 @@ func TestValidateRejectsProductionInsecureTransport(t *testing.T) {
 	}
 }
 
+func TestValidateRequiresAgentServiceTokenInProduction(t *testing.T) {
+	cfg := validConfig()
+	cfg.Environment = "production"
+	cfg.DatabaseURL = "postgres://cloud:secret@db:5432/cloud"
+	cfg.AllowedOrigins = []string{"https://app.example.com"}
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "CLOUD_API_AGENT_SERVICE_TOKEN is required in production") {
+		t.Fatalf("Validate() error = %v", err)
+	}
+
+	cfg.AgentServiceToken = strings.Repeat("t", 32)
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate() with configured token error = %v", err)
+	}
+}
+
+func TestValidateRejectsWeakAgentServiceToken(t *testing.T) {
+	cfg := validConfig()
+	cfg.AgentServiceToken = "short"
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "CLOUD_API_AGENT_SERVICE_TOKEN must be at least 32 bytes") {
+		t.Fatalf("Validate() error = %v", err)
+	}
+}
+
 func setRequiredEnvironment(t *testing.T) {
 	t.Helper()
 	t.Setenv("CLOUD_API_ENV", "development")
