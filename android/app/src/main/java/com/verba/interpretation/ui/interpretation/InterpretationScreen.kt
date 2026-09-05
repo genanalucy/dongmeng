@@ -19,11 +19,13 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -65,6 +67,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.verba.interpretation.ui.SessionPhase
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 
@@ -98,9 +101,12 @@ fun InterpretationScreen(
     modifier: Modifier = Modifier,
 ) {
     val callbacks = InterpretationCallbacks(onExit, onStart, onPause, onResume, onFinish, onReset)
-    val isSessionActive = model.actions.any {
-        it == InterpretationAction.PAUSE || it == InterpretationAction.RESUME || it == InterpretationAction.FINISH
-    }
+    val isSessionActive = model.phase in setOf(
+        SessionPhase.STARTING,
+        SessionPhase.RUNNING,
+        SessionPhase.PAUSED,
+        SessionPhase.STOPPING,
+    )
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
     val timelineToken = remember(model) { model.timelineToken() }
@@ -177,6 +183,8 @@ fun InterpretationScreen(
     Column(modifier = modifier.fillMaxSize()) {
         CompactHeader(
             languageDirection = model.languageDirection,
+            statusLabel = model.statusLabel,
+            phase = model.phase,
             sessionActive = isSessionActive,
             microphoneRunning = model.showMicrophoneRipple,
             onExit = { InterpretationActionDispatcher.exit(callbacks) },
@@ -189,6 +197,9 @@ fun InterpretationScreen(
                 contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp),
                 verticalArrangement = Arrangement.spacedBy(20.dp),
             ) {
+                if (model.bubbles.isEmpty() && model.errorMessage == null) {
+                    item { InterpretationEmptyState(phase = model.phase, statusLabel = model.statusLabel) }
+                }
                 items(model.bubbles, key = InterpretationDisplayBubble::key) { bubble ->
                     InterpretationBubble(bubble)
                 }
@@ -232,7 +243,10 @@ fun InterpretationScreen(
         }
         PinnedControls(
             actions = model.actions,
+            primaryAction = model.primaryAction,
+            statusLabel = model.statusLabel,
             microphoneRunning = model.showMicrophoneRipple,
+            phase = model.phase,
             onAction = { action -> InterpretationActionDispatcher.dispatch(action, callbacks) },
         )
     }
@@ -241,16 +255,13 @@ fun InterpretationScreen(
 @Composable
 private fun CompactHeader(
     languageDirection: String,
+    statusLabel: String,
+    phase: SessionPhase,
     sessionActive: Boolean,
     microphoneRunning: Boolean,
     onExit: () -> Unit,
 ) {
     val languages = languageDirection.split(" → ", limit = 2)
-    val stateLabel = when {
-        microphoneRunning -> "正在收音"
-        sessionActive -> "会话进行中"
-        else -> "准备开始"
-    }
 
     Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -262,9 +273,9 @@ private fun CompactHeader(
             }
             Column(modifier = Modifier.weight(1f)) {
                 Text("实时同传", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-                Text(stateLabel, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(statusLabel, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-            if (sessionActive) {
+            if (sessionActive && phase in setOf(SessionPhase.RUNNING, SessionPhase.PAUSED)) {
                 LiveMarker(microphoneRunning)
             }
         }
@@ -316,30 +327,60 @@ private fun LanguageChip(text: String, modifier: Modifier = Modifier) {
 }
 
 @Composable
+private fun InterpretationEmptyState(phase: SessionPhase, statusLabel: String) {
+    Surface(
+        modifier = Modifier.fillMaxWidth().heightIn(min = 176.dp),
+        shape = RoundedCornerShape(20.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant,
+    ) {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(24.dp),
+            verticalArrangement = Arrangement.Center,
+        ) {
+            Text(
+                text = if (phase == SessionPhase.IDLE) "译文会显示在这里" else statusLabel,
+                style = MaterialTheme.typography.titleLarge,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+            if (phase == SessionPhase.IDLE) {
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    text = "开始同传后，原文和译文会按顺序出现。",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+    }
+}
+
+@Composable
 private fun InterpretationBubble(bubble: InterpretationDisplayBubble) {
     Surface(
         modifier = Modifier.fillMaxWidth().semantics {
             contentDescription = listOfNotNull(
-                bubble.sourceText?.let { "原文。$it" },
                 "译文。${bubble.translationText}",
+                bubble.sourceText?.let { "原文。$it" },
             ).joinToString(" ")
         },
         shape = RoundedCornerShape(20.dp),
         color = MaterialTheme.colorScheme.surface,
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
     ) {
-        Column(modifier = Modifier.padding(horizontal = 20.dp, vertical = 16.dp)) {
-            bubble.sourceText?.let { source ->
-                Text(text = source, style = MaterialTheme.typography.headlineSmall)
-                Spacer(Modifier.height(9.dp))
-                Box(Modifier.fillMaxWidth().height(1.dp).background(MaterialTheme.colorScheme.outlineVariant))
-                Spacer(Modifier.height(9.dp))
-            }
+        Column(modifier = Modifier.padding(horizontal = 20.dp, vertical = 18.dp)) {
             Text(
                 text = bubble.translationText,
-                style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.headlineSmall,
+                color = MaterialTheme.colorScheme.onSurface,
             )
+            bubble.sourceText?.let { source ->
+                Spacer(Modifier.height(10.dp))
+                Text(
+                    text = source,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
         }
     }
 }
@@ -347,47 +388,58 @@ private fun InterpretationBubble(bubble: InterpretationDisplayBubble) {
 @Composable
 private fun PinnedControls(
     actions: List<InterpretationAction>,
+    primaryAction: InterpretationAction?,
+    statusLabel: String,
     microphoneRunning: Boolean,
+    phase: SessionPhase,
     onAction: (InterpretationAction) -> Unit,
 ) {
-    val primaryAction = actions.firstOrNull { it != InterpretationAction.FINISH }
     val finishAction = actions.firstOrNull { it == InterpretationAction.FINISH }
-    val statusLabel = when {
-        microphoneRunning -> "正在收音"
-        actions.contains(InterpretationAction.RESUME) -> "同传已暂停"
-        actions.contains(InterpretationAction.FINISH) -> "正在准备同传"
-        else -> "轻触开始同传"
-    }
 
     Surface(
         modifier = Modifier.fillMaxWidth(),
         color = MaterialTheme.colorScheme.surface,
         tonalElevation = 2.dp,
     ) {
-        Row(
+        Column(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-            verticalAlignment = Alignment.CenterVertically,
+            verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            MicrophoneStatus(running = microphoneRunning)
-            Text(
-                text = statusLabel,
-                modifier = Modifier.weight(1f),
-                style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-            )
-            primaryAction?.let { action ->
-                ActionButton(action = action, onClick = { onAction(action) })
+            Row(
+                modifier = Modifier.fillMaxWidth().wrapContentHeight(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                MicrophoneStatus(running = microphoneRunning)
+                Text(
+                    text = statusLabel,
+                    modifier = Modifier.weight(1f),
+                    style = MaterialTheme.typography.labelLarge,
+                )
             }
-            finishAction?.let { action ->
-                OutlinedButton(
-                    onClick = { onAction(action) },
-                    modifier = Modifier.height(48.dp).widthIn(min = 48.dp).semantics { contentDescription = "结束同传" },
+            if (primaryAction != null || finishAction != null) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Icon(Icons.Filled.Stop, contentDescription = null)
-                    Text("结束", modifier = Modifier.padding(start = 6.dp))
+                    primaryAction?.let { action ->
+                        ActionButton(action = action, onClick = { onAction(action) })
+                    }
+                    finishAction?.let { action ->
+                        if (primaryAction != null) {
+                            Spacer(Modifier.width(12.dp))
+                        }
+                        OutlinedButton(
+                            onClick = { onAction(action) },
+                            modifier = Modifier.heightIn(min = 48.dp).widthIn(min = 48.dp).semantics {
+                                contentDescription = if (phase == SessionPhase.STARTING) "取消连接" else "结束同传"
+                            },
+                        ) {
+                            Icon(Icons.Filled.Stop, contentDescription = null)
+                            Text(if (phase == SessionPhase.STARTING) "取消" else "结束", modifier = Modifier.padding(start = 6.dp))
+                        }
+                    }
                 }
             }
         }
@@ -439,7 +491,7 @@ private fun ActionButton(action: InterpretationAction, onClick: () -> Unit) {
     }
     Button(
         onClick = onClick,
-        modifier = Modifier.height(48.dp).widthIn(min = 48.dp).semantics {
+        modifier = Modifier.heightIn(min = 48.dp).widthIn(min = 48.dp).semantics {
             contentDescription = when (action) {
                 InterpretationAction.START -> "开始同传"
                 InterpretationAction.PAUSE -> "暂停同传"

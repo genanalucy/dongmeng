@@ -30,6 +30,9 @@ class InterpretationUiMapperTest {
 
         assertTrue(model.showMicrophoneRipple)
         assertEquals(listOf(InterpretationAction.PAUSE, InterpretationAction.FINISH), model.actions)
+        assertEquals(InterpretationAction.PAUSE, model.primaryAction)
+        assertEquals("正在翻译", model.statusLabel)
+        assertEquals("中文 → English", model.languageDirection)
         assertEquals("你好", model.sourceText)
         assertEquals("Hello", model.translationText)
         assertEquals(listOf(InterpretationDisplayBubble("1:0", "你好", "Hello")), model.bubbles)
@@ -82,6 +85,35 @@ class InterpretationUiMapperTest {
             ),
             model.bubbles,
         )
+    }
+
+    @Test fun eachSessionPhaseHasOnePrimaryActionOrNoActionWhileTransitioning() {
+        val expected = mapOf(
+            SessionPhase.IDLE to InterpretationAction.START,
+            SessionPhase.STARTING to null,
+            SessionPhase.RUNNING to InterpretationAction.PAUSE,
+            SessionPhase.PAUSED to InterpretationAction.RESUME,
+            SessionPhase.STOPPING to null,
+            SessionPhase.ERROR to InterpretationAction.RESET,
+        )
+
+        expected.forEach { (phase, action) ->
+            assertEquals(phase.name, action, InterpretationUiMapper.map(InterpretationUiState(phase = phase)).primaryAction)
+        }
+    }
+
+    @Test fun languageDirectionUsesHumanReadableNamesAndStatusDoesNotMixErrorWithPreparation() {
+        val idle = InterpretationUiMapper.map(
+            InterpretationUiState(sourceLanguage = "fr", targetLanguage = "vi"),
+        )
+        val error = InterpretationUiMapper.map(
+            InterpretationUiState(phase = SessionPhase.ERROR, sourceLanguage = "fr", targetLanguage = "vi"),
+        )
+
+        assertEquals("Français → Tiếng Việt", idle.languageDirection)
+        assertEquals("准备开始", idle.statusLabel)
+        assertEquals("翻译未完成", error.statusLabel)
+        assertEquals("Français → Tiếng Việt", error.languageDirection)
     }
 
     @Test fun eachSessionPhaseExposesOnlyPermittedActions() {

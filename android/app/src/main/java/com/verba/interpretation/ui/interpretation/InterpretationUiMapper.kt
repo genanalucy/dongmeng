@@ -1,8 +1,9 @@
 package com.verba.interpretation.ui.interpretation
 
-import com.verba.interpretation.ui.InterpretationUiState
 import com.verba.interpretation.protocol.TranslationSessionEndReason
+import com.verba.interpretation.ui.InterpretationUiState
 import com.verba.interpretation.ui.SessionPhase
+import com.verba.interpretation.ui.TranslationLanguage
 
 enum class InterpretationAction { START, PAUSE, RESUME, FINISH, RESET }
 
@@ -28,12 +29,17 @@ object InterpretationActionDispatcher {
 }
 
 data class InterpretationScreenModel(
+    val phase: SessionPhase,
+    val sourceLanguageName: String,
+    val targetLanguageName: String,
     val languageDirection: String,
     val sourceText: String,
     val translationText: String,
     val bubbles: List<InterpretationDisplayBubble>,
     val showMicrophoneRipple: Boolean,
     val actions: List<InterpretationAction>,
+    val primaryAction: InterpretationAction?,
+    val statusLabel: String,
     val errorMessage: String?,
 )
 
@@ -47,8 +53,13 @@ object InterpretationUiMapper {
         val latest = state.turns.lastOrNull()
         val sourceText = latest?.sourceText.orEmpty()
         val translationText = latest?.translatedText.orEmpty()
+        val sourceLanguageName = TranslationLanguage.displayName(state.sourceLanguage)
+        val targetLanguageName = TranslationLanguage.displayName(state.targetLanguage)
         return InterpretationScreenModel(
-            languageDirection = "${state.sourceLanguage} → ${state.targetLanguage}",
+            phase = state.phase,
+            sourceLanguageName = sourceLanguageName,
+            targetLanguageName = targetLanguageName,
+            languageDirection = "$sourceLanguageName → $targetLanguageName",
             sourceText = sourceText,
             translationText = translationText,
             bubbles = latest?.let { turn ->
@@ -62,6 +73,8 @@ object InterpretationUiMapper {
             }.orEmpty(),
             showMicrophoneRipple = state.phase == SessionPhase.RUNNING,
             actions = actionsFor(state.phase),
+            primaryAction = primaryActionFor(state.phase),
+            statusLabel = statusLabelFor(state.phase),
             errorMessage = if (state.phase == SessionPhase.ERROR) {
                 when (state.sessionEndReason) {
                     TranslationSessionEndReason.REPLACED -> SESSION_REPLACED_MESSAGE
@@ -81,6 +94,24 @@ object InterpretationUiMapper {
         SessionPhase.PAUSED -> listOf(InterpretationAction.RESUME, InterpretationAction.FINISH)
         SessionPhase.ERROR -> listOf(InterpretationAction.RESET)
         SessionPhase.STOPPING -> emptyList()
+    }
+
+    private fun primaryActionFor(phase: SessionPhase): InterpretationAction? = when (phase) {
+        SessionPhase.IDLE -> InterpretationAction.START
+        SessionPhase.STARTING -> null
+        SessionPhase.RUNNING -> InterpretationAction.PAUSE
+        SessionPhase.PAUSED -> InterpretationAction.RESUME
+        SessionPhase.STOPPING -> null
+        SessionPhase.ERROR -> InterpretationAction.RESET
+    }
+
+    private fun statusLabelFor(phase: SessionPhase): String = when (phase) {
+        SessionPhase.IDLE -> "准备开始"
+        SessionPhase.STARTING -> "正在连接翻译服务"
+        SessionPhase.RUNNING -> "正在翻译"
+        SessionPhase.PAUSED -> "已暂停"
+        SessionPhase.STOPPING -> "正在结束同传"
+        SessionPhase.ERROR -> "翻译未完成"
     }
 }
 
