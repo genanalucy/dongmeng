@@ -91,7 +91,7 @@ private fun DeleteAccountDialog(username: String, loading: Boolean, onDismiss: (
         title = { Text("确认删除账户") },
         text = { Column { Text("此操作不可恢复。请输入用户名“$username”以确认。") ; OutlinedTextField(confirmation, { confirmation = it }, label = { Text("用户名") }, singleLine = true, modifier = Modifier.fillMaxWidth().padding(top = 12.dp).semantics { testTag = "delete-account-confirmation" }) } },
         confirmButton = { Button(onClick = { onConfirm(confirmation); onDismiss() }, enabled = !loading && matches) { Text(if (loading) "正在删除…" else "永久删除") } },
-        dismissButton = { TextButton(onClick = onDismiss, enabled = !loading) { Text("取消") },
+        dismissButton = { TextButton(onClick = onDismiss, enabled = !loading) { Text("取消") } },
     )
 }
 

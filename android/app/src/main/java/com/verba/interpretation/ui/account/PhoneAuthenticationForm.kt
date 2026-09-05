@@ -89,7 +89,17 @@ private fun RegistrationDetailsForm(loading: Boolean, username: String, email: S
     TextField(value, onChange, if (tag == "confirmation") "确认密码" else "密码", error, tag, KeyboardType.Password, ime, true)
 
 @Composable private fun TextField(value: String, onChange: (String) -> Unit, label: String, errorText: String?, tag: String, keyboardType: KeyboardType, ime: ImeAction, password: Boolean) {
-    OutlinedTextField(value, onChange, { Text(label) }, singleLine = true, isError = errorText != null, supportingText = errorText?.let { { Text(it) } }, visualTransformation = if (password) PasswordVisualTransformation() else androidx.compose.ui.text.input.VisualTransformation.None, keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = keyboardType, imeAction = ime), modifier = Modifier.fillMaxWidth().padding(top = 10.dp).heightIn(min = 48.dp).semantics { errorText?.let { error(it) }; testTag = tag })
+    OutlinedTextField(
+        value = value,
+        onValueChange = onChange,
+        label = { Text(label) },
+        singleLine = true,
+        isError = errorText != null,
+        supportingText = errorText?.let { { Text(it) } },
+        visualTransformation = if (password) PasswordVisualTransformation() else androidx.compose.ui.text.input.VisualTransformation.None,
+        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = keyboardType, imeAction = ime),
+        modifier = Modifier.fillMaxWidth().padding(top = 10.dp).heightIn(min = 48.dp).semantics { errorText?.let { error(it) }; testTag = tag },
+    )
 }
 
 private fun actionModifier(): Modifier = Modifier.fillMaxWidth().padding(top = 10.dp).heightIn(min = 48.dp)

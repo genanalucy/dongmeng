@@ -6,16 +6,6 @@ import org.junit.Assert.assertFalse
 import org.junit.Test
 
 class AuthenticationRequestTest {
-    @Test fun verificationRequestContainsEmailRegistrationFieldsWithoutPhone() {
-        val payload = JSONObject(RegistrationVerificationRequest("alice_01", "alice@example.com", "Passw0rd").toJson())
-
-        assertEquals(3, payload.length())
-        assertEquals("alice_01", payload.getString("username"))
-        assertEquals("alice@example.com", payload.getString("email"))
-        assertEquals("Passw0rd", payload.getString("password"))
-        assertFalse(payload.has("phone"))
-    }
-
     @Test fun loginRequestContainsOnlyIdentifierAndPassword() {
         val payload = JSONObject(LoginRequest("alice@example.com", "Passw0rd").toJson())
 

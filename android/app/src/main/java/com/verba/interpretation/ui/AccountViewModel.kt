@@ -15,11 +15,13 @@ import com.verba.interpretation.cloud.CloudRole
 import com.verba.interpretation.cloud.CloudUsage
 import com.verba.interpretation.cloud.CloudUser
 import com.verba.interpretation.cloud.IdentityUpdateRequest
+import com.verba.interpretation.cloud.InstallationIdStore
 import com.verba.interpretation.cloud.KeystoreTokenStore
 import com.verba.interpretation.cloud.LoginIdentifierStore
 import com.verba.interpretation.cloud.SharedPreferencesInstallationIdStore
 import com.verba.interpretation.cloud.SharedPreferencesLoginIdentifierStore
 import com.verba.interpretation.cloud.UsagePage
+import com.verba.interpretation.history.LocalHistoryRepository
 import com.verba.interpretation.ui.account.AccountDeletionPolicy
 import com.verba.interpretation.ui.account.AccountIdentityFormPolicy
 import com.verba.interpretation.ui.account.AuthenticationFormPolicy
@@ -100,7 +102,11 @@ class AccountViewModel(
     private val registrationRequestGate: RegistrationRequestGate = AtomicRegistrationRequestGate(),
     private val loginIdentifierStore: LoginIdentifierStore = SharedPreferencesLoginIdentifierStore(application),
     private val installationIdStore: InstallationIdStore = SharedPreferencesInstallationIdStore(application),
+    localHistory: LocalHistoryRepository? = null,
 ) : AndroidViewModel(application) {
+    private val localHistory by lazy(LazyThreadSafetyMode.NONE) {
+        localHistory ?: LocalHistoryRepository.create(application)
+    }
     companion object {
         private const val UsagePageSize = 20
         private const val SafeRequestError = "账户状态暂时无法更新，请稍后重试。"
@@ -261,7 +267,11 @@ class AccountViewModel(
         viewModelScope.launch {
             mutableState.value = mutableState.value.copy(loading = true, message = null)
             try {
-                withContext(ioDispatcher) { api.logout() }
+                val userId = mutableState.value.user?.id
+                withContext(ioDispatcher) {
+                    if (userId != null) localHistory.discardUser(userId)
+                    api.logout()
+                }
                 mutableState.value = AccountUiState(message = "已退出登录。")
             } catch (error: Exception) {
                 handleRequestFailure(error)
