@@ -262,8 +262,17 @@ func Run(ctx context.Context, config Config) error {
 		}
 	}
 	ledger := quoteIdentifier(config.Schema) + "." + ledgerTable
-	if _, err := connection.Exec(ctx, "CREATE TABLE IF NOT EXISTS "+ledger+" (version text PRIMARY KEY, checksum text NOT NULL, applied_at timestamptz NOT NULL DEFAULT now())"); err != nil {
-		return databaseFailureFor("runner.create-ledger", err)
+	var ledgerExists bool
+	if err := connection.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_tables WHERE schemaname = $1 AND tablename = $2)", config.Schema, ledgerTable).Scan(&ledgerExists); err != nil {
+		return databaseFailureFor("runner.inspect-ledger", err)
+	}
+	// As with schemas, CREATE TABLE IF NOT EXISTS requires CREATE on the schema
+	// even when a previously provisioned ledger already exists. Reusing that
+	// ledger must work for a least-privilege runtime migration role.
+	if !ledgerExists {
+		if _, err := connection.Exec(ctx, "CREATE TABLE "+ledger+" (version text PRIMARY KEY, checksum text NOT NULL, applied_at timestamptz NOT NULL DEFAULT now())"); err != nil {
+			return databaseFailureFor("runner.create-ledger", err)
+		}
 	}
 	applied, err := loadApplied(ctx, connection, ledger)
 	if err != nil {
