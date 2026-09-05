@@ -444,7 +444,7 @@ private fun ActionButton(action: InterpretationAction, onClick: () -> Unit) {
                 InterpretationAction.START -> "开始同传"
                 InterpretationAction.PAUSE -> "暂停同传"
                 InterpretationAction.RESUME -> "继续同传"
-                InterpretationAction.RESET -> "恢复翻译"
+                InterpretationAction.RESET -> "重新开始翻译"
                 InterpretationAction.FINISH -> "结束同传"
             }
         },

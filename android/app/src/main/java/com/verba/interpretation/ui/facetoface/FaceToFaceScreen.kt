@@ -73,7 +73,7 @@ internal fun FaceToFaceScreen(
         }
         LanguageChips(state, presentation.canChangeLanguages, viewModel::setLanguages)
         if (presentation.showRecoveryAction) {
-            state.error?.let { message ->
+            presentation.recoveryMessage?.let { message ->
                 Surface(
                     shape = RoundedCornerShape(14.dp),
                     color = MaterialTheme.colorScheme.errorContainer,

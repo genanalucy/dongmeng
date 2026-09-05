@@ -17,6 +17,9 @@ import com.verba.interpretation.audio.TtsPlayer
 import com.verba.interpretation.protocol.AgentEvent
 import com.verba.interpretation.protocol.AgentSocket
 import com.verba.interpretation.protocol.EndpointSettings
+import com.verba.interpretation.history.CompletedTurn
+import com.verba.interpretation.history.LocalHistoryRepository
+import com.verba.interpretation.protocol.TranslationSessionEndReason
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.Job
@@ -24,6 +27,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.delay
 
 class FaceToFaceViewModel(application: Application) : AndroidViewModel(application) {
@@ -43,6 +48,9 @@ class FaceToFaceViewModel(application: Application) : AndroidViewModel(applicati
         Thread(task, "verba-face-tts").apply { isDaemon = true }
     }
     private val actionLock = Any()
+    private val history = LocalHistoryRepository.create(application)
+    private var localHistorySessionId: String? = null
+    private val historyCaptureMutex = Mutex()
     private val playbackGeneration = AtomicLong()
     private var timerJob: Job? = null
     private var cloudGrant: TranslationSessionGrant? = null
@@ -229,6 +237,7 @@ class FaceToFaceViewModel(application: Application) : AndroidViewModel(applicati
         when (event) {
             AgentEvent.Ready -> Unit
             AgentEvent.Finished -> {
+                captureCompletedTurn(turnId)
                 queuePlayback(coordinator.sessionFinished(turnId))
                 closeCloudSessionIfDrained()
                 publishState()
@@ -237,7 +246,32 @@ class FaceToFaceViewModel(application: Application) : AndroidViewModel(applicati
                 coordinator.updateSubtitle(turnId, event.kind.toSubtitleKind(), event.text)
                 publishState()
             }
+            is AgentEvent.SessionTerminated -> terminateSession(event.reason)
             is AgentEvent.Error -> handleSessionFailure(turnId, "${event.code}: ${event.message}")
+        }
+    }
+
+    private fun captureCompletedTurn(turnId: Long) {
+        val turn = coordinator.state().turns.firstOrNull { it.id == turnId } ?: return
+        val sourceText = turn.sourceFinals.joinToString(" ").trim()
+        val translatedText = turn.translationFinals.joinToString(" ").trim()
+        if (sourceText.isBlank() || translatedText.isBlank()) return
+        val userId = cloudGrant?.userId ?: return
+        viewModelScope.launch {
+            historyCaptureMutex.withLock {
+                localHistorySessionId = history.recordCompletedTurn(
+                    CompletedTurn(
+                        userId = userId,
+                        localSessionId = localHistorySessionId,
+                        mode = "face_to_face",
+                        sourceLanguage = turn.sourceLanguage,
+                        targetLanguage = turn.targetLanguage,
+                        sourceText = sourceText,
+                        translatedText = translatedText,
+                        completedAtMillis = System.currentTimeMillis(),
+                    ),
+                )
+            }
         }
     }
 
@@ -274,7 +308,18 @@ class FaceToFaceViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
+    private fun terminateSession(reason: TranslationSessionEndReason) = synchronized(actionLock) {
+        val transition = coordinator.terminateAll(reason)
+        if (!transition.accepted) return
+        invalidatePendingGrantOpen()
+        playbackGeneration.incrementAndGet()
+        applyTransition(transition)
+        endCloudSession()
+        player.stop()
+    }
+
     private fun fail(message: String) = synchronized(actionLock) {
+        if (coordinator.state().sessionEndReason != null) return
         invalidatePendingGrantOpen()
         playbackGeneration.incrementAndGet()
         applyTransition(coordinator.cancelAll(message))

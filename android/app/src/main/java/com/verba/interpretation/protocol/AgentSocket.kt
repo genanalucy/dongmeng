@@ -55,7 +55,7 @@ class AgentSocket(
                             if (finishing) webSocket.send(AgentProtocol.FINISH)
                             true
                         }
-                        AgentEvent.Finished, is AgentEvent.Error -> {
+                        AgentEvent.Finished, is AgentEvent.SessionTerminated, is AgentEvent.Error -> {
                             if (terminalDelivered) return@synchronized false
                             terminalDelivered = true
                             closeLocked(webSocket)
@@ -66,7 +66,7 @@ class AgentSocket(
                     }
                 }
                 if (deliver) {
-                    if (event is AgentEvent.Finished || event is AgentEvent.Error) onClosed()
+                    if (event is AgentEvent.Finished || event is AgentEvent.SessionTerminated || event is AgentEvent.Error) onClosed()
                     onEvent(event)
                 }
             }

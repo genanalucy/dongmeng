@@ -42,6 +42,9 @@ class TurnSessionCoordinator<S> {
     }
 
     @Synchronized
+    fun contains(turnId: Long): Boolean = sessions.containsKey(turnId)
+
+    @Synchronized
     fun isActive(turnId: Long): Boolean = activeTurnId == turnId
 
     @Synchronized

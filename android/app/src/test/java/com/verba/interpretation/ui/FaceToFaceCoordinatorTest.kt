@@ -1,6 +1,7 @@
 package com.verba.interpretation.ui
 
 import com.verba.interpretation.audio.PlaybackRoute
+import com.verba.interpretation.protocol.TranslationSessionEndReason
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -222,6 +223,31 @@ class FaceToFaceCoordinatorTest {
         assertEquals(FaceToFacePhase.IDLE, coordinator.state().phase)
         assertNull(coordinator.state().error)
         assertEquals(1, coordinator.state().turns.size)
+    }
+
+    @Test fun terminalSessionCleanupIsOnceAndKeepsOnlyCompletedPairs() {
+        val coordinator = FaceToFaceCoordinator<String>()
+        coordinator.setMode(FaceToFaceMode.AUTO)
+        coordinator.startAuto(1, "left")
+        coordinator.updateSubtitle(1, SubtitleKind.SOURCE_FINAL, "完成")
+        coordinator.updateSubtitle(1, SubtitleKind.SOURCE_FINAL, "未翻译")
+        coordinator.updateSubtitle(1, SubtitleKind.TRANSLATION_FINAL, "Done")
+        coordinator.switchAuto(2, FaceToFaceSide.RIGHT, "right")
+        coordinator.updateSubtitle(2, SubtitleKind.SOURCE_PARTIAL, "unfinished")
+
+        val first = coordinator.terminateAll(TranslationSessionEndReason.ENDED)
+        val duplicate = coordinator.terminateAll(TranslationSessionEndReason.REPLACED)
+
+        assertTrue(first.accepted)
+        assertEquals(listOf("left", "right"), first.cancelSessions)
+        assertTrue(first.stopCapture)
+        assertTrue(first.cancelTimer)
+        assertFalse(duplicate.accepted)
+        assertTrue(duplicate.cancelSessions.isEmpty())
+        assertEquals(FaceToFacePhase.ERROR, coordinator.state().phase)
+        assertEquals(TranslationSessionEndReason.ENDED, coordinator.state().sessionEndReason)
+        assertEquals(listOf("完成"), coordinator.state().turns.single().sourceFinals)
+        assertEquals(listOf("Done"), coordinator.state().turns.single().translationFinals)
     }
 
     @Test fun multipleFinalSubtitlesAggregatePerTurn() {

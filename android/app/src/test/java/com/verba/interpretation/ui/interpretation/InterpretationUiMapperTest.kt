@@ -1,5 +1,6 @@
 package com.verba.interpretation.ui.interpretation
 
+import com.verba.interpretation.protocol.TranslationSessionEndReason
 import com.verba.interpretation.ui.InterpretationUiState
 import com.verba.interpretation.ui.SessionPhase
 import com.verba.interpretation.ui.SubtitleTurn
@@ -127,8 +128,30 @@ class InterpretationUiMapperTest {
         assertFalse(model.errorMessage.contains("token", ignoreCase = true))
     }
 
-    @Test fun resetActionIsLabeledAsRecoveryTranslation() {
-        assertEquals("恢复翻译", interpretationActionLabel(InterpretationAction.RESET))
+    @Test fun terminalCodesMapToSafeExplicitFreshStartUx() {
+        val replaced = InterpretationUiMapper.map(
+            InterpretationUiState(
+                phase = SessionPhase.ERROR,
+                error = "malicious message",
+                sessionEndReason = TranslationSessionEndReason.REPLACED,
+            ),
+        )
+        val ended = InterpretationUiMapper.map(
+            InterpretationUiState(
+                phase = SessionPhase.ERROR,
+                error = "malicious replacement claim",
+                sessionEndReason = TranslationSessionEndReason.ENDED,
+            ),
+        )
+
+        assertEquals("已在另一设备开始翻译", replaced.errorMessage)
+        assertEquals("翻译会话已结束，请重新开始。", ended.errorMessage)
+        assertEquals(listOf(InterpretationAction.RESET), replaced.actions)
+        assertFalse(replaced.actions.contains(InterpretationAction.RESUME))
+    }
+
+    @Test fun resetActionIsLabeledAsExplicitFreshStart() {
+        assertEquals("重新开始翻译", interpretationActionLabel(InterpretationAction.RESET))
         assertEquals("开始", interpretationActionLabel(InterpretationAction.START))
         assertEquals("暂停", interpretationActionLabel(InterpretationAction.PAUSE))
         assertEquals("继续", interpretationActionLabel(InterpretationAction.RESUME))

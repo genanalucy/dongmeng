@@ -1,6 +1,7 @@
 package com.verba.interpretation.ui
 
 import com.verba.interpretation.audio.PlaybackRoute
+import com.verba.interpretation.protocol.TranslationSessionEndReason
 
 enum class FaceToFaceMode { MANUAL, AUTO }
 enum class FaceToFaceSide { LEFT, RIGHT }
@@ -28,6 +29,18 @@ data class FaceToFaceTurn(
         SubtitleKind.TRANSLATION_PARTIAL -> copy(translationPartial = text)
         SubtitleKind.TRANSLATION_FINAL -> copy(translationFinals = translationFinals + text, translationPartial = "")
     }
+
+    fun completedOnly(): FaceToFaceTurn? {
+        val completedCount = minOf(sourceFinals.size, translationFinals.size)
+        if (completedCount == 0) return null
+        return copy(
+            sourceFinals = sourceFinals.take(completedCount),
+            sourcePartial = "",
+            translationFinals = translationFinals.take(completedCount),
+            translationPartial = "",
+            finished = true,
+        )
+    }
 }
 
 data class FaceToFaceState(
@@ -40,6 +53,7 @@ data class FaceToFaceState(
     val captureLevel: Float = 0f,
     val turns: List<FaceToFaceTurn> = emptyList(),
     val error: String? = null,
+    val sessionEndReason: TranslationSessionEndReason? = null,
 ) {
     val manualInputLocked: Boolean
         get() = mode == FaceToFaceMode.MANUAL && (captureActive || phase == FaceToFacePhase.PROCESSING)
@@ -84,14 +98,14 @@ class FaceToFaceCoordinator<S> {
     @Synchronized
     fun setMode(mode: FaceToFaceMode): Boolean {
         if (current.phase != FaceToFacePhase.IDLE || entries.isNotEmpty()) return false
-        current = current.copy(mode = mode, error = null)
+        current = current.copy(mode = mode, error = null, sessionEndReason = null)
         return true
     }
 
     @Synchronized
     fun setLanguages(leftLanguage: String, rightLanguage: String): Boolean {
         if (current.phase != FaceToFacePhase.IDLE || entries.isNotEmpty() || !supportsTranslationPair(leftLanguage, rightLanguage)) return false
-        current = current.copy(leftLanguage = leftLanguage, rightLanguage = rightLanguage, error = null)
+        current = current.copy(leftLanguage = leftLanguage, rightLanguage = rightLanguage, error = null, sessionEndReason = null)
         return true
     }
 
@@ -274,6 +288,25 @@ class FaceToFaceCoordinator<S> {
     }
 
     @Synchronized
+    fun terminateAll(reason: TranslationSessionEndReason): Transition<S> {
+        if (current.sessionEndReason != null) return Transition(accepted = false)
+        val sessions = entries.values.map { it.session }
+        entries.clear()
+        activeTurnId = null
+        playbackInProgress = false
+        current = current.copy(
+            phase = FaceToFacePhase.ERROR,
+            activeSide = null,
+            captureActive = false,
+            captureLevel = 0f,
+            turns = current.turns.mapNotNull(FaceToFaceTurn::completedOnly),
+            error = null,
+            sessionEndReason = reason,
+        )
+        return Transition(accepted = true, cancelSessions = sessions, stopCapture = true, cancelTimer = true)
+    }
+
+    @Synchronized
     fun cancelAll(error: String? = null): Transition<S> {
         val sessions = entries.values.map { it.session }
         entries.clear()
@@ -285,13 +318,16 @@ class FaceToFaceCoordinator<S> {
             captureActive = false,
             captureLevel = 0f,
             error = error,
+            sessionEndReason = null,
         )
         return Transition(accepted = true, cancelSessions = sessions, stopCapture = true, cancelTimer = true)
     }
 
     @Synchronized
     fun clearError() {
-        if (current.phase == FaceToFacePhase.ERROR) current = current.copy(phase = FaceToFacePhase.IDLE, error = null)
+        if (current.phase == FaceToFacePhase.ERROR) {
+            current = current.copy(phase = FaceToFacePhase.IDLE, error = null, sessionEndReason = null)
+        }
     }
 
     private fun replaceAutoTurnLocked(turnId: Long, side: FaceToFaceSide, session: S): Transition<S> {

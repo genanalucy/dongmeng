@@ -1,6 +1,7 @@
 package com.verba.interpretation.ui
 
 import com.verba.interpretation.audio.PlaybackRoute
+import com.verba.interpretation.protocol.TranslationSessionEndReason
 
 enum class SessionPhase { IDLE, STARTING, RUNNING, PAUSED, STOPPING, ERROR }
 
@@ -23,6 +24,18 @@ data class SubtitleTurn(
         SubtitleKind.TRANSLATION_PARTIAL -> copy(translationPartial = text)
         SubtitleKind.TRANSLATION_FINAL -> copy(translationFinals = translationFinals + text, translationPartial = "")
     }
+
+    fun completedOnly(): SubtitleTurn? {
+        val completedCount = minOf(sourceFinals.size, translationFinals.size)
+        if (completedCount == 0) return null
+        return copy(
+            sourceFinals = sourceFinals.take(completedCount),
+            sourcePartial = "",
+            translationFinals = translationFinals.take(completedCount),
+            translationPartial = "",
+            finished = true,
+        )
+    }
 }
 
 enum class SubtitleKind { SOURCE_PARTIAL, SOURCE_FINAL, TRANSLATION_PARTIAL, TRANSLATION_FINAL }
@@ -39,6 +52,14 @@ data class InterpretationUiState(
     val route: PlaybackRoute = PlaybackRoute.BOTH,
     val turns: List<SubtitleTurn> = emptyList(),
     val error: String? = null,
+    val sessionEndReason: TranslationSessionEndReason? = null,
+)
+
+internal fun InterpretationUiState.withTerminatedSession(reason: TranslationSessionEndReason): InterpretationUiState = copy(
+    phase = SessionPhase.ERROR,
+    turns = turns.mapNotNull(SubtitleTurn::completedOnly),
+    error = null,
+    sessionEndReason = reason,
 )
 
 sealed interface SessionAction { data object Start : SessionAction; data object Ready : SessionAction; data object Pause : SessionAction; data object Resume : SessionAction; data object Finish : SessionAction; data object Drained : SessionAction; data object Fail : SessionAction; data object Reset : SessionAction }

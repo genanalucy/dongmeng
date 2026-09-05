@@ -29,6 +29,33 @@ class AgentProtocolTest {
         assertEquals("BAD", (AgentProtocol.parse("{\"type\":\"error\",\"code\":\"BAD\",\"message\":\"no\"}") as AgentEvent.Error).code)
     }
 
+    @Test fun parsesGovernanceCodesAsTypedTerminalEventsWithoutTrustingMessage() {
+        assertEquals(
+            AgentEvent.SessionTerminated(TranslationSessionEndReason.REPLACED),
+            AgentProtocol.parse(
+                "{\"type\":\"error\",\"code\":\"TRANSLATION_SESSION_REPLACED\",\"message\":\"untrusted\"}",
+            ),
+        )
+        assertEquals(
+            AgentEvent.SessionTerminated(TranslationSessionEndReason.ENDED),
+            AgentProtocol.parse(
+                "{\"type\":\"error\",\"code\":\"TRANSLATION_SESSION_ENDED\",\"message\":\"pretend replaced\"}",
+            ),
+        )
+    }
+
+    @Test fun requiresAnExactStringGovernanceCode() {
+        val numeric = AgentProtocol.parse(
+            "{\"type\":\"error\",\"code\":123,\"message\":\"TRANSLATION_SESSION_REPLACED\"}",
+        ) as AgentEvent.Error
+        val padded = AgentProtocol.parse(
+            "{\"type\":\"error\",\"code\":\" TRANSLATION_SESSION_REPLACED \",\"message\":\"ignored\"}",
+        ) as AgentEvent.Error
+
+        assertEquals("UNKNOWN", numeric.code)
+        assertEquals(" TRANSLATION_SESSION_REPLACED ", padded.code)
+    }
+
     @Test(expected = ProtocolException::class)
     fun rejectsUnknownEvents() { AgentProtocol.parse("{\"type\":\"vendor_guess\"}") }
 }

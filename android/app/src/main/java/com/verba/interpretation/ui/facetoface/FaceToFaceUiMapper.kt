@@ -1,5 +1,6 @@
 package com.verba.interpretation.ui.facetoface
 
+import com.verba.interpretation.protocol.TranslationSessionEndReason
 import com.verba.interpretation.ui.FaceToFaceMode
 import com.verba.interpretation.ui.FaceToFacePhase
 import com.verba.interpretation.ui.FaceToFaceSide
@@ -15,10 +16,12 @@ internal data class FaceToFacePresentation(
     val canChangeLanguages: Boolean,
     val isContinuous: Boolean,
     val showRecoveryAction: Boolean,
+    val recoveryMessage: String?,
 )
 
-/** 错误恢复按钮的显式文案：点击后取消在途工作并清除错误，保留已完成的对话轮次。 */
-internal const val FACE_TO_FACE_RECOVERY_ACTION_LABEL = "恢复翻译"
+internal const val FACE_TO_FACE_SESSION_REPLACED_MESSAGE = "已在另一设备开始翻译"
+internal const val FACE_TO_FACE_SESSION_ENDED_MESSAGE = "翻译会话已结束，请重新开始。"
+internal const val FACE_TO_FACE_RECOVERY_ACTION_LABEL = "重新开始翻译"
 
 internal fun faceToFacePresentation(state: FaceToFaceState): FaceToFacePresentation = FaceToFacePresentation(
     activeMic = state.activeSide.takeIf {
@@ -29,6 +32,15 @@ internal fun faceToFacePresentation(state: FaceToFaceState): FaceToFacePresentat
     canChangeLanguages = state.phase == FaceToFacePhase.IDLE && !state.captureActive,
     isContinuous = state.mode == FaceToFaceMode.AUTO,
     showRecoveryAction = state.phase == FaceToFacePhase.ERROR,
+    recoveryMessage = if (state.phase == FaceToFacePhase.ERROR) {
+        when (state.sessionEndReason) {
+            TranslationSessionEndReason.REPLACED -> FACE_TO_FACE_SESSION_REPLACED_MESSAGE
+            TranslationSessionEndReason.ENDED -> FACE_TO_FACE_SESSION_ENDED_MESSAGE
+            null -> state.error
+        }
+    } else {
+        null
+    },
 )
 
 internal fun faceToFaceTurnAlignment(turn: FaceToFaceTurn): FaceToFaceTurnAlignment =

@@ -1,6 +1,7 @@
 package com.verba.interpretation.ui.interpretation
 
 import com.verba.interpretation.ui.InterpretationUiState
+import com.verba.interpretation.protocol.TranslationSessionEndReason
 import com.verba.interpretation.ui.SessionPhase
 
 enum class InterpretationAction { START, PAUSE, RESUME, FINISH, RESET }
@@ -37,8 +38,10 @@ data class InterpretationScreenModel(
 )
 
 object InterpretationUiMapper {
+    const val SESSION_REPLACED_MESSAGE = "已在另一设备开始翻译"
+    const val SESSION_ENDED_MESSAGE = "翻译会话已结束，请重新开始。"
     const val SAFE_ERROR_MESSAGE = "翻译服务暂时不可用，请重试或重新开始。"
-    const val RECOVERY_ACTION_LABEL = "恢复翻译"
+    const val RECOVERY_ACTION_LABEL = "重新开始翻译"
 
     fun map(state: InterpretationUiState): InterpretationScreenModel {
         val latest = state.turns.lastOrNull()
@@ -59,7 +62,15 @@ object InterpretationUiMapper {
             }.orEmpty(),
             showMicrophoneRipple = state.phase == SessionPhase.RUNNING,
             actions = actionsFor(state.phase),
-            errorMessage = if (state.phase == SessionPhase.ERROR) SAFE_ERROR_MESSAGE else null,
+            errorMessage = if (state.phase == SessionPhase.ERROR) {
+                when (state.sessionEndReason) {
+                    TranslationSessionEndReason.REPLACED -> SESSION_REPLACED_MESSAGE
+                    TranslationSessionEndReason.ENDED -> SESSION_ENDED_MESSAGE
+                    null -> SAFE_ERROR_MESSAGE
+                }
+            } else {
+                null
+            },
         )
     }
 
@@ -73,7 +84,7 @@ object InterpretationUiMapper {
     }
 }
 
-/** 错误恢复按钮的显式文案：点击后取消在途工作并清除错误，保留已完成的字幕轮次。 */
+/** 终止/错误状态只提供显式新会话入口，绝不映射为 resume。 */
 internal fun interpretationActionLabel(action: InterpretationAction): String = when (action) {
     InterpretationAction.START -> "开始"
     InterpretationAction.PAUSE -> "暂停"
