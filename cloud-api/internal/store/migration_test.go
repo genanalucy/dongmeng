@@ -80,6 +80,11 @@ func TestTwoDeviceGovernanceMigrationPersistsTerminationReasons(t *testing.T) {
 		"CREATE INDEX IF NOT EXISTS translation_sessions_active_user_created_idx",
 		"ON translation_sessions (user_id, created_at, id)",
 		"WHERE ended_at IS NULL AND revoked_at IS NULL",
+		// The reason column is new, so existing rows are all NULL and both
+		// constraints must reach a validated state in the same migration
+		// instead of staying permanently NOT VALID.
+		"VALIDATE CONSTRAINT translation_sessions_termination_reason_valid",
+		"VALIDATE CONSTRAINT translation_sessions_termination_requires_terminal",
 	} {
 		if !strings.Contains(schema, fragment) {
 			t.Errorf("two-device governance migration missing %q", fragment)

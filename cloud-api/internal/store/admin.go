@@ -25,6 +25,12 @@ func (p *Postgres) GrantEntitlementByAdmin(ctx context.Context, admin, user uuid
 }
 func (p *Postgres) RevokeEntitlementByAdmin(ctx context.Context, admin, user, id uuid.UUID, now time.Time) error {
 	return p.tx(ctx, func(t pgx.Tx) error {
+		// Admin revocation shares the per-user arbitration lock with session
+		// creation (same lock, taken first) for the same reason as the
+		// self-service revocation path.
+		if err := lockUserSessionArbitration(ctx, t, user); err != nil {
+			return err
+		}
 		tag, err := t.Exec(ctx, `UPDATE entitlements SET revoked_at=COALESCE(revoked_at,$3) WHERE id=$1 AND user_id=$2`, id, user, now.UTC())
 		if err != nil {
 			return err

@@ -33,7 +33,10 @@ type EntitlementStore interface {
 // the user entitlement timeline and atomically create a fixed 365-day package
 // starting at max(now, latest non-revoked expiry). Revocation must persist an
 // ownership-checked terminal state, and ActiveEntitlement must exclude revoked
-// records.
+// records. Revocation must serialize with concurrent translation-session
+// creation for the same user (a shared per-user arbitration lock acquired
+// before any row locks), so a creation can never return a grant whose
+// entitlement revocation already committed.
 type EntitlementLifecycleStore interface {
 	StackAnnualEntitlement(context.Context, uuid.UUID, time.Time) (domain.Entitlement, error)
 	RevokeEntitlement(context.Context, uuid.UUID, uuid.UUID, time.Time) error
@@ -57,11 +60,15 @@ type TranslationSessionStore interface {
 // ConcurrentTranslationSessionStore extends session creation with atomic
 // per-user governance. Implementations must, in one transaction, ignore
 // sessions whose expiry is <= authorizedAt, count only non-ended/non-revoked
-// sessions, re-check entitlement ownership and activity, end the oldest
-// active sessions in the stable (created_at, id) order with the
-// replaced_by_device termination reason whenever maxConcurrent would be
-// exceeded, and create the new session. Creation therefore succeeds within
-// the limit instead of failing with domain.ErrConflict.
+// sessions, re-check entitlement ownership and activity together with the
+// owner still being enabled at insert time, end the oldest active sessions in
+// the stable (created_at, id) order with the replaced_by_device termination
+// reason whenever maxConcurrent would be exceeded, and create the new session.
+// Creation therefore succeeds within the limit instead of failing with
+// domain.ErrConflict, and must serialize with user disablement and entitlement
+// revocation for the same user (a per-user arbitration lock acquired before
+// any row locks) so it never returns a grant that a committed disablement or
+// revocation has already doomed.
 type ConcurrentTranslationSessionStore interface {
 	CreateAuthorizedTranslationSessionWithLimit(context.Context, domain.TranslationSession, time.Time, int) error
 }
@@ -96,6 +103,14 @@ type EntitlementLifecycleFacade interface {
 	RevokeEntitlement(context.Context, uuid.UUID, uuid.UUID, time.Time) error
 }
 
+// TranslationSessionAuthorizationFacade verifies a presented translation token
+// against the persisted session lifecycle. Authorization failures satisfy
+// errors.Is(err, domain.ErrUnauthorized); when the token identity matches a
+// persisted session exactly and that session is no longer usable, the error
+// is a domain.TerminatedTranslationSessionError carrying one of the
+// allowlisted safe terminal reasons. Unknown, mismatched, or unparseable
+// tokens receive only the bare domain.ErrUnauthorized sentinel, so lifecycle
+// detail never leaks to unauthenticated probing.
 type TranslationSessionAuthorizationFacade interface {
 	AuthorizeTranslationSession(context.Context, string, time.Time) (Claims, error)
 }
@@ -262,10 +277,21 @@ func (s AuthorizationService) AuthorizeTranslationSession(ctx context.Context, t
 		return Claims{}, domain.ErrUnauthorized
 	}
 	state, err := store.TranslationSessionState(ctx, userID, sessionID, entitlementID, jti, now.UTC())
-	if err != nil || !state.Active {
+	if err != nil {
+		// Store failures stay fail-closed and generic: they carry no identity
+		// match, so no terminal reason may be attached.
 		return Claims{}, domain.ErrUnauthorized
 	}
-	return claims, nil
+	if state.Active {
+		return claims, nil
+	}
+	// Only a full identity match reaches this point, so the store-resolved
+	// terminal reason is safe to surface. The allowlist keeps a buggy or
+	// hostile store from smuggling arbitrary detail through the boundary.
+	if domain.SafeTranslationTerminationReason(state.TerminationReason) {
+		return Claims{}, domain.TerminatedTranslationSessionError{Reason: state.TerminationReason}
+	}
+	return Claims{}, domain.ErrUnauthorized
 }
 
 func (s AuthorizationService) EndTranslationSession(ctx context.Context, userID, sessionID uuid.UUID, now time.Time) error {

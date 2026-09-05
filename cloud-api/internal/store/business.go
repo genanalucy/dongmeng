@@ -344,20 +344,37 @@ func (p *Postgres) CreateSession(ctx context.Context, s domain.TranslationSessio
 	return p.createSessionWithLimit(ctx, s, now, math.MaxInt32)
 }
 
+// lockUserSessionArbitration takes the per-user transaction advisory lock that
+// serializes translation-session governance for one user. Session creation,
+// user disablement, and entitlement revocation must all take this lock first,
+// before any row locks, so their read/terminate/persist sequences cannot
+// interleave (a disable could otherwise commit its terminal scan between a
+// creation's entitlement check and its insert) and so a single fixed lock
+// order (advisory lock, then users, then entitlements, then
+// translation_sessions rows) prevents deadlocks between these paths.
+func lockUserSessionArbitration(ctx context.Context, t pgx.Tx, user uuid.UUID) error {
+	_, err := t.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0))`, user)
+	return err
+}
+
 // createSessionWithLimit atomically governs the per-user active-session count.
 // Under the per-user transaction advisory lock it upserts the device, counts
 // the user's still-active sessions (expiry past `now` is ignored), ends the
 // oldest ones in the stable (created_at, id) order with the device-replacement
 // termination reason whenever the limit would be exceeded, and inserts the new
-// session behind an ownership-and-activity re-check of its entitlement. A
-// failure anywhere rolls the whole arbitration back, so a persisted failure
-// can never end an old session without also creating the replacement grant.
+// session behind an ownership-and-activity re-check of both its entitlement
+// and the owner still being enabled. A failure anywhere rolls the whole
+// arbitration back, so a persisted failure can never end an old session
+// without also creating the replacement grant, and a grant can never be
+// returned for a user whose disablement or entitlement revocation already
+// committed.
 func (p *Postgres) createSessionWithLimit(ctx context.Context, s domain.TranslationSession, now time.Time, limit int) error {
 	return p.tx(ctx, func(t pgx.Tx) error {
 		// Transaction-scoped advisory locking serializes the
 		// read/count/replace/insert sequence per user without imposing a
-		// global session lock.
-		if _, err := t.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0))`, s.UserID); err != nil {
+		// global session lock; DisableUser and entitlement revocation share
+		// the same lock (see lockUserSessionArbitration).
+		if err := lockUserSessionArbitration(ctx, t, s.UserID); err != nil {
 			return err
 		}
 		if _, err := t.Exec(ctx, `INSERT INTO user_devices(user_id,install_id,last_seen_at) VALUES($1,$2,$3) ON CONFLICT(user_id,install_id) DO UPDATE SET last_seen_at=EXCLUDED.last_seen_at`, s.UserID, s.InstallID, now.UTC()); err != nil {
@@ -376,11 +393,25 @@ func (p *Postgres) createSessionWithLimit(ctx context.Context, s domain.Translat
 				return domain.ErrConflict
 			}
 		}
-		tag, err := t.Exec(ctx, `INSERT INTO translation_sessions(id,user_id,entitlement_id,install_id,jti,expires_at,created_at) SELECT $1,$2,$3,$4,$5,$6,$7 WHERE EXISTS(SELECT 1 FROM entitlements WHERE id=$3 AND user_id=$2 AND revoked_at IS NULL AND starts_at<=$8 AND expires_at>$8)`, s.ID, s.UserID, s.EntitlementID, s.InstallID, s.JTI, s.ExpiresAt.UTC(), now.UTC(), now.UTC())
+		// The insert re-checks both governance preconditions in the same
+		// statement, so even a path that skipped the advisory lock could not
+		// persist a session for a disabled owner or an inactive entitlement.
+		tag, err := t.Exec(ctx, `INSERT INTO translation_sessions(id,user_id,entitlement_id,install_id,jti,expires_at,created_at) SELECT $1,$2,$3,$4,$5,$6,$7 WHERE EXISTS(SELECT 1 FROM users WHERE id=$2 AND disabled_at IS NULL) AND EXISTS(SELECT 1 FROM entitlements WHERE id=$3 AND user_id=$2 AND revoked_at IS NULL AND starts_at<=$8 AND expires_at>$8)`, s.ID, s.UserID, s.EntitlementID, s.InstallID, s.JTI, s.ExpiresAt.UTC(), now.UTC(), now.UTC())
 		if err != nil {
 			return storeErr(err)
 		}
 		if tag.RowsAffected() != 1 {
+			// Distinguish the arbitration failures so callers keep their
+			// existing error semantics: a disabled owner is an authorization
+			// failure, while a missing or inactive entitlement keeps
+			// no-entitlement.
+			var enabled bool
+			if err := t.QueryRow(ctx, `SELECT disabled_at IS NULL FROM users WHERE id=$1`, s.UserID).Scan(&enabled); err != nil {
+				return storeErr(err)
+			}
+			if !enabled {
+				return domain.ErrUnauthorized
+			}
 			return domain.ErrNoEntitlement
 		}
 		return nil

@@ -475,6 +475,40 @@ func ValidTranslationTerminationReason(value string) bool {
 	}
 }
 
+// SafeTranslationTerminationReason reports whether the reason is one of the
+// fixed lifecycle values that may safely cross the authorization boundary.
+// Unlike ValidTranslationTerminationReason it also admits the read-time
+// "expired" reason, because natural expiry is resolved at read time and
+// reveals nothing beyond temporal state. Any other value must fall back to a
+// generic unauthorized error, since it is not part of the fixed vocabulary.
+func SafeTranslationTerminationReason(value TranslationTerminationReason) bool {
+	switch value {
+	case TerminationEnded, TerminationRevoked, TerminationReplacedByDevice, TerminationEntitlementRevoked, TerminationUserDisabled, TerminationExpired:
+		return true
+	default:
+		return false
+	}
+}
+
+// TerminatedTranslationSessionError reports that a presented translation
+// token matched a persisted session identity exactly (owner, session,
+// entitlement, JTI) but that session is no longer usable, together with the
+// terminal reason. It satisfies errors.Is(err, ErrUnauthorized) so existing
+// generic unauthorized mappings keep working, while fully matched callers can
+// tell a displaced device why its session stopped being usable. The reason is
+// restricted to the SafeTranslationTerminationReason vocabulary; unknown or
+// mismatched tokens must keep receiving the bare ErrUnauthorized sentinel so
+// no lifecycle detail leaks to unauthenticated probing.
+type TerminatedTranslationSessionError struct {
+	Reason TranslationTerminationReason
+}
+
+func (e TerminatedTranslationSessionError) Error() string {
+	return ErrUnauthorized.Error() + ": translation session " + string(e.Reason)
+}
+
+func (e TerminatedTranslationSessionError) Unwrap() error { return ErrUnauthorized }
+
 // TranslationSessionAuthorization is the persisted authorization truth for
 // one presented translation token identity set (owner, session, entitlement,
 // JTI). Active reports whether the session is usable at the evaluation time;

@@ -18,4 +18,12 @@ CREATE INDEX IF NOT EXISTS translation_sessions_active_user_created_idx
     ON translation_sessions (user_id, created_at, id)
     WHERE ended_at IS NULL AND revoked_at IS NULL;
 
+-- The termination_reason column is new, so every pre-existing row carries
+-- NULL and both constraints already hold for all stored data. Validating them
+-- now makes the catalog fully trustworthy instead of leaving the constraints
+-- permanently NOT VALID. VALIDATE CONSTRAINT takes only SHARE UPDATE
+-- EXCLUSIVE, so it does not block concurrent reads or writes.
+ALTER TABLE translation_sessions VALIDATE CONSTRAINT translation_sessions_termination_reason_valid;
+ALTER TABLE translation_sessions VALIDATE CONSTRAINT translation_sessions_termination_requires_terminal;
+
 COMMIT;

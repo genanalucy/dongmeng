@@ -323,6 +323,329 @@ func TestPostgresTwoDeviceSessionGovernance(t *testing.T) {
 		}
 	})
 
+	// raceRound runs fnCreate and fnTerminate concurrently behind a barrier
+	// and returns both outcomes after both committed. The favored side is
+	// released a few milliseconds early so alternating rounds deterministically
+	// exercise both arbitration orders: a committed grant terminated by the
+	// later scan, and a creation rejected by the already-committed terminal
+	// operation.
+	raceRound := func(t *testing.T, favorCreate bool, fnCreate func() error, fnTerminate func() error) (createErr, terminateErr error) {
+		t.Helper()
+		start := make(chan struct{})
+		var done sync.WaitGroup
+		done.Add(2)
+		go func() {
+			defer done.Done()
+			<-start
+			if !favorCreate {
+				time.Sleep(5 * time.Millisecond)
+			}
+			createErr = fnCreate()
+		}()
+		go func() {
+			defer done.Done()
+			<-start
+			if favorCreate {
+				time.Sleep(5 * time.Millisecond)
+			}
+			terminateErr = fnTerminate()
+		}()
+		close(start)
+		done.Wait()
+		return createErr, terminateErr
+	}
+
+	t.Run("concurrent creation and disablement never return a doomed grant", func(t *testing.T) {
+		admin, _ := registerUser(t)
+		if _, err := raw.Exec(ctx, `UPDATE users SET role='admin' WHERE id=$1`, admin.ID); err != nil {
+			t.Fatal("make governance admin fixture")
+		}
+		const rounds = 10
+		var succeeded int
+		for round := 0; round < rounds; round++ {
+			user, _ := registerUser(t)
+			var grant auth.TranslationGrant
+			createErr, disableErr := raceRound(t, round%2 == 0,
+				func() error {
+					var err error
+					grant, err = service.CreateTranslationSession(ctx, user.ID, fmt.Sprintf("gov-race-disable-%d", round), now.Add(time.Duration(round)*time.Second))
+					return err
+				},
+				func() error {
+					// A full second past the fixture base keeps disabled_at after
+					// the row's DB-side created_at, which the old millisecond
+					// margin could violate.
+					return db.DisableUser(ctx, admin.ID, user.ID, now.Add(time.Duration(round+1)*time.Second))
+				},
+			)
+			if disableErr != nil {
+				t.Fatalf("round %d concurrent disable: %v", round, disableErr)
+			}
+			// A disablement that committed must terminate every session the user
+			// has, including one a concurrent creation was about to insert; no
+			// session may be left looking active for a disabled owner.
+			var doomed int
+			if err := raw.QueryRow(ctx, `SELECT count(*) FROM translation_sessions s JOIN users u ON u.id=s.user_id WHERE u.id=$1 AND u.disabled_at IS NOT NULL AND s.ended_at IS NULL AND s.revoked_at IS NULL`, user.ID).Scan(&doomed); err != nil || doomed != 0 {
+				t.Fatalf("round %d left %d active-looking sessions for a disabled user (err = %v)", round, doomed, err)
+			}
+			if createErr == nil {
+				succeeded++
+				// The creation committed before the disablement, so the
+				// disablement scan must have caught and terminated it.
+				var revokedAt *time.Time
+				var reason string
+				if err := raw.QueryRow(ctx, `SELECT revoked_at, COALESCE(termination_reason,'') FROM translation_sessions WHERE id=$1`, grant.Session.ID).Scan(&revokedAt, &reason); err != nil || revokedAt == nil || reason != string(domain.TerminationUserDisabled) {
+					t.Fatalf("round %d committed grant was not terminated by the disablement scan: revoked_at=%v reason=%q err=%v", round, revokedAt, reason, err)
+				}
+				// Evaluate past the token's fixture-shifted not-before claim
+				// while staying inside its expiry.
+				_, authErr := service.AuthorizeTranslationSession(ctx, grant.Token, now.Add(time.Duration(round+1)*time.Second))
+				var terminal domain.TerminatedTranslationSessionError
+				if !errors.As(authErr, &terminal) || terminal.Reason != domain.TerminationUserDisabled {
+					t.Fatalf("round %d grant authorization error = %v, want typed user_disabled terminal reason", round, authErr)
+				}
+				if !errors.Is(authErr, domain.ErrUnauthorized) {
+					t.Fatalf("round %d typed terminal reason is not unauthorized: %v", round, authErr)
+				}
+			} else if !errors.Is(createErr, domain.ErrUnauthorized) {
+				t.Fatalf("round %d creation error = %v, want unauthorized for a disabled owner", round, createErr)
+			}
+		}
+		if succeeded == 0 {
+			t.Fatal("race fixture never exercised the committed-grant path")
+		}
+	})
+
+	t.Run("concurrent creation and entitlement revocation never return a doomed grant", func(t *testing.T) {
+		admin, _ := registerUser(t)
+		if _, err := raw.Exec(ctx, `UPDATE users SET role='admin' WHERE id=$1`, admin.ID); err != nil {
+			t.Fatal("make governance admin fixture")
+		}
+		const rounds = 10
+		var succeeded int
+		for round := 0; round < rounds; round++ {
+			user, trial := registerUser(t)
+			revoke := func() error {
+				// Alternate between the self-service and admin revocation paths;
+				// both must share the same per-user arbitration lock. The full
+				// second of margin keeps revoked_at past the entitlement's
+				// DB-side created_at instead of violating the revocation CHECK.
+				if round%2 == 0 {
+					return db.RevokeEntitlement(ctx, user.ID, trial.ID, now.Add(time.Duration(round+1)*time.Second))
+				}
+				return db.RevokeEntitlementByAdmin(ctx, admin.ID, user.ID, trial.ID, now.Add(time.Duration(round+1)*time.Second))
+			}
+			var grant auth.TranslationGrant
+			createErr, revokeErr := raceRound(t, round%2 == 0,
+				func() error {
+					var err error
+					grant, err = service.CreateTranslationSession(ctx, user.ID, fmt.Sprintf("gov-race-revoke-%d", round), now.Add(time.Duration(round)*time.Second))
+					return err
+				},
+				revoke,
+			)
+			if revokeErr != nil {
+				t.Fatalf("round %d concurrent revocation: %v", round, revokeErr)
+			}
+			// A committed revocation must leave no session looking active on
+			// the revoked entitlement, including one a concurrent creation was
+			// about to insert.
+			var doomed int
+			if err := raw.QueryRow(ctx, `SELECT count(*) FROM translation_sessions s JOIN entitlements e ON e.id=s.entitlement_id WHERE s.user_id=$1 AND e.revoked_at IS NOT NULL AND s.ended_at IS NULL AND s.revoked_at IS NULL`, user.ID).Scan(&doomed); err != nil || doomed != 0 {
+				t.Fatalf("round %d left %d active-looking sessions on a revoked entitlement (err = %v)", round, doomed, err)
+			}
+			if createErr == nil {
+				succeeded++
+				var revokedAt *time.Time
+				var reason string
+				if err := raw.QueryRow(ctx, `SELECT revoked_at, COALESCE(termination_reason,'') FROM translation_sessions WHERE id=$1`, grant.Session.ID).Scan(&revokedAt, &reason); err != nil || revokedAt == nil || reason != string(domain.TerminationEntitlementRevoked) {
+					t.Fatalf("round %d committed grant was not terminated by the revocation scan: revoked_at=%v reason=%q err=%v", round, revokedAt, reason, err)
+				}
+				// Evaluate past the token's fixture-shifted not-before claim
+				// while staying inside its expiry.
+				_, authErr := service.AuthorizeTranslationSession(ctx, grant.Token, now.Add(time.Duration(round+1)*time.Second))
+				var terminal domain.TerminatedTranslationSessionError
+				if !errors.As(authErr, &terminal) || terminal.Reason != domain.TerminationEntitlementRevoked {
+					t.Fatalf("round %d grant authorization error = %v, want typed entitlement_revoked terminal reason", round, authErr)
+				}
+			} else if !errors.Is(createErr, domain.ErrNoEntitlement) {
+				t.Fatalf("round %d creation error = %v, want no-entitlement for a revoked entitlement", round, createErr)
+			}
+		}
+		if succeeded == 0 {
+			t.Fatal("race fixture never exercised the committed-grant path")
+		}
+	})
+
+	t.Run("creation, disablement, and revocation share one lock order", func(t *testing.T) {
+		admin, _ := registerUser(t)
+		if _, err := raw.Exec(ctx, `UPDATE users SET role='admin' WHERE id=$1`, admin.ID); err != nil {
+			t.Fatal("make governance admin fixture")
+		}
+		const rounds = 8
+		for round := 0; round < rounds; round++ {
+			user, trial := registerUser(t)
+			start := make(chan struct{})
+			var grant auth.TranslationGrant
+			var createErr, disableErr, revokeErr error
+			var done sync.WaitGroup
+			done.Add(3)
+			go func() {
+				defer done.Done()
+				<-start
+				createErr = func() error {
+					var err error
+					grant, err = service.CreateTranslationSession(ctx, user.ID, fmt.Sprintf("gov-race-three-way-%d", round), now.Add(time.Duration(round)*time.Second))
+					return err
+				}()
+			}()
+			go func() {
+				defer done.Done()
+				<-start
+				// The terminal operations get a small head start for the
+				// creation so the committed-grant path is exercised while they
+				// still contend for the arbitration lock behind it.
+				time.Sleep(5 * time.Millisecond)
+				disableErr = db.DisableUser(ctx, admin.ID, user.ID, now.Add(time.Duration(round+1)*time.Second))
+			}()
+			go func() {
+				defer done.Done()
+				<-start
+				time.Sleep(5 * time.Millisecond)
+				revokeErr = db.RevokeEntitlementByAdmin(ctx, admin.ID, user.ID, trial.ID, now.Add(time.Duration(round+1)*time.Second))
+			}()
+			close(start)
+			done.Wait()
+			// All three paths take the same per-user arbitration lock before
+			// any row lock, so any ordering regression surfaces here as a
+			// deadlock-detected or timed-out error instead of passing silently.
+			if disableErr != nil {
+				t.Fatalf("round %d disable: %v", round, disableErr)
+			}
+			if revokeErr != nil {
+				t.Fatalf("round %d revoke: %v", round, revokeErr)
+			}
+			var doomed int
+			if err := raw.QueryRow(ctx, `SELECT count(*) FROM translation_sessions WHERE user_id=$1 AND ended_at IS NULL AND revoked_at IS NULL`, user.ID).Scan(&doomed); err != nil || doomed != 0 {
+				t.Fatalf("round %d left %d active-looking sessions after terminal governance (err = %v)", round, doomed, err)
+			}
+			if createErr == nil {
+				var revokedAt *time.Time
+				var reason string
+				if err := raw.QueryRow(ctx, `SELECT revoked_at, COALESCE(termination_reason,'') FROM translation_sessions WHERE id=$1`, grant.Session.ID).Scan(&revokedAt, &reason); err != nil || revokedAt == nil {
+					t.Fatalf("round %d committed grant was not terminated: err=%v", round, err)
+				}
+				if reason != string(domain.TerminationUserDisabled) && reason != string(domain.TerminationEntitlementRevoked) {
+					t.Fatalf("round %d committed grant reason = %q, want the first terminal scan to win", round, reason)
+				}
+			} else if !errors.Is(createErr, domain.ErrUnauthorized) && !errors.Is(createErr, domain.ErrNoEntitlement) {
+				t.Fatalf("round %d creation error = %v, want unauthorized or no-entitlement", round, createErr)
+			}
+		}
+	})
+
+	t.Run("cross-user governance stays isolated", func(t *testing.T) {
+		owner, _ := registerUser(t)
+		other, _ := registerUser(t)
+		const perUser = 5
+		start := make(chan struct{})
+		grants := make(chan auth.TranslationGrant, 2*perUser)
+		failures := make(chan error, 2*perUser)
+		var wait sync.WaitGroup
+		for _, fixture := range []struct {
+			user uuid.UUID
+			tag  string
+		}{{owner.ID, "gov-iso-owner"}, {other.ID, "gov-iso-other"}} {
+			for i := range perUser {
+				wait.Add(1)
+				go func() {
+					defer wait.Done()
+					<-start
+					grant, err := service.CreateTranslationSession(ctx, fixture.user, fmt.Sprintf("%s-%d", fixture.tag, i), now)
+					if err != nil {
+						failures <- err
+						return
+					}
+					grants <- grant
+				}()
+			}
+		}
+		close(start)
+		wait.Wait()
+		close(grants)
+		close(failures)
+		for err := range failures {
+			t.Fatalf("cross-user concurrent creation failed: %v", err)
+		}
+		// Each user's arbitration must only ever terminate that user's own
+		// sessions: exactly perUser-limit replacements per user and exactly
+		// limit still-active sessions per user. A cross-user termination bug
+		// surfaces here as the wrong replacement or active count.
+		limit := auth.TwoActiveTranslationSessionLimit
+		for _, governedUser := range []uuid.UUID{owner.ID, other.ID} {
+			var total, replaced int
+			if err := raw.QueryRow(ctx, `SELECT count(*), count(*) FILTER (WHERE termination_reason=$2) FROM translation_sessions WHERE user_id=$1`, governedUser, string(domain.TerminationReplacedByDevice)).Scan(&total, &replaced); err != nil {
+				t.Fatal("count cross-user arbitration outcomes")
+			}
+			if total != perUser || replaced != perUser-limit {
+				t.Fatalf("user arbitration total=%d replaced=%d, want %d and %d", total, replaced, perUser, perUser-limit)
+			}
+			if count := activeCount(t, governedUser, now); count != limit {
+				t.Fatalf("user active sessions = %d, want %d", count, limit)
+			}
+		}
+
+		// A different user must not end or revoke the owner's session.
+		var ownerGrant auth.TranslationGrant
+		for grant := range grants {
+			if grant.Session.UserID == owner.ID {
+				ownerGrant = grant
+			}
+		}
+		if err := service.EndTranslationSession(ctx, other.ID, ownerGrant.Session.ID, now.Add(time.Second)); !errors.Is(err, domain.ErrNotFound) {
+			t.Fatalf("cross-user end error = %v, want not_found", err)
+		}
+		if err := service.RevokeTranslationSession(ctx, other.ID, ownerGrant.Session.ID, now.Add(time.Second)); !errors.Is(err, domain.ErrNotFound) {
+			t.Fatalf("cross-user revoke error = %v, want not_found", err)
+		}
+		if _, err := db.TranslationSessionState(ctx, owner.ID, ownerGrant.Session.ID, ownerGrant.Session.EntitlementID, ownerGrant.Session.JTI, now.Add(time.Second)); err != nil {
+			t.Fatalf("owner session state after cross-user terminal attempts: %v", err)
+		}
+
+		// Forged identity combinations must fail closed with the bare
+		// unauthorized sentinel: no lifecycle detail may leak.
+		if _, err := db.TranslationSessionState(ctx, other.ID, ownerGrant.Session.ID, ownerGrant.Session.EntitlementID, ownerGrant.Session.JTI, now.Add(time.Second)); !errors.Is(err, domain.ErrUnauthorized) {
+			t.Fatalf("forged-owner state error = %v, want unauthorized", err)
+		}
+		forged, err := issuer.TranslationTokenForInstall(ownerGrant.Session.ID, ownerGrant.Session.EntitlementID, other.ID, ownerGrant.Session.JTI, "gov-iso-forged", time.Minute, now)
+		if err != nil {
+			t.Fatal("mint forged-owner token")
+		}
+		claims, authErr := service.AuthorizeTranslationSession(ctx, forged, now.Add(time.Second))
+		if !errors.Is(authErr, domain.ErrUnauthorized) {
+			t.Fatalf("forged-owner authorization error = %v", authErr)
+		}
+		var terminal domain.TerminatedTranslationSessionError
+		if errors.As(authErr, &terminal) {
+			t.Fatalf("forged-owner token leaked terminal reason %q", terminal.Reason)
+		}
+		assertNoLeakedClaims(t, claims)
+		mismatched, err := issuer.TranslationTokenForInstall(ownerGrant.Session.ID, ownerGrant.Session.EntitlementID, owner.ID, uuid.New(), "gov-iso-forged", time.Minute, now)
+		if err != nil {
+			t.Fatal("mint mismatched-JTI token")
+		}
+		claims, authErr = service.AuthorizeTranslationSession(ctx, mismatched, now.Add(time.Second))
+		if !errors.Is(authErr, domain.ErrUnauthorized) || errors.As(authErr, &terminal) {
+			t.Fatalf("mismatched-JTI authorization error = %v, want bare unauthorized", authErr)
+		}
+		assertNoLeakedClaims(t, claims)
+
+		// The owner's genuine token still authorizes.
+		if _, err := service.AuthorizeTranslationSession(ctx, ownerGrant.Token, now.Add(time.Second)); err != nil {
+			t.Fatalf("owner authorization after isolation checks: %v", err)
+		}
+	})
+
 	t.Run("third HTTP creation succeeds without conflict", func(t *testing.T) {
 		user, _ := registerUser(t)
 		router := httpapi.NewRouter(httpapi.RouterOptions{
@@ -372,4 +695,13 @@ func TestPostgresTwoDeviceSessionGovernance(t *testing.T) {
 			t.Fatalf("active sessions after HTTP flow = %d, want 2", count)
 		}
 	})
+}
+
+// assertNoLeakedClaims pins that an authorization failure never returns any
+// claim material to the caller.
+func assertNoLeakedClaims(t *testing.T, claims auth.Claims) {
+	t.Helper()
+	if claims.Role != "" || claims.UserID != "" || claims.SessionID != "" || claims.InstallID != "" || claims.EntitlementID != "" || claims.Scope != "" || claims.Subject != "" || claims.ID != "" || len(claims.Audience) != 0 || claims.ExpiresAt != nil || claims.IssuedAt != nil || claims.NotBefore != nil {
+		t.Fatalf("authorization failure leaked claims: %+v", claims)
+	}
 }

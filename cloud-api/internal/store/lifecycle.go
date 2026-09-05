@@ -96,6 +96,12 @@ func (p *Postgres) StackAnnualEntitlement(ctx context.Context, user uuid.UUID, n
 }
 func (p *Postgres) RevokeEntitlement(ctx context.Context, user, id uuid.UUID, now time.Time) error {
 	return p.tx(ctx, func(t pgx.Tx) error {
+		// Revocation shares the per-user arbitration lock with session creation
+		// (same lock, taken first) so a concurrent creation can never slip past
+		// the entitlement re-check and return a grant that is already revoked.
+		if err := lockUserSessionArbitration(ctx, t, user); err != nil {
+			return err
+		}
 		tag, err := t.Exec(ctx, `UPDATE entitlements SET revoked_at=COALESCE(revoked_at,$3) WHERE id=$1 AND user_id=$2`, id, user, now.UTC())
 		if err != nil {
 			return storeErr(err)
@@ -120,6 +126,15 @@ func (p *Postgres) UserEnabled(ctx context.Context, user uuid.UUID) (bool, error
 
 func (p *Postgres) DisableUser(ctx context.Context, admin, user uuid.UUID, now time.Time) error {
 	return p.tx(ctx, func(t pgx.Tx) error {
+		// Disablement shares the per-user arbitration lock with session
+		// creation (same lock, taken first), so the terminal scan below always
+		// observes every session a concurrent creation could insert: either
+		// the creation commits first and this scan terminates it with the
+		// user-disabled reason, or it runs after this commit and its insert
+		// re-check rejects the disabled owner.
+		if err := lockUserSessionArbitration(ctx, t, user); err != nil {
+			return err
+		}
 		tag, err := t.Exec(ctx, `UPDATE users SET disabled_at=COALESCE(disabled_at,$2) WHERE id=$1`, user, now.UTC())
 		if err != nil {
 			return err
