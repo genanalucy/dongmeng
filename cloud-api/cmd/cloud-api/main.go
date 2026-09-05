@@ -12,6 +12,7 @@ import (
 
 	"github.com/dngmeng/cloud-api/internal/auth"
 	"github.com/dngmeng/cloud-api/internal/config"
+	"github.com/dngmeng/cloud-api/internal/historycrypto"
 	httpapi "github.com/dngmeng/cloud-api/internal/http"
 	"github.com/dngmeng/cloud-api/internal/store"
 )
@@ -33,16 +34,25 @@ func newCaptchaService(cfg config.Config) (*auth.CaptchaService, error) {
 	return &service, nil
 }
 
-func newRouterOptions(cfg config.Config, database *store.Postgres, logger *slog.Logger, captcha *auth.CaptchaService) httpapi.RouterOptions {
-	return httpapi.RouterOptions{
-		Config:   cfg,
-		Database: database,
-		Logger:   logger,
-		Version:  version,
-		Store:    database,
-		Tokens:   auth.TokenIssuer{Issuer: cfg.TokenIssuer, Audience: cfg.AccessAudience, SessionAudience: cfg.SessionAudience, AccessSecret: []byte(cfg.AccessSecret), SessionSecret: []byte(cfg.SessionSecret)},
-		Captcha:  captcha,
+func newRouterOptions(cfg config.Config, database *store.Postgres, logger *slog.Logger, captcha *auth.CaptchaService) (httpapi.RouterOptions, error) {
+	var historyCipher *historycrypto.Cipher
+	if cfg.HistoryEnabled {
+		var err error
+		historyCipher, err = historycrypto.NewCipher(cfg.HistoryRootKey, cfg.HistoryKeyVersion)
+		if err != nil {
+			return httpapi.RouterOptions{}, errors.New("initialize history encryption")
+		}
 	}
+	return httpapi.RouterOptions{
+		Config:        cfg,
+		Database:      database,
+		Logger:        logger,
+		Version:       version,
+		Store:         database,
+		Tokens:        auth.TokenIssuer{Issuer: cfg.TokenIssuer, Audience: cfg.AccessAudience, SessionAudience: cfg.SessionAudience, AccessSecret: []byte(cfg.AccessSecret), SessionSecret: []byte(cfg.SessionSecret)},
+		Captcha:       captcha,
+		HistoryCipher: historyCipher,
+	}, nil
 }
 
 func main() {
@@ -72,9 +82,13 @@ func run(logger *slog.Logger) error {
 	}
 	defer database.Close()
 
+	routerOptions, err := newRouterOptions(cfg, database, logger, captcha)
+	if err != nil {
+		return err
+	}
 	server := &http.Server{
 		Addr:              cfg.Address,
-		Handler:           httpapi.NewRouter(newRouterOptions(cfg, database, logger, captcha)),
+		Handler:           httpapi.NewRouter(routerOptions),
 		ReadTimeout:       cfg.ReadTimeout,
 		ReadHeaderTimeout: cfg.ReadHeaderTimeout,
 		WriteTimeout:      cfg.WriteTimeout,

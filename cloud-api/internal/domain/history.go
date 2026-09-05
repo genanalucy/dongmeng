@@ -23,10 +23,14 @@ var ErrHistoryLimitExceeded = errors.New("history limit exceeded")
 // HistorySession is a tombstone-capable container for a user's completed
 // translation turns. It intentionally carries no plaintext metadata.
 type HistorySession struct {
-	ID        uuid.UUID  `json:"id"`
-	UserID    uuid.UUID  `json:"user_id"`
-	CreatedAt time.Time  `json:"created_at"`
-	DeletedAt *time.Time `json:"deleted_at,omitempty"`
+	ID              uuid.UUID  `json:"id"`
+	UserID          uuid.UUID  `json:"user_id"`
+	TitleKeyVersion *int       `json:"-"`
+	TitleNonce      []byte     `json:"-"`
+	TitleCiphertext []byte     `json:"-"`
+	TitleUpdatedAt  *time.Time `json:"title_updated_at,omitempty"`
+	CreatedAt       time.Time  `json:"created_at"`
+	DeletedAt       *time.Time `json:"deleted_at,omitempty"`
 }
 
 // Live reports whether the session is readable and accepts new turns.
@@ -98,6 +102,30 @@ func (p AppendHistoryTurnParams) Validate() error {
 // AppendHistoryTurn must be transactional, enforce the live caps, and treat a
 // deletion tombstone as final: a tombstoned session or turn ID can never be
 // resurrected, and deleting clears stored ciphertext.
+// HistoryChange is one monotonically cursor-addressable owner history mutation.
+// Its payload is resolved from the tombstone-preserving history tables.
+type HistoryChange struct {
+	Cursor    int64
+	SessionID uuid.UUID
+	TurnID    *uuid.UUID
+}
+
+type HistoryOperationParams struct {
+	OperationID     uuid.UUID
+	UserID          uuid.UUID
+	Kind            string
+	SessionID       uuid.UUID
+	TurnID          *uuid.UUID
+	KeyVersion      int
+	Nonce           []byte
+	Ciphertext      []byte
+	TitleNonce      []byte
+	TitleCiphertext []byte
+	Now             time.Time
+}
+
+// HistoryStore persists owner-scoped encrypted history and the append-only
+// synchronization mutation stream. Operation IDs are durable idempotency keys.
 type HistoryStore interface {
 	CreateHistorySession(context.Context, CreateHistorySessionParams) (HistorySession, error)
 	AppendHistoryTurn(context.Context, AppendHistoryTurnParams) (EncryptedTurn, error)
@@ -105,4 +133,9 @@ type HistoryStore interface {
 	ListHistorySessions(context.Context, uuid.UUID, int, int) ([]HistorySession, error)
 	ListHistoryTurns(context.Context, uuid.UUID, uuid.UUID, int, int) ([]EncryptedTurn, error)
 	DeleteHistorySession(context.Context, uuid.UUID, uuid.UUID, time.Time) error
+	ApplyHistoryOperation(context.Context, HistoryOperationParams) (int64, error)
+	ListHistoryChanges(context.Context, uuid.UUID, int64, int) ([]HistoryChange, error)
+	HistorySessionIncludingDeleted(context.Context, uuid.UUID, uuid.UUID) (HistorySession, error)
+	HistoryTurnIncludingDeleted(context.Context, uuid.UUID, uuid.UUID) (EncryptedTurn, error)
+	AdminHistory(context.Context, uuid.UUID, uuid.UUID) ([]HistorySession, []EncryptedTurn, error)
 }

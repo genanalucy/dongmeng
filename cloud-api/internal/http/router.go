@@ -9,6 +9,7 @@ import (
 
 	"github.com/dngmeng/cloud-api/internal/auth"
 	"github.com/dngmeng/cloud-api/internal/config"
+	"github.com/dngmeng/cloud-api/internal/historycrypto"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -23,6 +24,9 @@ type RouterOptions struct {
 	Now                      func() time.Time
 	Verification             PhoneVerificationService
 	RegistrationVerification *auth.EmailRegistrationService
+	// HistoryCipher is present only after HISTORY_ENABLED's fail-closed config
+	// validation has succeeded. A nil cipher leaves every history route absent.
+	HistoryCipher *historycrypto.Cipher
 	// Captcha backs GET /api/v1/auth/captcha and POST /api/v1/auth/register.
 	// Registration is captcha-only; a nil service keeps both endpoints fail
 	// closed.
@@ -103,7 +107,7 @@ func NewRouter(options RouterOptions) http.Handler {
 		return router
 	}
 	service := auth.AuthorizationService{Store: options.Store, EntitlementLifecycle: options.Store, Tokens: options.Tokens, MaxConcurrentSessions: auth.TwoActiveTranslationSessionLimit}
-	api := api{store: options.Store, tokens: options.Tokens, authorizer: service, sessionAuthorizer: service, agentServiceToken: options.Config.AgentServiceToken, verification: verification, registrationVerification: registrationVerification, captcha: options.Captcha, logger: logger, now: now}
+	api := api{store: options.Store, tokens: options.Tokens, authorizer: service, sessionAuthorizer: service, agentServiceToken: options.Config.AgentServiceToken, verification: verification, registrationVerification: registrationVerification, captcha: options.Captcha, historyCipher: options.HistoryCipher, logger: logger, now: now}
 	// The internal Agent service boundary is mounted only when the deployment
 	// configures the shared service token. It stays outside the public
 	// /api/v1 surface, and the public reverse proxy must additionally be
@@ -138,6 +142,12 @@ func NewRouter(options RouterOptions) http.Handler {
 		r.Post("/api/v1/feedback/consents", api.consent)
 		r.Post("/api/v1/feedback/artifacts", api.artifact)
 		r.Get("/api/v1/feedback/artifacts/{artifactID}", api.getArtifact)
+		if options.Config.HistoryEnabled && options.HistoryCipher != nil {
+			r.Post("/api/v1/history/sync/push", api.historyPush)
+			r.Get("/api/v1/history/sync/pull", api.historyPull)
+			r.Delete("/api/v1/history/sessions/{sessionID}", api.historyDelete)
+			r.Patch("/api/v1/history/sessions/{sessionID}/title", api.historyTitle)
+		}
 		r.Group(func(ad chi.Router) {
 			ad.Use(api.admin)
 			ad.Get("/api/v1/admin/users", api.users)
@@ -148,6 +158,9 @@ func NewRouter(options RouterOptions) http.Handler {
 			ad.Post("/api/v1/admin/users/{userID}/entitlements/{entitlementID}/revoke", api.revokeEntitlement)
 			ad.Post("/api/v1/admin/code-batches", api.codeBatch)
 			ad.Get("/api/v1/admin/audit-logs", api.auditLogs)
+			if options.Config.HistoryEnabled && options.HistoryCipher != nil {
+				ad.Get("/api/v1/admin/users/{userID}/history", api.adminHistory)
+			}
 		})
 	})
 	return router

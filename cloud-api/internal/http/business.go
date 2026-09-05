@@ -18,6 +18,7 @@ import (
 
 	"github.com/dngmeng/cloud-api/internal/auth"
 	"github.com/dngmeng/cloud-api/internal/domain"
+	"github.com/dngmeng/cloud-api/internal/historycrypto"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 )
@@ -63,6 +64,7 @@ type api struct {
 	verification             PhoneVerificationService
 	registrationVerification *auth.EmailRegistrationService
 	captcha                  *auth.CaptchaService
+	historyCipher            *historycrypto.Cipher
 	logger                   *slog.Logger
 	now                      func() time.Time
 }
@@ -171,6 +173,8 @@ func domainError(w http.ResponseWriter, r *http.Request, err error) {
 		writeError(w, r, http.StatusNotFound, "not_found")
 	case errors.Is(err, domain.ErrConflict):
 		writeError(w, r, http.StatusConflict, "conflict")
+	case errors.Is(err, domain.ErrHistoryLimitExceeded):
+		writeError(w, r, http.StatusConflict, "history_limit_exceeded")
 	default:
 		writeError(w, r, http.StatusInternalServerError, "internal_error")
 	}

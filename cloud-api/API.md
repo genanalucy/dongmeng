@@ -1,5 +1,24 @@
 # Cloud API
 
+## Encrypted history sync (optional)
+
+History routes are mounted only when `HISTORY_ENABLED=true`, `HISTORY_ROOT_KEY` (standard base64, high entropy, at least 32 decoded bytes), and positive `HISTORY_KEY_VERSION` are configured. Otherwise existing deployments start normally and these routes return 404.
+
+All owner routes require an access Bearer token. History starts enabled by default: clients create a session only when their first completed face-to-face or solo translation turn completes. Only completed turns are accepted. Requests carry plaintext only inside TLS; the service encrypts payloads and titles with per-user AES-256-GCM before persistence. No plaintext history columns exist.
+
+- `POST /api/v1/history/sync/push`: `{ "operations": [{"operation_id":"uuid","kind":"turn.upsert","session_id":"uuid","turn_id":"uuid","payload":"base64 completed plaintext"}] }`. `session.delete` has no `turn_id`/`payload`; `title.patch` has a base64 title `payload`. At most 100 operations. UUID operation IDs are idempotency keys. Response: `{ "cursors":[1] }`.
+- `GET /api/v1/history/sync/pull?cursor=0`: fixed 100-item cursor pagination, returning `{ "changes": [...], "next_cursor": 1, "has_more": false }`. The cursor is an opaque non-negative decimal server cursor; clients must use the returned cursor exactly. Pull returns plaintext payload/title only after service decryption over TLS.
+- `DELETE /api/v1/history/sessions/{sessionID}` requires an `Idempotency-Key: <uuid>` and returns `{ "cursor": 1 }`.
+- `PATCH /api/v1/history/sessions/{sessionID}/title`: `{ "operation_id":"uuid", "title":"plaintext title" }`, returns `{ "cursor": 1 }`. Server receipt order is LWW authority.
+
+Session deletion is a final tombstone: it clears encrypted turn/title material and wins over stale offline upserts or title patches. Caps are 1,000 live sessions and 10,000 live turns per user; attempts to add beyond either cap return `409 {"error":"history_limit_exceeded"}` and clients must block future translation until history is deleted. Owner history is strictly account-scoped.
+
+Admins may intentionally read full plaintext user history at `GET /api/v1/admin/users/{userID}/history`. This is the current product decision; each successful read appends `history.read` in `audit_logs` in the same transaction, with only fixed action/target identifiers and no history content or sensitive metadata.
+
+### Android JSON contract
+
+Use generated UUIDs for `operation_id`, `session_id`, and `turn_id`. `payload` is standard base64 of UTF-8 completed turn text (or title in a push title patch); pulled `payload` is the same encoding, while a direct title PATCH sends UTF-8 `title`. Treat `deleted_at != null` as terminal, remove local content, and never retry stale content with a new UUID. Persist `next_cursor` only after applying every returned change.
+
 Base URL: `http://127.0.0.1:8080`. All JSON errors are `{ "error": "code", "request_id": "..." }`; every response has `X-Request-ID`. Business responses use `Cache-Control: no-store`. Bearer credentials, refresh tokens, request bodies, query strings and client IPs are excluded from access logs.
 
 ## Public

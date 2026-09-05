@@ -46,7 +46,10 @@ func TestRouterOptionsReceiveCaptchaServiceAndNoEmailVerificationWiring(t *testi
 		t.Fatalf("newCaptchaService() error = %v", err)
 	}
 
-	options := newRouterOptions(config.Config{}, nil, nil, service)
+	options, err := newRouterOptions(config.Config{}, nil, nil, service)
+	if err != nil {
+		t.Fatalf("newRouterOptions() error = %v", err)
+	}
 	if options.Captcha != service {
 		t.Fatal("router options did not receive the captcha service")
 	}
