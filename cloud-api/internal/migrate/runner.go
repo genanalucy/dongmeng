@@ -248,8 +248,18 @@ func Run(ctx context.Context, config Config) error {
 		_, _ = connection.Exec(context.Background(), "SELECT pg_advisory_unlock($1)", migrationAdvisoryLock)
 	}()
 
-	if _, err := connection.Exec(ctx, "CREATE SCHEMA IF NOT EXISTS "+quoteIdentifier(config.Schema)); err != nil {
-		return databaseFailureFor("runner.create-schema", err)
+	var schemaExists bool
+	if err := connection.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM pg_namespace WHERE nspname = $1)", config.Schema).Scan(&schemaExists); err != nil {
+		return databaseFailureFor("runner.inspect-schema", err)
+	}
+	// PostgreSQL checks CREATE permission even for CREATE SCHEMA IF NOT EXISTS
+	// when the schema already exists. Production application roles commonly own
+	// their tables but deliberately lack database-wide CREATE, so only create a
+	// missing schema.
+	if !schemaExists {
+		if _, err := connection.Exec(ctx, "CREATE SCHEMA "+quoteIdentifier(config.Schema)); err != nil {
+			return databaseFailureFor("runner.create-schema", err)
+		}
 	}
 	ledger := quoteIdentifier(config.Schema) + "." + ledgerTable
 	if _, err := connection.Exec(ctx, "CREATE TABLE IF NOT EXISTS "+ledger+" (version text PRIMARY KEY, checksum text NOT NULL, applied_at timestamptz NOT NULL DEFAULT now())"); err != nil {
