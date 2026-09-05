@@ -11,12 +11,14 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
 
 	"translator-agent/internal/ast"
+	"translator-agent/internal/cloudauth"
 	"translator-agent/internal/sessionauth"
 )
 
@@ -30,6 +32,31 @@ const (
 	SessionSubprotocol         = "translation.v1"
 	SessionTokenProtocolPrefix = "translation.jwt."
 	maxSessionTokenBytes       = 4096
+
+	// Governance protocol error codes. TRANSLATION_SESSION_REPLACED is the
+	// only terminal state a client may map to a "replaced by another device"
+	// explanation; every other safe terminal state shares the generic
+	// TRANSLATION_SESSION_ENDED code so the vocabulary cannot leak lifecycle
+	// detail. TRANSLATION_AUTH_UNAVAILABLE reports fail-closed termination
+	// after the Cloud stayed unreachable past the tolerated window.
+	SessionReplacedCode = "TRANSLATION_SESSION_REPLACED"
+	SessionEndedCode    = "TRANSLATION_SESSION_ENDED"
+	AuthUnavailableCode = "TRANSLATION_AUTH_UNAVAILABLE"
+
+	// defaultReauthInterval/Timeout/Tolerance mirror the documented config
+	// defaults; the interval must never exceed one second so a replacement or
+	// termination decision reaches live connections well inside five seconds.
+	defaultGovernanceInterval  = time.Second
+	defaultGovernanceTimeout   = 750 * time.Millisecond
+	defaultGovernanceTolerance = 2 * time.Second
+	// connectionDrainBudget bounds how long connection teardown waits for the
+	// serialized writer to flush a terminal event before the socket is closed
+	// regardless, keeping total termination inside the five-second deadline.
+	connectionDrainBudget = 500 * time.Millisecond
+
+	sessionReplacedMessage = "translation session was replaced by another device"
+	sessionEndedMessage    = "translation session is no longer active"
+	authUnavailableMessage = "translation session authorization is unavailable"
 )
 
 var DefaultOrigins = map[string]struct{}{
@@ -44,11 +71,30 @@ var supportedLanguages = map[string]struct{}{
 	"vi": {},
 }
 
+// CloudAuthorizer is the Cloud-authorization surface the server depends on;
+// *cloudauth.Client satisfies it.
+type CloudAuthorizer interface {
+	Authorize(ctx context.Context, sessionToken string) (cloudauth.Decision, error)
+}
+
+// GovernanceTimings bounds periodic Cloud reauthorization. Zero values fall
+// back to the documented defaults. The interval must never exceed one second
+// and interval+timeout+tolerance must stay inside the five-second governance
+// termination deadline including the teardown drain budget; the config loader
+// enforces both for deployments.
+type GovernanceTimings struct {
+	Interval  time.Duration
+	Timeout   time.Duration
+	Tolerance time.Duration
+}
+
 type Options struct {
 	ASTClient       ast.Client
 	Origins         map[string]struct{}
 	Logger          *slog.Logger
 	SessionVerifier *sessionauth.Verifier
+	CloudAuthorizer CloudAuthorizer
+	Governance      GovernanceTimings
 }
 
 type Server struct {
@@ -56,6 +102,9 @@ type Server struct {
 	origins         map[string]struct{}
 	logger          *slog.Logger
 	sessionVerifier *sessionauth.Verifier
+	cloudAuthorizer CloudAuthorizer
+	governance      GovernanceTimings
+	registry        *connectionRegistry
 }
 
 func New(opts Options) *Server {
@@ -71,7 +120,24 @@ func New(opts Options) *Server {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Server{astClient: client, origins: origins, logger: logger, sessionVerifier: opts.SessionVerifier}
+	return &Server{
+		astClient: client, origins: origins, logger: logger,
+		sessionVerifier: opts.SessionVerifier, cloudAuthorizer: opts.CloudAuthorizer,
+		governance: normalizeGovernance(opts.Governance), registry: newConnectionRegistry(),
+	}
+}
+
+func normalizeGovernance(timings GovernanceTimings) GovernanceTimings {
+	if timings.Interval <= 0 {
+		timings.Interval = defaultGovernanceInterval
+	}
+	if timings.Timeout <= 0 {
+		timings.Timeout = defaultGovernanceTimeout
+	}
+	if timings.Tolerance <= 0 {
+		timings.Tolerance = defaultGovernanceTolerance
+	}
+	return timings
 }
 
 func (s *Server) Handler() http.Handler {
@@ -162,41 +228,152 @@ type connectionStart struct {
 	InstallID string
 }
 
+// cloudGovernanceEnabled reports whether this connection carries a verified
+// session identity that must also stay authorized by the Cloud lifecycle.
+func (s *Server) cloudGovernanceEnabled() bool {
+	return s.sessionVerifier != nil && s.cloudAuthorizer != nil
+}
+
+// authorizeSession performs one bounded Cloud authorization round trip.
+func (s *Server) authorizeSession(ctx context.Context, sessionToken string) (cloudauth.Decision, error) {
+	authCtx, cancel := context.WithTimeout(ctx, s.governance.Timeout)
+	defer cancel()
+	return s.cloudAuthorizer.Authorize(authCtx, sessionToken)
+}
+
+// governSession periodically re-authorizes the session token against the
+// Cloud lifecycle until the connection ends. A definitive denial terminates
+// the connection with the mapped safe code; an unreachable Cloud is
+// tolerated for at most the configured window and then fails closed. With
+// the configured interval, timeout, and tolerance the connection terminates
+// well inside the five-second governance deadline including teardown.
+func (s *Server) governSession(ctx context.Context, sessionToken string, terminate func(code, message string)) {
+	ticker := time.NewTicker(s.governance.Interval)
+	defer ticker.Stop()
+	unreachableSince := time.Time{}
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			decision, err := s.authorizeSession(ctx, sessionToken)
+			if err != nil {
+				if unreachableSince.IsZero() {
+					unreachableSince = time.Now()
+					continue
+				}
+				if time.Since(unreachableSince) >= s.governance.Tolerance {
+					terminate(AuthUnavailableCode, authUnavailableMessage)
+					return
+				}
+				continue
+			}
+			if !decision.Active {
+				code, message := governanceDenial(nil, decision)
+				terminate(code, message)
+				return
+			}
+			unreachableSince = time.Time{}
+		}
+	}
+}
+
+// governanceDenial maps a Cloud authorization failure to the safe client
+// vocabulary. Replacement is the only distinguishable state; every other
+// terminal reason shares the generic ended code so lifecycle detail cannot
+// leak, and an unreachable Cloud fails closed with the unavailable code.
+func governanceDenial(err error, decision cloudauth.Decision) (code, message string) {
+	switch {
+	case err != nil:
+		return AuthUnavailableCode, authUnavailableMessage
+	case decision.Reason == cloudauth.ReasonReplacedByDevice:
+		return SessionReplacedCode, sessionReplacedMessage
+	default:
+		return SessionEndedCode, sessionEndedMessage
+	}
+}
+
+// connectionRegistryKey derives the stable session identity from verified
+// claims. A re-issued token keeps this identity, so a duplicate connection
+// presenting the same identity supersedes the older one locally.
+func connectionRegistryKey(claims sessionauth.Claims) string {
+	return claims.UserID + "\x1f" + claims.SessionID + "\x1f" + claims.InstallID
+}
+
 func (s *Server) runConnection(parent context.Context, conn *websocket.Conn, sessionToken string) {
 	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
 
 	outgoing := make(chan outgoingMessage, 16)
 	writerDone := make(chan struct{})
+	// governanceTerminal suppresses every event after a governance terminal
+	// event so a cancelled provider or audio worker cannot overwrite the safe
+	// termination code the client must act on.
+	var governanceTerminal atomic.Bool
+	// writeMu serializes every socket write: the background writer and a
+	// synchronous governance terminal write must never overlap. Each write is
+	// bounded by connectionDrainBudget so a wedged or dead socket cannot stall
+	// teardown past the five-second governance deadline.
+	var writeMu sync.Mutex
+	writeMessage := func(message outgoingMessage) error {
+		writeMu.Lock()
+		defer writeMu.Unlock()
+		writeCtx, writeCancel := context.WithTimeout(context.Background(), connectionDrainBudget)
+		defer writeCancel()
+		if message.event != nil {
+			return wsjson.Write(writeCtx, conn, *message.event)
+		}
+		return conn.Write(writeCtx, websocket.MessageBinary, message.binary)
+	}
 	go func() {
 		defer close(writerDone)
 		for message := range outgoing {
-			writeCtx, writeCancel := context.WithTimeout(ctx, 5*time.Second)
-			var err error
-			if message.event != nil {
-				err = wsjson.Write(writeCtx, conn, *message.event)
-			} else {
-				err = conn.Write(writeCtx, websocket.MessageBinary, message.binary)
+			// Once the terminal governance event has been written
+			// synchronously, queued traffic is stale by definition; dropping
+			// it keeps the safe termination code the last word on the socket.
+			if governanceTerminal.Load() {
+				return
 			}
-			writeCancel()
-			if err != nil {
+			if err := writeMessage(message); err != nil {
 				cancel()
 				return
 			}
 		}
 	}()
+	// emitMu guards outgoing against close: governance, upstream callbacks,
+	// and teardown can race, and sending on a closed channel would panic.
+	var emitMu sync.Mutex
+	outgoingClosed := false
 	defer func() {
+		emitMu.Lock()
+		outgoingClosed = true
 		close(outgoing)
-		<-writerDone
+		emitMu.Unlock()
+		select {
+		case <-writerDone:
+		case <-time.After(connectionDrainBudget):
+			// Unstick a wedged writer; the handler's deferred CloseNow then
+			// aborts its in-flight write regardless.
+		}
 	}()
-
-	emitMessage := func(message outgoingMessage) bool {
+	sendMessage := func(message outgoingMessage) bool {
+		emitMu.Lock()
+		defer emitMu.Unlock()
+		if outgoingClosed {
+			return false
+		}
 		select {
 		case outgoing <- message:
 			return true
 		case <-ctx.Done():
 			return false
 		}
+	}
+	emitMessage := func(message outgoingMessage) bool {
+		if governanceTerminal.Load() {
+			return false
+		}
+		return sendMessage(message)
 	}
 	emit := func(event browserEvent) bool {
 		return emitMessage(outgoingMessage{event: &event})
@@ -209,8 +386,10 @@ func (s *Server) runConnection(parent context.Context, conn *websocket.Conn, ses
 		return
 	}
 	direction := start.SourceLanguage + "→" + start.TargetLanguage
+	var claims sessionauth.Claims
 	if s.sessionVerifier != nil {
-		_, err = s.sessionVerifier.Verify(sessionToken, sessionauth.Expected{
+		var err error
+		claims, err = s.sessionVerifier.Verify(sessionToken, sessionauth.Expected{
 			Subject: start.UserID, UserID: start.UserID, SessionID: start.SessionID, InstallID: start.InstallID,
 		})
 		if err != nil {
@@ -218,6 +397,34 @@ func (s *Server) runConnection(parent context.Context, conn *websocket.Conn, ses
 			emit(browserEvent{Type: "error", Code: "TRANSLATION_AUTH_INVALID", Message: "translation session authorization failed"})
 			return
 		}
+	}
+	// Cloud governance: consult the persisted session lifecycle before the
+	// provider starts, so an already ended, replaced, revoked, or otherwise
+	// terminated session never reaches the provider. An unreachable Cloud is
+	// an immediate fail-closed denial: the session has not been proven active.
+	if s.cloudGovernanceEnabled() {
+		decision, err := s.authorizeSession(ctx, sessionToken)
+		if err != nil || !decision.Active {
+			code, message := governanceDenial(err, decision)
+			s.logError(claims.SessionID, direction, "session_governance_denied", code, "")
+			emit(browserEvent{Type: "error", Code: code, Message: message})
+			return
+		}
+		var handle *registeredConnection
+		handle = s.registry.register(connectionRegistryKey(claims), cancel)
+		defer s.registry.unregister(handle)
+		terminate := func(code, message string) {
+			if governanceTerminal.CompareAndSwap(false, true) {
+				s.logError(claims.SessionID, direction, "session_governance_terminated", code, "")
+				// Write the terminal event synchronously before cancelling:
+				// cancelling unblocks the blocked reader and coder/websocket then
+				// closes the socket immediately, which would race the background
+				// writer flush and drop the code the client must act on.
+				_ = writeMessage(outgoingMessage{event: &browserEvent{Type: "error", Code: code, Message: message}})
+				cancel()
+			}
+		}
+		go s.governSession(ctx, sessionToken, terminate)
 	}
 	s.logError(start.SessionID, direction, "start_received", "", "")
 
@@ -284,9 +491,13 @@ func (s *Server) runConnection(parent context.Context, conn *websocket.Conn, ses
 		defer close(workerDone)
 		for pcm := range queue {
 			if err := astSession.SendAudio(ctx, pcm); err != nil {
-				s.logError(start.SessionID, direction, "audio_send_failed", "VOLCENGINE_SESSION_FAILED", "")
-				emit(browserEvent{Type: "error", Code: "VOLCENGINE_SESSION_FAILED", Message: "translation session failed"})
-				cancel()
+				// A governance cancellation is not an upstream failure; stay
+				// silent so the safe termination code survives.
+				if ctx.Err() == nil {
+					s.logError(start.SessionID, direction, "audio_send_failed", "VOLCENGINE_SESSION_FAILED", "")
+					emit(browserEvent{Type: "error", Code: "VOLCENGINE_SESSION_FAILED", Message: "translation session failed"})
+					cancel()
+				}
 				return
 			}
 		}

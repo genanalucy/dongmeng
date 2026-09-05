@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"translator-agent/internal/ast"
+	"translator-agent/internal/cloudauth"
 	"translator-agent/internal/config"
 	"translator-agent/internal/server"
 	"translator-agent/internal/sessionauth"
@@ -55,11 +56,33 @@ func main() {
 		}
 	}
 
+	// The internal Cloud authorization client is wired only when the session
+	// auth config also carries the endpoint and service token; a nil interface
+	// keeps loopback development runs local-only. The interface is assigned
+	// only on success so a typed-nil client can never reach the server.
+	var cloudAuthorizer server.CloudAuthorizer
+	if sessionAuthConfig.CloudAuthorizeURL != "" {
+		cloudClient, err := cloudauth.NewClient(
+			sessionAuthConfig.CloudAuthorizeURL, sessionAuthConfig.CloudServiceToken, &http.Client{},
+		)
+		if err != nil {
+			logger.Error("session authorization configuration invalid", "error_code", "INVALID_SESSION_AUTH_CONFIGURATION")
+			os.Exit(1)
+		}
+		cloudAuthorizer = cloudClient
+	}
+
 	httpServer := &http.Server{
 		Addr: server.DefaultAddress,
 		Handler: server.New(server.Options{
 			ASTClient: ast.NewRoutingClient(ast.NewConfiguredClient(cfg), cfg), Origins: allowedOrigins(os.Getenv("TRANSLATOR_AGENT_EXTRA_ORIGINS")),
 			Logger: logger, SessionVerifier: sessionVerifier,
+			CloudAuthorizer: cloudAuthorizer,
+			Governance: server.GovernanceTimings{
+				Interval:  sessionAuthConfig.ReauthInterval,
+				Timeout:   sessionAuthConfig.ReauthTimeout,
+				Tolerance: sessionAuthConfig.ReauthTolerance,
+			},
 		}).Handler(),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
