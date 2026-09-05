@@ -20,8 +20,13 @@ object BrandConfig {
     const val shortName = "言枢"
     const val tagline = "实时同传，智联世界"
 
-    val primary = Color(0xFF0F6C66)
-    val secondary = Color(0xFF60706C)
+    /** 公共暖白 / 深海蓝语义色，页面只通过 MaterialTheme.colorScheme 使用。 */
+    val primary = Color(0xFF2457C5)
+    val secondary = Color(0xFF667085)
+    val background = Color(0xFFF7F8FA)
+    val text = Color(0xFF182230)
+    val surface = Color(0xFFEEF1F5)
+    val primarySoft = Color(0xFFEAF0FF)
 
     /** 品牌主标志来自根目录 branding/logo/app-logo.svg 的 Android vector 版本。 */
     @Composable

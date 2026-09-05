@@ -165,9 +165,9 @@ private fun EarMicButton(
     val animatorScale = Settings.Global.getFloat(LocalContext.current.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f)
     val color = MaterialTheme.colorScheme.primary
     Surface(
-        modifier = modifier.heightIn(min = 72.dp)
+        modifier = modifier.heightIn(min = 96.dp)
             .semantics {
-                contentDescription = "${TranslationLanguage.displayName(language)}麦克风"
+                contentDescription = "${earLabel(side)}，${TranslationLanguage.displayName(language)}，$stateLabel，译文送至${targetEarLabel(side)}"
                 stateDescription = stateLabel
                 if (actionEnabled) {
                     onClick(label = "开始${TranslationLanguage.displayName(language)}收音") {
@@ -193,7 +193,9 @@ private fun EarMicButton(
             if (active) MicRipple(animatorScale, color)
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Icon(Icons.Filled.Mic, contentDescription = null, tint = color, modifier = Modifier.size(24.dp))
-                Text(TranslationLanguage.displayName(language), style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
+                Text(earLabel(side), style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
+                Text(TranslationLanguage.displayName(language), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("译文 → ${targetEarLabel(side)}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
             }
         }
     }

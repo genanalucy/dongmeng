@@ -179,8 +179,8 @@ internal fun ConversationTimeline(
         LazyColumn(
             state = listState,
             modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(start = 16.dp, top = 12.dp, end = 16.dp, bottom = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp, Alignment.Bottom),
+            contentPadding = PaddingValues(start = 20.dp, top = 16.dp, end = 20.dp, bottom = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp, Alignment.Bottom),
         ) {
             if (turns.isEmpty() && !hasListeningPlaceholder) {
                 item {
@@ -224,17 +224,17 @@ private fun ConversationBubble(bubble: ConversationDisplayBubble) {
     val targetLanguage = TranslationLanguage.displayName(bubble.targetLanguage)
     Column(Modifier.fillMaxWidth(), horizontalAlignment = if (isRight) Alignment.End else Alignment.Start) {
         Surface(
-            modifier = Modifier.widthIn(max = 320.dp).semantics {
+            modifier = Modifier.widthIn(max = 360.dp).semantics {
                 contentDescription = listOfNotNull(
                     bubble.sourceText?.let { "$sourceLanguage 原文。$it" },
                     "$targetLanguage 译文。${bubble.translationText}",
                 ).joinToString(" ")
             },
-            shape = RoundedCornerShape(20.dp),
+            shape = RoundedCornerShape(16.dp),
             color = if (isRight) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface,
-            border = if (isRight) null else BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+            border = BorderStroke(1.dp, if (isRight) MaterialTheme.colorScheme.primary.copy(alpha = 0.18f) else MaterialTheme.colorScheme.outlineVariant),
         ) {
-            Column(Modifier.padding(14.dp)) {
+            Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
                 bubble.sourceText?.let { source ->
                     Text(source, style = MaterialTheme.typography.bodyLarge)
                     Spacer(Modifier.height(9.dp))

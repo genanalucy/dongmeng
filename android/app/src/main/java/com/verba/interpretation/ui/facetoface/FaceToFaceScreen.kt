@@ -1,20 +1,25 @@
 package com.verba.interpretation.ui.facetoface
 
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material.icons.outlined.SwapHoriz
 import androidx.compose.material3.Button
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -27,11 +32,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.verba.interpretation.ui.FaceToFaceMode
 import com.verba.interpretation.ui.FaceToFacePhase
+import com.verba.interpretation.ui.FaceToFaceSide
 import com.verba.interpretation.ui.FaceToFaceState
 import com.verba.interpretation.ui.FaceToFaceViewModel
 import com.verba.interpretation.ui.TranslationLanguage
@@ -53,14 +60,26 @@ internal fun FaceToFaceScreen(
     modifier: Modifier = Modifier,
 ) {
     val presentation = faceToFacePresentation(state)
-    Column(modifier.fillMaxSize()) {
+    Column(
+        modifier.fillMaxSize().padding(top = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
         Row(
-            Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp),
+            Modifier.fillMaxWidth().padding(horizontal = 20.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Column(Modifier.weight(1f)) {
-                Text("面对面翻译", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
-                Text(faceStatusLabel(state), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                Text(
+                    "面对面翻译",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.semantics { heading() },
+                )
+                Text(
+                    faceStatusLabel(state),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                )
             }
             FaceToFaceOverflowMenu(
                 state = state,
@@ -71,15 +90,21 @@ internal fun FaceToFaceScreen(
                 onStopAuto = viewModel::stopAuto,
             )
         }
-        LanguageChips(state, presentation.canChangeLanguages, viewModel::setLanguages)
+
+        DirectionPicker(
+            state = state,
+            enabled = presentation.canChangeLanguages,
+            onSetLanguages = viewModel::setLanguages,
+        )
+
         if (presentation.showRecoveryAction) {
             presentation.recoveryMessage?.let { message ->
                 Surface(
-                    shape = RoundedCornerShape(14.dp),
+                    shape = RoundedCornerShape(16.dp),
                     color = MaterialTheme.colorScheme.errorContainer,
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp),
                 ) {
-                    Column(Modifier.padding(12.dp)) {
+                    Column(Modifier.padding(14.dp)) {
                         Text(message, color = MaterialTheme.colorScheme.onErrorContainer, style = MaterialTheme.typography.bodySmall)
                         Button(
                             onClick = viewModel::cancel,
@@ -92,13 +117,19 @@ internal fun FaceToFaceScreen(
                 }
             }
         }
+
         ConversationTimeline(
             turns = state.turns,
             activeMic = presentation.activeMic,
             listeningPlaceholder = presentation.timelinePlaceholder,
             modifier = Modifier.weight(1f),
         )
-        Surface(color = MaterialTheme.colorScheme.surface, tonalElevation = 4.dp, modifier = Modifier.fillMaxWidth()) {
+
+        Surface(
+            color = MaterialTheme.colorScheme.surface,
+            tonalElevation = 3.dp,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
             EarMicControls(
                 state = state,
                 presentation = presentation,
@@ -117,21 +148,33 @@ internal fun FaceToFaceScreen(
 }
 
 @Composable
-private fun LanguageChips(
+private fun DirectionPicker(
     state: FaceToFaceState,
     enabled: Boolean,
     onSetLanguages: (String, String) -> Unit,
 ) {
-    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-        LanguageChip(
+    Row(
+        Modifier.fillMaxWidth().padding(horizontal = 20.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        DirectionColumn(
+            side = FaceToFaceSide.LEFT,
             language = state.leftLanguage,
             otherLanguage = state.rightLanguage,
             enabled = enabled,
             modifier = Modifier.weight(1f),
             onSelect = { onSetLanguages(it, state.rightLanguage) },
         )
-        Text("↔", modifier = Modifier.padding(horizontal = 8.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
-        LanguageChip(
+        IconButton(
+            onClick = { onSetLanguages(state.rightLanguage, state.leftLanguage) },
+            enabled = enabled,
+            modifier = Modifier.heightIn(min = 48.dp),
+        ) {
+            Icon(Icons.Outlined.SwapHoriz, contentDescription = "交换左右耳语言")
+        }
+        DirectionColumn(
+            side = FaceToFaceSide.RIGHT,
             language = state.rightLanguage,
             otherLanguage = state.leftLanguage,
             enabled = enabled,
@@ -142,30 +185,59 @@ private fun LanguageChips(
 }
 
 @Composable
-private fun LanguageChip(
+private fun DirectionColumn(
+    side: FaceToFaceSide,
     language: String,
     otherLanguage: String,
     enabled: Boolean,
     modifier: Modifier,
     onSelect: (String) -> Unit,
 ) {
+    Column(
+        modifier = modifier.semantics {
+            contentDescription = "${earLabel(side)}，${TranslationLanguage.displayName(language)}"
+        },
+    ) {
+        Text(
+            earLabel(side),
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        LanguageSelector(language, otherLanguage, enabled, onSelect)
+    }
+}
+
+@Composable
+private fun LanguageSelector(
+    language: String,
+    otherLanguage: String,
+    enabled: Boolean,
+    onSelect: (String) -> Unit,
+) {
     var expanded by remember { mutableStateOf(false) }
     LaunchedEffect(enabled) {
         if (!enabled) expanded = false
     }
-    Box(modifier) {
-        androidx.compose.material3.AssistChip(
+    Box {
+        androidx.compose.material3.TextButton(
             onClick = { if (enabled) expanded = true },
             enabled = enabled,
-            label = { Text(TranslationLanguage.displayName(language)) },
-            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).semantics { contentDescription = "选择${TranslationLanguage.displayName(language)}语言" },
-        )
+            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).semantics {
+                contentDescription = "选择${TranslationLanguage.displayName(language)}语言"
+            },
+        ) {
+            Text(TranslationLanguage.displayName(language), style = MaterialTheme.typography.titleMedium)
+            Icon(Icons.Filled.ArrowDropDown, contentDescription = null)
+        }
         DropdownMenu(expanded = expanded && enabled, onDismissRequest = { expanded = false }) {
             TranslationLanguage.entries.filter { it.code != otherLanguage }.forEach { choice ->
                 DropdownMenuItem(
                     text = { Text(choice.displayName) },
                     enabled = enabled,
-                    onClick = { if (enabled) onSelect(choice.code); expanded = false },
+                    onClick = {
+                        if (enabled) onSelect(choice.code)
+                        expanded = false
+                    },
                 )
             }
         }

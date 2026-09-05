@@ -23,6 +23,10 @@ internal const val FACE_TO_FACE_SESSION_REPLACED_MESSAGE = "已在另一设备�
 internal const val FACE_TO_FACE_SESSION_ENDED_MESSAGE = "翻译会话已结束，请重新开始。"
 internal const val FACE_TO_FACE_RECOVERY_ACTION_LABEL = "重新开始翻译"
 
+internal fun earLabel(side: FaceToFaceSide): String = if (side == FaceToFaceSide.LEFT) "左耳" else "右耳"
+
+internal fun targetEarLabel(side: FaceToFaceSide): String = if (side == FaceToFaceSide.LEFT) "右耳" else "左耳"
+
 internal fun faceToFacePresentation(state: FaceToFaceState): FaceToFacePresentation = FaceToFacePresentation(
     activeMic = state.activeSide.takeIf {
         state.phase == FaceToFacePhase.LISTENING && state.captureActive
