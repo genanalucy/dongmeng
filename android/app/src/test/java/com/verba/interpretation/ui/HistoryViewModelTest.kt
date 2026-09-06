@@ -36,6 +36,11 @@ class HistoryViewModelTest {
     }
 
     @Test
+    fun exposesApplicationOnlyConstructorToJava() {
+        HistoryViewModel::class.java.getConstructor(Application::class.java)
+    }
+
+    @Test
     fun eachDeleteHasAnIndependentFiveSecondUndoWindow() = runTest(dispatcher) {
         val repository = FakeHistoryRepository()
         val viewModel = viewModel(repository)

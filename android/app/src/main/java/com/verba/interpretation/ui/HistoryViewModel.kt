@@ -67,7 +67,7 @@ data class HistoryUiState(
         }
 }
 
-class HistoryViewModel(
+class HistoryViewModel @JvmOverloads constructor(
     application: Application,
     private val historyRepository: HistoryRepository = LocalHistoryRepositoryAdapter(LocalHistoryRepository.create(application)),
     private val dispatcher: CoroutineDispatcher = Dispatchers.Main.immediate,
