@@ -130,13 +130,13 @@ class FaceToFaceUiMapperTest {
     @Test
     fun micPressGateCancelsOnlyOnceAfterPress() {
         val events = mutableListOf<String>()
-        val gate = MicPressGate(onPress = { events += "press" }, onRelease = { events += "release" })
+        val gate = MicPressGate(onPress = { events += "press" }, onRelease = { events += "release" }, onCancel = { events += "cancel" })
 
         gate.press()
         gate.cancel()
         gate.cancel()
 
-        assertEquals(listOf("press", "release"), events)
+        assertEquals(listOf("press", "cancel"), events)
     }
 
     @Test
@@ -154,13 +154,13 @@ class FaceToFaceUiMapperTest {
     @Test
     fun micPressGateKeepsAutoCancelWhenCallbacksChangeDuringPress() {
         val events = mutableListOf<String>()
-        val gate = MicPressGate(onPress = { events += "autoPress" }, onRelease = { events += "autoRelease" })
+        val gate = MicPressGate(onPress = { events += "autoPress" }, onRelease = { events += "autoRelease" }, onCancel = { events += "autoCancel" })
 
         gate.press()
-        gate.updateCallbacks(onPress = { events += "manualPress" }, onRelease = { events += "manualRelease" })
+        gate.updateCallbacks(onPress = { events += "manualPress" }, onRelease = { events += "manualRelease" }, onCancel = { events += "manualCancel" })
         gate.cancel()
 
-        assertEquals(listOf("autoPress", "autoRelease"), events)
+        assertEquals(listOf("autoPress", "autoCancel"), events)
     }
 
     @Test
@@ -194,7 +194,7 @@ class FaceToFaceUiMapperTest {
     @Test
     fun releaseAndCancelRequireTheAcquiringToken() {
         val events = mutableListOf<String>()
-        val gate = MicPressGate(onPress = { events += "press" }, onRelease = { events += "release" })
+        val gate = MicPressGate(onPress = { events += "press" }, onRelease = { events += "release" }, onCancel = { events += "cancel" })
 
         val token = gate.acquire(MicPressOwner.POINTER)
         gate.release(token)
@@ -204,7 +204,7 @@ class FaceToFaceUiMapperTest {
         val second = gate.acquire(MicPressOwner.POINTER)
         gate.cancel(second)
         gate.release(second)
-        assertEquals(listOf("press", "release", "press", "release"), events)
+        assertEquals(listOf("press", "release", "press", "cancel"), events)
     }
 
     @Test

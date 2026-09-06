@@ -71,11 +71,14 @@ internal data class ConversationDisplayBubble(
 internal fun displayConversationBubbles(
     turns: List<FaceToFaceTurn>,
     phase: FaceToFacePhase = FaceToFacePhase.IDLE,
-): List<ConversationDisplayBubble> = turns.filter { turn ->
-    turn.finished || phase != FaceToFacePhase.ERROR
-}.flatMap { turn ->
-    val alignment = faceToFaceTurnAlignment(turn)
-    val live = !turn.finished && phase in setOf(FaceToFacePhase.LISTENING, FaceToFacePhase.PROCESSING)
+    activeTurnId: Long? = null,
+): List<ConversationDisplayBubble> {
+    val liveTurnId = activeTurnId ?: activeConversationTurnId(turns, phase)
+    return turns.filter { turn ->
+        turn.finished || phase != FaceToFacePhase.ERROR
+    }.flatMap { turn ->
+        val alignment = faceToFaceTurnAlignment(turn)
+        val live = turn.id == liveTurnId
     if (live) {
         // Keep one stable article for the active turn. Source and translation partials are
         // rendered in the same bilingual bubble rather than as two unrelated rows.
@@ -83,7 +86,7 @@ internal fun displayConversationBubbles(
             ConversationDisplayBubble(
                 // A single-turn live article uses the first historical row key so completion
                 // updates the same LazyColumn item instead of replacing it.
-                key = "${turn.id}:0",
+                key = conversationBubbleKey(turn.id, "0"),
                 sourceText = turn.sourceText.takeIf(String::isNotBlank),
                 translationText = turn.translatedText,
                 side = turn.side,
@@ -95,6 +98,7 @@ internal fun displayConversationBubbles(
             ),
         )
     } else {
+        val hasFinalRows = turn.sourceFinals.isNotEmpty() || turn.translationFinals.isNotEmpty()
         EventBoundaryDisplay.rows(
             sourceFinals = turn.sourceFinals,
             sourcePartial = turn.sourcePartial,
@@ -102,7 +106,7 @@ internal fun displayConversationBubbles(
             translationPartial = turn.translationPartial,
         ).map { row ->
             ConversationDisplayBubble(
-                key = "${turn.id}:${row.key}",
+                key = conversationBubbleKey(turn.id, row.key, hasFinalRows),
                 sourceText = row.sourceText,
                 translationText = row.translationText,
                 side = turn.side,
@@ -111,8 +115,22 @@ internal fun displayConversationBubbles(
                 alignment = alignment,
             )
         }
+        }
     }
 }
+
+/** Compatibility fallback for callers that do not yet provide the coordinator's active turn ID. */
+internal fun activeConversationTurnId(
+    turns: List<FaceToFaceTurn>,
+    phase: FaceToFacePhase,
+): Long? = if (phase == FaceToFacePhase.LISTENING || phase == FaceToFacePhase.PROCESSING) {
+    turns.asReversed().firstOrNull { !it.finished }?.id
+} else {
+    null
+}
+
+private fun conversationBubbleKey(turnId: Long, rowKey: String, hasFinalRows: Boolean = false): String =
+    if (rowKey == "0" || (!hasFinalRows && (rowKey == "source-partial" || rowKey == "translation-partial"))) "$turnId:0" else "$turnId:$rowKey"
 
 internal fun conversationTimelineUpdateCount(
     previousTurnToken: List<String>,
@@ -133,10 +151,11 @@ internal fun ConversationTimeline(
     modifier: Modifier = Modifier,
     listState: LazyListState = rememberLazyListState(),
     phase: FaceToFacePhase = FaceToFacePhase.IDLE,
+    activeTurnId: Long? = null,
 ) {
     // The old arguments remain source-compatible for continuous mode callers. Live content is
     // now represented by the actual unfinished turn, never by a fixed input row.
-    val bubbles = remember(turns, phase) { displayConversationBubbles(turns, phase) }
+    val bubbles = remember(turns, phase, activeTurnId) { displayConversationBubbles(turns, phase, activeTurnId) }
     val turnToken = remember(bubbles) { bubbles.map { "${it.key}:${it.sourceText}:${it.translationText}:${it.isLive}" } }
     val scope = rememberCoroutineScope()
     var previousToken by remember { mutableStateOf<List<String>?>(null) }

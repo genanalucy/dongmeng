@@ -91,6 +91,14 @@ class FaceToFaceViewModel(application: Application) : AndroidViewModel(applicati
         if (transition.accepted && transition.cancelSessions.isNotEmpty()) endCloudSession()
     }
 
+    /** Pointer cancellation must discard only the pressed, unfinished manual turn. */
+    fun manualCancel() = synchronized(actionLock) {
+        invalidatePendingGrantOpen()
+        val transition = coordinator.cancelManualInput()
+        applyTransition(transition)
+        if (transition.accepted && transition.closeCloudSession) endCloudSession()
+    }
+
     fun startAuto() = startWithCloudGrant(
         side = FaceToFaceSide.LEFT,
         canStart = { coordinator.state().mode == FaceToFaceMode.AUTO && coordinator.state().phase == FaceToFacePhase.IDLE },

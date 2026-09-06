@@ -28,8 +28,34 @@ class ConversationDisplayBubbleTest {
         assertEquals(FaceToFacePhase.PROCESSING, live.livePhase)
 
         val finished = displayConversationBubbles(listOf(turn.copy(finished = true)))
-        assertEquals("9:source-partial", finished.first().key)
+        assertEquals("9:0", finished.first().key)
         assertEquals(false, finished.first().isLive)
+    }
+
+    @Test
+    fun onlyNewestUnfinishedTurnIsLiveWhenOlderTurnIsStillDraining() {
+        val old = FaceToFaceTurn(
+            id = 10,
+            side = FaceToFaceSide.LEFT,
+            sourceLanguage = "zh",
+            targetLanguage = "en",
+            route = PlaybackRoute.RIGHT,
+            sourcePartial = "old",
+        )
+        val current = FaceToFaceTurn(
+            id = 11,
+            side = FaceToFaceSide.RIGHT,
+            sourceLanguage = "en",
+            targetLanguage = "zh",
+            route = PlaybackRoute.LEFT,
+            sourcePartial = "current",
+        )
+
+        val bubbles = displayConversationBubbles(listOf(old, current), FaceToFacePhase.LISTENING)
+
+        assertEquals(listOf("10:0", "11:0"), bubbles.map { it.key })
+        assertEquals(listOf(false, true), bubbles.map { it.isLive })
+        assertEquals(11L, activeConversationTurnId(listOf(old, current), FaceToFacePhase.LISTENING))
     }
 
     @Test
@@ -51,6 +77,25 @@ class ConversationDisplayBubbleTest {
             ),
             displayConversationBubbles(listOf(turn)),
         )
+    }
+
+    @Test
+    fun partialThenMultipleFinalsHaveUniqueStableKeysWithoutDuplication() {
+        val turn = FaceToFaceTurn(
+            id = 45,
+            side = FaceToFaceSide.LEFT,
+            sourceLanguage = "zh",
+            targetLanguage = "en",
+            route = PlaybackRoute.RIGHT,
+            sourceFinals = listOf("第一句", "第二句"),
+            sourcePartial = "第三句",
+            translationFinals = listOf("first", "second"),
+        )
+
+        val bubbles = displayConversationBubbles(listOf(turn))
+
+        assertEquals(listOf("45:0", "45:1", "45:source-partial"), bubbles.map { it.key })
+        assertEquals(3, bubbles.distinctBy { it.key }.size)
     }
 
     @Test

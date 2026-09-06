@@ -50,6 +50,7 @@ data class FaceToFaceState(
     val leftLanguage: String = "zh",
     val rightLanguage: String = "en",
     val activeSide: FaceToFaceSide? = null,
+    val activeTurnId: Long? = null,
     val captureActive: Boolean = false,
     val captureLevel: Float = 0f,
     val turns: List<FaceToFaceTurn> = emptyList(),
@@ -95,7 +96,7 @@ class FaceToFaceCoordinator<S> {
     private var playbackInProgress = false
 
     @Synchronized
-    fun state(): FaceToFaceState = current
+    fun state(): FaceToFaceState = current.copy(activeTurnId = activeTurnId)
 
     @Synchronized
     fun setMode(mode: FaceToFaceMode): Boolean {
@@ -150,6 +151,45 @@ class FaceToFaceCoordinator<S> {
             stopCapture = true,
             cancelTimer = true,
             closeCloudSession = discard,
+        )
+    }
+
+    /** Cancels only the currently pressed manual turn; completed history turns remain intact. */
+    @Synchronized
+    fun cancelManualInput(turnId: Long? = activeTurnId): Transition<S> {
+        if (current.mode != FaceToFaceMode.MANUAL || current.phase != FaceToFacePhase.LISTENING || activeTurnId != turnId) {
+            return Transition(accepted = false)
+        }
+        val activeId = turnId ?: return Transition(accepted = false)
+        val entry = entries[activeId] ?: return Transition(accepted = false)
+        val turn = current.turns.firstOrNull { it.id == activeId } ?: return Transition(accepted = false)
+        if (turn.finished) {
+            // Finished already arrived at the socket. Do not finish/cancel it again: playback
+            // owns the normal drain and will remove the entry and close the cloud session.
+            activeTurnId = null
+            current = current.copy(
+                phase = FaceToFacePhase.PROCESSING,
+                activeSide = null,
+                captureActive = false,
+                captureLevel = 0f,
+            )
+            return Transition(accepted = true, stopCapture = true, cancelTimer = true)
+        }
+        entries.remove(activeId)
+        activeTurnId = null
+        current = current.copy(
+            phase = FaceToFacePhase.IDLE,
+            activeSide = null,
+            captureActive = false,
+            captureLevel = 0f,
+            turns = current.turns.filterNot { it.id == activeId },
+        )
+        return Transition(
+            accepted = true,
+            cancelSessions = listOf(entry.session),
+            stopCapture = true,
+            cancelTimer = true,
+            closeCloudSession = entries.isEmpty(),
         )
     }
 

@@ -29,6 +29,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.verba.interpretation.ui.FaceToFaceMode
+import com.verba.interpretation.ui.MicrophonePermissionAction
 import com.verba.interpretation.ui.FaceToFacePhase
 import com.verba.interpretation.ui.FaceToFaceSide
 import com.verba.interpretation.ui.FaceToFaceState
@@ -50,7 +51,8 @@ private fun faceStatusLabel(state: FaceToFaceState): String = when (state.phase)
 internal fun FaceToFaceScreen(
     state: FaceToFaceState,
     viewModel: FaceToFaceViewModel,
-    requestMicrophone: (() -> Unit) -> Unit,
+    requestMicrophone: (MicrophonePermissionAction) -> Unit,
+    clearMicrophoneRequest: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val presentation = faceToFacePresentation(state)
@@ -81,7 +83,7 @@ internal fun FaceToFaceScreen(
             FaceToFaceOverflowMenu(
                 state = state,
                 onSelectMode = viewModel::setMode,
-                onStartAuto = { requestMicrophone(viewModel::startAuto) },
+                onStartAuto = { requestMicrophone(MicrophonePermissionAction.Continuous) },
                 onPauseAuto = viewModel::pauseAuto,
                 onResumeAuto = viewModel::resumeAuto,
                 onStopAuto = viewModel::stopAuto,
@@ -93,6 +95,7 @@ internal fun FaceToFaceScreen(
             activeMic = presentation.activeMic,
             listeningPlaceholder = presentation.timelinePlaceholder,
             phase = state.phase,
+            activeTurnId = state.activeTurnId,
             modifier = Modifier.weight(1f),
         )
 
@@ -122,7 +125,8 @@ internal fun FaceToFaceScreen(
                 presentation = presentation,
                 requestMicrophone = requestMicrophone,
                 onManualPress = viewModel::manualPress,
-                onManualRelease = viewModel::manualRelease,
+                onManualRelease = { clearMicrophoneRequest(); viewModel.manualRelease() },
+                onManualCancel = { clearMicrophoneRequest(); viewModel.manualCancel() },
                 onStartAuto = viewModel::startAuto,
                 onPressRightAuto = viewModel::pressRightAuto,
                 onReleaseRightAuto = viewModel::releaseRightAuto,

@@ -204,6 +204,74 @@ class FaceToFaceCoordinatorTest {
         assertEquals(FaceToFacePhase.IDLE, coordinator.state().phase)
     }
 
+    @Test fun cancelledManualInputCancelsOnlyPressedTurnAndKeepsEarlierFinishedTurn() {
+        val coordinator = FaceToFaceCoordinator<String>()
+        coordinator.manualPress(1, FaceToFaceSide.LEFT, "left")
+        coordinator.updateSubtitle(1, SubtitleKind.SOURCE_PARTIAL, "已完成前一轮")
+        coordinator.endManualInput()
+        coordinator.sessionFinished(1)
+        coordinator.playbackWorkFinished(1, drained = true)
+
+        coordinator.manualPress(2, FaceToFaceSide.RIGHT, "right")
+        coordinator.updateSubtitle(2, SubtitleKind.SOURCE_PARTIAL, "取消这一轮")
+        val cancel = coordinator.cancelManualInput()
+
+        assertTrue(cancel.accepted)
+        assertEquals(listOf("right"), cancel.cancelSessions)
+        assertTrue(cancel.finishSessions.isEmpty())
+        assertEquals(listOf(1L), coordinator.state().turns.map { it.id })
+        assertEquals(FaceToFacePhase.IDLE, coordinator.state().phase)
+    }
+
+    @Test fun finishedBeforeCancelDoesNotFinishOrCancelSocketAgain() {
+        val coordinator = FaceToFaceCoordinator<String>()
+        coordinator.manualPress(1, FaceToFaceSide.LEFT, "socket")
+        coordinator.updateSubtitle(1, SubtitleKind.SOURCE_FINAL, "hello")
+        coordinator.sessionFinished(1)
+
+        val cancel = coordinator.cancelManualInput(1)
+
+        assertTrue(cancel.accepted)
+        assertTrue(cancel.finishSessions.isEmpty())
+        assertTrue(cancel.cancelSessions.isEmpty())
+        assertEquals(FaceToFacePhase.PROCESSING, coordinator.state().phase)
+        assertNull(coordinator.state().activeTurnId)
+    }
+
+    @Test fun staleAndRepeatedManualCancelAreNoOps() {
+        val coordinator = FaceToFaceCoordinator<String>()
+        coordinator.manualPress(1, FaceToFaceSide.LEFT, "socket")
+
+        assertFalse(coordinator.cancelManualInput(2).accepted)
+        assertTrue(coordinator.cancelManualInput(1).accepted)
+        assertFalse(coordinator.cancelManualInput(1).accepted)
+        assertTrue(coordinator.state().turns.isEmpty())
+    }
+
+    @Test fun pointerReleaseFinishesButPointerCancelDiscards() {
+        val released = FaceToFaceCoordinator<String>()
+        released.manualPress(1, FaceToFaceSide.LEFT, "release")
+        released.updateSubtitle(1, SubtitleKind.SOURCE_PARTIAL, "hello")
+        val release = released.endManualInput()
+        assertEquals(listOf("release"), release.finishSessions)
+        assertTrue(released.state().turns.single().sourceText == "hello")
+
+        val cancelled = FaceToFaceCoordinator<String>()
+        cancelled.manualPress(1, FaceToFaceSide.LEFT, "cancel")
+        cancelled.updateSubtitle(1, SubtitleKind.SOURCE_PARTIAL, "hello")
+        val cancel = cancelled.cancelManualInput()
+        assertEquals(listOf("cancel"), cancel.cancelSessions)
+        assertTrue(cancelled.state().turns.isEmpty())
+    }
+
+    @Test fun stateExposesActiveTurnIdForTimeline() {
+        val coordinator = FaceToFaceCoordinator<String>()
+        coordinator.manualPress(9, FaceToFaceSide.RIGHT, "socket")
+        assertEquals(9L, coordinator.state().activeTurnId)
+        coordinator.endManualInput(9)
+        assertNull(coordinator.state().activeTurnId)
+    }
+
     @Test fun errorKeepsCompletedTurnsAndRecoveryClearsErrorWithoutLosingTranscript() {
         val coordinator = FaceToFaceCoordinator<String>()
         coordinator.setMode(FaceToFaceMode.AUTO)

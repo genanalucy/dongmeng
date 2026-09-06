@@ -156,6 +156,8 @@ import com.verba.interpretation.ui.FaceToFaceSide
 import com.verba.interpretation.ui.FaceToFaceState
 import com.verba.interpretation.ui.FaceToFaceTurn
 import com.verba.interpretation.ui.FaceToFaceViewModel
+import com.verba.interpretation.ui.MicrophonePermissionAction
+import com.verba.interpretation.ui.MicrophonePermissionPolicy
 import com.verba.interpretation.ui.HistoryViewModel
 import com.verba.interpretation.ui.history.HistoryPage
 import com.verba.interpretation.ui.history.LocalHistorySaveFeedback
@@ -737,27 +739,43 @@ private fun FaceToFaceWorkbench(
     faceViewModel: FaceToFaceViewModel = viewModel(),
 ) {
     val state by faceViewModel.state.collectAsStateWithLifecycle()
+    val permissionPolicy = remember { MicrophonePermissionPolicy() }
     val lifecycleOwner = LocalLifecycleOwner.current
-    DisposableEffect(lifecycleOwner, faceViewModel) {
-        val observer = LifecycleEventObserver { _, event -> if (event == Lifecycle.Event.ON_STOP) faceViewModel.cancel() }
+    DisposableEffect(lifecycleOwner, faceViewModel, permissionPolicy) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_STOP) {
+                permissionPolicy.clear()
+                faceViewModel.cancel()
+            }
+        }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose {
             lifecycleOwner.lifecycle.removeObserver(observer)
+            permissionPolicy.clear()
             faceViewModel.cancel()
         }
     }
     val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        when {
-            !granted -> faceViewModel.microphonePermissionDenied()
-            state.mode == FaceToFaceMode.AUTO -> faceViewModel.startAuto()
-            else -> Unit
+        when (val result = permissionPolicy.consumeResult(granted)) {
+            null -> Unit
+            else -> when (val action = result.action) {
+                is MicrophonePermissionAction.Manual -> if (result.granted) faceViewModel.manualPress(action.side) else faceViewModel.microphonePermissionDenied()
+                MicrophonePermissionAction.Continuous -> if (result.granted) faceViewModel.startAuto() else faceViewModel.microphonePermissionDenied()
+            }
         }
     }
     val hasPermission = {
         faceViewModel.getApplication<android.app.Application>().checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
     }
-    val requestOrRun: (() -> Unit) -> Unit = { action ->
-        if (hasPermission()) action() else permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+    val requestOrRun: ((MicrophonePermissionAction) -> Unit) = { action ->
+        if (hasPermission()) {
+            when (action) {
+                is MicrophonePermissionAction.Manual -> faceViewModel.manualPress(action.side)
+                MicrophonePermissionAction.Continuous -> faceViewModel.startAuto()
+            }
+        } else if (permissionPolicy.request(action)) {
+            permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+        }
     }
 
     Column(modifier.fillMaxSize()) {
@@ -765,6 +783,7 @@ private fun FaceToFaceWorkbench(
             state = state,
             viewModel = faceViewModel,
             requestMicrophone = requestOrRun,
+            clearMicrophoneRequest = permissionPolicy::clear,
             modifier = Modifier.weight(1f),
         )
         LocalHistorySaveFeedback(

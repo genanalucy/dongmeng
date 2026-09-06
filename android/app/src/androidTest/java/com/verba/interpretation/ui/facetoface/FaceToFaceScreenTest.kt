@@ -10,6 +10,7 @@ import androidx.compose.ui.test.performClick
 import androidx.test.core.app.ApplicationProvider
 import com.verba.interpretation.ui.FaceToFaceState
 import com.verba.interpretation.ui.FaceToFaceViewModel
+import com.verba.interpretation.ui.MicrophonePermissionAction
 import org.junit.Rule
 import org.junit.Test
 
@@ -24,7 +25,7 @@ class FaceToFaceScreenTest {
                 FaceToFaceScreen(
                     state = FaceToFaceState(),
                     viewModel = viewModel,
-                    requestMicrophone = {},
+                    requestMicrophone = { _: MicrophonePermissionAction -> },
                 )
             }
         }
@@ -40,19 +41,20 @@ class FaceToFaceScreenTest {
     }
 
     @Test
-    fun continuousScreenSeparatesSessionActionsFromEarControls() {
+    fun continuousScreenShowsCompactSessionActionsAndEarSemantics() {
         val state = FaceToFaceState(
             mode = com.verba.interpretation.ui.FaceToFaceMode.AUTO,
         )
         val viewModel = FaceToFaceViewModel(application())
         compose.setContent {
             MaterialTheme {
-                FaceToFaceScreen(state = state, viewModel = viewModel, requestMicrophone = {})
+                FaceToFaceScreen(state = state, viewModel = viewModel, requestMicrophone = { _: MicrophonePermissionAction -> })
             }
         }
 
         compose.onNodeWithText("开始连续翻译").assertIsDisplayed()
-        compose.onNodeWithText("左侧连续收音；按住右耳临时切换，松开恢复左耳").assertIsDisplayed()
+        compose.onNodeWithContentDescription("左耳，中文，左侧连续收音，译文送至右耳").assertIsDisplayed()
+        compose.onNodeWithContentDescription("右耳，English，按住临时接话，译文送至左耳").assertIsDisplayed()
     }
 
     @Test
@@ -63,7 +65,7 @@ class FaceToFaceScreenTest {
                 FaceToFaceScreen(
                     state = FaceToFaceState(),
                     viewModel = viewModel,
-                    requestMicrophone = {},
+                    requestMicrophone = { _: MicrophonePermissionAction -> },
                 )
             }
         }
