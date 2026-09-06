@@ -89,6 +89,7 @@ interface HistoryDao {
     @Query("SELECT * FROM history_sessions WHERE userId = :userId ORDER BY createdAtMillis DESC") fun observeSessions(userId: String): Flow<List<HistorySessionEntity>>
     @Query("SELECT * FROM history_turns WHERE userId = :userId ORDER BY completedAtMillis ASC") fun observeTurns(userId: String): Flow<List<HistoryTurnEntity>>
     @Query("SELECT * FROM history_sessions WHERE userId = :userId ORDER BY createdAtMillis DESC") suspend fun sessions(userId: String): List<HistorySessionEntity>
+    @Query("SELECT EXISTS(SELECT 1 FROM history_sessions WHERE id = :sessionId AND userId != :userId)") suspend fun sessionBelongsToAnotherUser(sessionId: String, userId: String): Boolean
     @Query("SELECT * FROM history_turns WHERE userId = :userId ORDER BY completedAtMillis ASC") suspend fun turns(userId: String): List<HistoryTurnEntity>
     @Query("SELECT EXISTS(SELECT 1 FROM history_tombstones WHERE userId = :userId AND entityId = :sessionId)") suspend fun hasSessionTombstone(userId: String, sessionId: String): Boolean
     @Query("SELECT * FROM history_cursors WHERE userId = :userId") suspend fun cursor(userId: String): HistoryCursorEntity?

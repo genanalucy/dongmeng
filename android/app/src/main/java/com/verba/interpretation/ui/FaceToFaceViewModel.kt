@@ -17,8 +17,10 @@ import com.verba.interpretation.audio.TtsPlayer
 import com.verba.interpretation.protocol.AgentEvent
 import com.verba.interpretation.protocol.AgentSocket
 import com.verba.interpretation.protocol.EndpointSettings
-import com.verba.interpretation.history.CompletedTurn
 import com.verba.interpretation.history.LocalHistoryRepository
+import com.verba.interpretation.history.LocalHistorySaveController
+import com.verba.interpretation.history.LocalHistoryTurnOwnership
+import com.verba.interpretation.history.LocalHistoryTurnSaver
 import com.verba.interpretation.protocol.TranslationSessionEndReason
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicLong
@@ -27,8 +29,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.delay
 
 class FaceToFaceViewModel(application: Application) : AndroidViewModel(application) {
@@ -49,8 +49,8 @@ class FaceToFaceViewModel(application: Application) : AndroidViewModel(applicati
     }
     private val actionLock = Any()
     private val history = LocalHistoryRepository.create(application)
-    private var localHistorySessionId: String? = null
-    private val historyCaptureMutex = Mutex()
+    private val localHistory = LocalHistorySaveController(LocalHistoryTurnSaver { history.recordCompletedTurn(it) }, viewModelScope)
+    private val localTurnOwnership = mutableMapOf<Long, LocalHistoryTurnOwnership>()
     private val playbackGeneration = AtomicLong()
     private var timerJob: Job? = null
     private var cloudGrant: TranslationSessionGrant? = null
@@ -64,6 +64,11 @@ class FaceToFaceViewModel(application: Application) : AndroidViewModel(applicati
             viewModelScope,
             mutableCloudSessionCloseFailure,
         )
+        viewModelScope.launch {
+            localHistory.state.collect { saveState ->
+                mutableState.value = mutableState.value.copy(localHistorySave = saveState)
+            }
+        }
     }
 
     fun setMode(mode: FaceToFaceMode) = synchronized(actionLock) {
@@ -122,6 +127,8 @@ class FaceToFaceViewModel(application: Application) : AndroidViewModel(applicati
         invalidatePendingGrantOpen()
         playbackGeneration.incrementAndGet()
         applyTransition(coordinator.cancelAll())
+        localHistory.endConversation()
+        localTurnOwnership.clear()
         endCloudSession()
         player.stop()
     }
@@ -168,11 +175,19 @@ class FaceToFaceViewModel(application: Application) : AndroidViewModel(applicati
 
     private fun createAndStart(side: FaceToFaceSide, grant: TranslationSessionGrant, onCreated: (CreatedSession) -> Unit) {
         val created = createSession(side)
-        if (startSocket(created, grant)) onCreated(created) else created.socket.cancel()
+        if (startSocket(created, grant)) {
+            localHistory.bindTurn(created.turnId.toString())?.let { localTurnOwnership[created.turnId] = it }
+            onCreated(created)
+        } else created.socket.cancel()
     }
 
     private fun createSession(side: FaceToFaceSide): CreatedSession {
         val turnId = nextTurnId++
+        val userId = cloudGrant?.userId
+        if (userId != null && localHistory.currentConversation()?.userId != userId) {
+            localHistory.startConversation(userId, "face_to_face")
+            localTurnOwnership.clear()
+        }
         val socket = AgentSocket(
             endpointSettings = endpointSettings,
             onEvent = { event -> synchronized(actionLock) { handleEvent(turnId, event) } },
@@ -256,23 +271,16 @@ class FaceToFaceViewModel(application: Application) : AndroidViewModel(applicati
         val sourceText = turn.sourceFinals.joinToString(" ").trim()
         val translatedText = turn.translationFinals.joinToString(" ").trim()
         if (sourceText.isBlank() || translatedText.isBlank()) return
-        val userId = cloudGrant?.userId ?: return
-        viewModelScope.launch {
-            historyCaptureMutex.withLock {
-                localHistorySessionId = history.recordCompletedTurn(
-                    CompletedTurn(
-                        userId = userId,
-                        localSessionId = localHistorySessionId,
-                        mode = "face_to_face",
-                        sourceLanguage = turn.sourceLanguage,
-                        targetLanguage = turn.targetLanguage,
-                        sourceText = sourceText,
-                        translatedText = translatedText,
-                        completedAtMillis = System.currentTimeMillis(),
-                    ),
-                )
-            }
-        }
+        val ownership = localTurnOwnership[turnId] ?: return
+        localHistory.saveTurn(
+            ownership,
+            turn.sourceLanguage,
+            turn.targetLanguage,
+            sourceText,
+            translatedText,
+            System.currentTimeMillis(),
+        )
+        mutableState.value = mutableState.value.copy(localHistorySave = localHistory.state.value)
     }
 
     private fun handleSessionFailure(turnId: Long, message: String) {
@@ -323,6 +331,8 @@ class FaceToFaceViewModel(application: Application) : AndroidViewModel(applicati
         invalidatePendingGrantOpen()
         playbackGeneration.incrementAndGet()
         applyTransition(coordinator.cancelAll(message))
+        localHistory.endConversation()
+        localTurnOwnership.clear()
         endCloudSession()
         player.stop()
     }
@@ -344,7 +354,7 @@ class FaceToFaceViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     private fun publishState() {
-        mutableState.value = coordinator.state()
+        mutableState.value = coordinator.state().copy(localHistorySave = localHistory.state.value)
     }
 
     override fun onCleared() {

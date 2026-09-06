@@ -18,16 +18,16 @@ import com.verba.interpretation.audio.TtsPlayer
 import com.verba.interpretation.protocol.AgentEvent
 import com.verba.interpretation.protocol.AgentSocket
 import com.verba.interpretation.protocol.EndpointSettings
-import com.verba.interpretation.history.CompletedTurn
 import com.verba.interpretation.history.LocalHistoryRepository
+import com.verba.interpretation.history.LocalHistorySaveController
+import com.verba.interpretation.history.LocalHistoryTurnOwnership
+import com.verba.interpretation.history.LocalHistoryTurnSaver
 import com.verba.interpretation.protocol.TranslationSessionEndReason
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 
 class InterpretationViewModel(application: Application) : AndroidViewModel(application) {
     private val mutableState = MutableStateFlow(InterpretationUiState())
@@ -43,8 +43,8 @@ class InterpretationViewModel(application: Application) : AndroidViewModel(appli
     val cloudSessionCloseFailure: StateFlow<CloudSessionFailureCode?> = mutableCloudSessionCloseFailure.asStateFlow()
     private val sessions = TurnSessionCoordinator<AgentSocket>()
     private val history = LocalHistoryRepository.create(application)
-    private var localHistorySessionId: String? = null
-    private val historyCaptureMutex = Mutex()
+    private val localHistory = LocalHistorySaveController(LocalHistoryTurnSaver { history.recordCompletedTurn(it) }, viewModelScope)
+    private val localTurnOwnership = mutableMapOf<Long, LocalHistoryTurnOwnership>()
     private val actionLock = Any()
     private var cloudGrant: TranslationSessionGrant? = null
     private var pendingGrantOpen: OpenHandle? = null
@@ -57,6 +57,11 @@ class InterpretationViewModel(application: Application) : AndroidViewModel(appli
             viewModelScope,
             mutableCloudSessionCloseFailure,
         )
+        viewModelScope.launch {
+            localHistory.state.collect { saveState ->
+                mutableState.update { it.copy(localHistorySave = saveState) }
+            }
+        }
     }
 
     fun setLanguages(sourceLanguage: String, targetLanguage: String) {
@@ -79,7 +84,8 @@ class InterpretationViewModel(application: Application) : AndroidViewModel(appli
                 mutableState.update { it.copy(error = "历史记录已达上限，请先在历史页删除记录后继续。") }
                 return@launch
             }
-            mutableState.update { it.copy(phase = SessionPhase.STARTING, turns = emptyList(), error = null, sessionEndReason = null) }
+            if (userId != null && localHistory.currentConversation()?.userId != userId) localHistory.startConversation(userId, "solo")
+            mutableState.update { it.copy(phase = SessionPhase.STARTING, turns = emptyList(), error = null, sessionEndReason = null, localHistorySave = localHistory.state.value) }
             openTurn(isResume = false)
         }
         Unit
@@ -89,12 +95,14 @@ class InterpretationViewModel(application: Application) : AndroidViewModel(appli
         if (mutableState.value.phase != SessionPhase.RUNNING && mutableState.value.phase != SessionPhase.STARTING) return
         microphone.stop()
         sessions.pauseAndFinishSessions().forEach { it.finish() }
-        mutableState.update { it.copy(phase = SessionPhase.PAUSED) }
+        localHistory.pauseConversation()
+        mutableState.update { it.copy(phase = SessionPhase.PAUSED, localHistorySave = localHistory.state.value) }
     }
 
     fun resume() {
         if (mutableState.value.phase != SessionPhase.PAUSED) return
-        mutableState.update { it.copy(phase = SessionPhase.STARTING, error = null) }
+        localHistory.resumeConversation()
+        mutableState.update { it.copy(phase = SessionPhase.STARTING, error = null, localHistorySave = localHistory.state.value) }
         val grant = cloudGrant ?: run {
             fail("云端翻译会话已失效，请重新开始。")
             return
@@ -121,7 +129,9 @@ class InterpretationViewModel(application: Application) : AndroidViewModel(appli
         cancelAllSessions()
         endCloudSession()
         player.stop()
-        mutableState.update { it.copy(phase = SessionPhase.IDLE, error = null, sessionEndReason = null) }
+        localHistory.endConversation()
+        localTurnOwnership.clear()
+        mutableState.update { it.copy(phase = SessionPhase.IDLE, error = null, sessionEndReason = null, localHistorySave = localHistory.state.value) }
     }
 
     fun microphonePermissionDenied() {
@@ -186,6 +196,7 @@ class InterpretationViewModel(application: Application) : AndroidViewModel(appli
             onFailure = { message -> handleSessionFailure(turn.id, message) },
         )
         sessions.add(turn.id, socket)
+        localHistory.bindTurn(turn.id.toString())?.let { ownership -> localTurnOwnership[turn.id] = ownership }
         mutableState.update { it.copy(turns = it.turns + turn) }
         if (!socket.start(snapshot.sourceLanguage, snapshot.targetLanguage, grant)) {
             socket.cancel()
@@ -255,23 +266,16 @@ class InterpretationViewModel(application: Application) : AndroidViewModel(appli
         val sourceText = turn.sourceFinals.joinToString(" ").trim()
         val translatedText = turn.translationFinals.joinToString(" ").trim()
         if (sourceText.isBlank() || translatedText.isBlank()) return
-        val userId = cloudGrant?.userId ?: return
-        viewModelScope.launch {
-            historyCaptureMutex.withLock {
-                localHistorySessionId = history.recordCompletedTurn(
-                    CompletedTurn(
-                        userId = userId,
-                        localSessionId = localHistorySessionId,
-                        mode = "solo",
-                        sourceLanguage = turn.sourceLanguage,
-                        targetLanguage = turn.targetLanguage,
-                        sourceText = sourceText,
-                        translatedText = translatedText,
-                        completedAtMillis = System.currentTimeMillis(),
-                    ),
-                )
-            }
-        }
+        val ownership = localTurnOwnership[turnId] ?: return
+        localHistory.saveTurn(
+            ownership,
+            turn.sourceLanguage,
+            turn.targetLanguage,
+            sourceText,
+            translatedText,
+            System.currentTimeMillis(),
+        )
+        mutableState.update { it.copy(localHistorySave = localHistory.state.value) }
     }
 
     private fun markTurnFinished(turnId: Long) {
@@ -306,7 +310,9 @@ class InterpretationViewModel(application: Application) : AndroidViewModel(appli
         cancelAllSessions()
         endCloudSession()
         player.stop()
-        mutableState.update { it.copy(phase = SessionPhase.ERROR, error = message, sessionEndReason = null) }
+        localHistory.endConversation()
+        localTurnOwnership.clear()
+        mutableState.update { it.copy(phase = SessionPhase.ERROR, error = message, sessionEndReason = null, localHistorySave = localHistory.state.value) }
     }
 
     private fun cancelAllSessions() {

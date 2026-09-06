@@ -1,6 +1,7 @@
 package com.verba.interpretation.ui
 
 import com.verba.interpretation.audio.PlaybackRoute
+import com.verba.interpretation.history.LocalHistorySaveState
 import com.verba.interpretation.protocol.TranslationSessionEndReason
 
 enum class SessionPhase { IDLE, STARTING, RUNNING, PAUSED, STOPPING, ERROR }
@@ -53,6 +54,7 @@ data class InterpretationUiState(
     val turns: List<SubtitleTurn> = emptyList(),
     val error: String? = null,
     val sessionEndReason: TranslationSessionEndReason? = null,
+    val localHistorySave: LocalHistorySaveState = LocalHistorySaveState(),
 )
 
 internal fun InterpretationUiState.withTerminatedSession(reason: TranslationSessionEndReason): InterpretationUiState = copy(

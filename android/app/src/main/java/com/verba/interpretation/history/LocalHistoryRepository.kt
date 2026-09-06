@@ -62,9 +62,15 @@ class LocalHistoryRepository(private val database: HistoryDatabase, private val 
     suspend fun recordCompletedTurn(turn: CompletedTurn): String {
         require(turn.userId.isNotBlank() && turn.sourceText.isNotBlank() && turn.translatedText.isNotBlank())
         check(!quotaExceeded(turn.userId)) { "history_limit_exceeded" }
-        val sessionId = turn.localSessionId ?: ids(); val turnId = ids()
+        val requestedSessionId = turn.localSessionId
+        val sessionId = requestedSessionId ?: ids()
+        val turnId = ids()
         val wirePayload = JSONObject().put("source_language", turn.sourceLanguage).put("target_language", turn.targetLanguage).put("source_text", turn.sourceText).put("translated_text", turn.translatedText).put("completed_at_millis", turn.completedAtMillis).toString()
         database.withTransaction {
+            val existingSession = dao.sessions(turn.userId).firstOrNull { it.id == sessionId }
+            if (requestedSessionId != null && existingSession == null) {
+                check(!dao.sessionBelongsToAnotherUser(sessionId, turn.userId)) { "history_session_ownership_mismatch" }
+            }
             dao.insertSession(HistorySessionEntity(sessionId, turn.userId, turn.mode, turn.completedAtMillis))
             dao.insertTurn(HistoryTurnEntity(turnId, sessionId, turn.userId, turn.sourceLanguage, turn.targetLanguage, cipher.encrypt(turn.sourceText), cipher.encrypt(turn.translatedText), turn.completedAtMillis))
             dao.insertOutbox(HistoryOutboxEntity(ids(), turn.userId, HistoryOperationKind.TURN_UPSERT.name, "turn", turnId, cipher.encrypt(wirePayload), UPSERT_PRIORITY, turn.completedAtMillis, sessionId, turnId))

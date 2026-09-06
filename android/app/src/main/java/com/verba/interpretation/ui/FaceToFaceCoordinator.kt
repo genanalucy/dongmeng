@@ -1,6 +1,7 @@
 package com.verba.interpretation.ui
 
 import com.verba.interpretation.audio.PlaybackRoute
+import com.verba.interpretation.history.LocalHistorySaveState
 import com.verba.interpretation.protocol.TranslationSessionEndReason
 
 enum class FaceToFaceMode { MANUAL, AUTO }
@@ -54,6 +55,7 @@ data class FaceToFaceState(
     val turns: List<FaceToFaceTurn> = emptyList(),
     val error: String? = null,
     val sessionEndReason: TranslationSessionEndReason? = null,
+    val localHistorySave: LocalHistorySaveState = LocalHistorySaveState(),
 ) {
     val manualInputLocked: Boolean
         get() = mode == FaceToFaceMode.MANUAL && (captureActive || phase == FaceToFacePhase.PROCESSING)
