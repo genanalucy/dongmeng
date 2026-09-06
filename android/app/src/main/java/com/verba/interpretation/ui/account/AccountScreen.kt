@@ -227,7 +227,7 @@ private fun accountRoleLabel(state: AccountUiState): String = when {
     else -> "正式用户"
 }
 
-private fun entitlementSummary(entitlement: CloudEntitlement?): String = entitlement?.let {
+internal fun entitlementSummary(entitlement: CloudEntitlement?): String = entitlement?.let {
     val kind = entitlementKindLabel(it.kind)
     val state = entitlementStateLabel(it)
     val expiry = formatAccountTime(it.expiresAt)
@@ -235,7 +235,7 @@ private fun entitlementSummary(entitlement: CloudEntitlement?): String = entitle
     "$kind · $state · 到期 $expiry$remaining"
 } ?: "暂无可用权益"
 
-private fun usageSummary(usage: UsageSummary): String =
+internal fun usageSummary(usage: UsageSummary): String =
     "累计 ${formatDuration(usage.totalSeconds)} · ${usage.sessionCount.coerceAtLeast(0)} 次会话 · 最近 ${formatAccountTime(usage.lastUsedAt)}"
 
 private fun entitlementKindLabel(kind: String): String = when (kind.trim().lowercase()) {
