@@ -57,6 +57,7 @@ class LocalHistorySaveController(
         var failed: Int = 0,
         var errorCode: String? = null,
         var paused: Boolean = false,
+        var finished: Boolean = false,
     )
 
     private val lock = Any()
@@ -76,7 +77,12 @@ class LocalHistorySaveController(
         conversation
     }
 
-    fun currentConversation(): LocalHistoryConversation? = synchronized(lock) { current?.conversation }
+    fun currentConversation(): LocalHistoryConversation? = synchronized(lock) { current?.takeUnless { it.finished }?.conversation }
+
+    /** Close ownership to new turns, retaining pending writes and the result for the UI. */
+    fun finishConversation() = synchronized(lock) {
+        current?.finished = true
+    }
 
     /** Pausing does not create a new local history session. */
     fun pauseConversation() = synchronized(lock) {
@@ -98,7 +104,7 @@ class LocalHistorySaveController(
 
     fun bindTurn(turnId: String): LocalHistoryTurnOwnership? = synchronized(lock) {
         val counters = current ?: return@synchronized null
-        if (counters.paused) return@synchronized null
+        if (counters.paused || counters.finished) return@synchronized null
         counters.conversation.let { conversation ->
             LocalHistoryTurnOwnership(turnId, conversation.conversationId, conversation.userId, conversation.mode, conversation.sessionId)
         }

@@ -66,7 +66,7 @@ class FaceToFaceViewModel(application: Application) : AndroidViewModel(applicati
         )
         viewModelScope.launch {
             localHistory.state.collect { saveState ->
-                mutableState.value = mutableState.value.copy(localHistorySave = saveState)
+                synchronized(actionLock) { publishState() }
             }
         }
     }
@@ -110,6 +110,7 @@ class FaceToFaceViewModel(application: Application) : AndroidViewModel(applicati
     ) { created -> applyTransition(coordinator.resumeAuto(created.turnId, created.socket)) }
 
     fun stopAuto() = synchronized(actionLock) {
+        localHistory.finishConversation()
         invalidatePendingGrantOpen()
         applyTransition(coordinator.stopAuto())
         closeCloudSessionIfDrained()

@@ -223,7 +223,7 @@ class HistoryViewModel(
     fun exportAll(): String = formatSessions(mutableState.value.sessions)
 
     /** Compatibility helper: a supplied session means one session; otherwise current search results. */
-    fun export(session: HistorySession? = null): String = session?.let { formatSessions(listOf(it)) } ?: exportVisibleResults()
+    fun export(session: HistorySession? = null): String = session?.let { exportSession(it.id) } ?: exportVisibleResults()
 
     fun clearError() {
         mutableState.value = mutableState.value.copy(errorMessage = null)

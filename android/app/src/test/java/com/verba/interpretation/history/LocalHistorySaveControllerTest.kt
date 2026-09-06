@@ -6,6 +6,7 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Test
 
@@ -75,6 +76,61 @@ class LocalHistorySaveControllerTest {
         assertEquals(conversation, controller.resumeConversation())
         val resumed = requireNotNull(controller.bindTurn("after-resume"))
         assertEquals(conversation.sessionId, resumed.sessionId)
+    }
+
+    @Test
+    fun finishClosesNewOwnershipButBoundLateFinishedTurnStillSaves() = runBlocking {
+        val saves = BlockingSaver()
+        val controller = LocalHistorySaveController(saves, CoroutineScope(Dispatchers.Default))
+        val conversation = controller.startConversation("user", "solo")
+        val boundBeforeFinish = requireNotNull(controller.bindTurn("late-finished"))
+
+        controller.finishConversation()
+
+        assertNull(controller.currentConversation())
+        assertNull(controller.bindTurn("after-finish"))
+        assertEquals(conversation.sessionId, controller.state.value.sessionId)
+        assertNotNull(controller.saveTurn(boundBeforeFinish, "zh", "en", "迟到原文", "late translation", 1))
+        saves.awaitStarted("迟到原文")
+        assertEquals(LocalHistorySaveStatus.SAVING, controller.state.value.status)
+        assertEquals(1, controller.state.value.pendingCount)
+
+        saves.succeed("迟到原文")
+        waitFor { controller.state.value.status == LocalHistorySaveStatus.SAVED }
+        assertEquals(conversation.sessionId, controller.state.value.sessionId)
+        assertEquals(0, controller.state.value.pendingCount)
+    }
+
+    @Test
+    fun startAfterFinishCreatesSeparateConversationAndOldCompletionCannotReplaceIt() = runBlocking {
+        val saves = BlockingSaver()
+        var nextId = 0
+        val controller = LocalHistorySaveController(
+            saves,
+            CoroutineScope(Dispatchers.Default),
+            ids = { "id-${++nextId}" },
+        )
+        val old = controller.startConversation("user", "solo")
+        val oldOwnership = requireNotNull(controller.bindTurn("old-turn"))
+        controller.finishConversation()
+
+        val current = controller.startConversation("user", "solo")
+        val currentOwnership = requireNotNull(controller.bindTurn("new-turn"))
+        assertNotEquals(old.conversationId, current.conversationId)
+        assertNotEquals(old.sessionId, current.sessionId)
+        assertEquals(current.sessionId, currentOwnership.sessionId)
+
+        val oldSave = requireNotNull(controller.saveTurn(oldOwnership, "zh", "en", "旧结束", "old finished", 1))
+        saves.awaitStarted("旧结束")
+        assertEquals(current.sessionId, controller.state.value.sessionId)
+        assertEquals(LocalHistorySaveStatus.IDLE, controller.state.value.status)
+        assertEquals(0, controller.state.value.pendingCount)
+
+        saves.succeed("旧结束")
+        oldSave.join()
+        assertEquals(current.sessionId, controller.state.value.sessionId)
+        assertEquals(LocalHistorySaveStatus.IDLE, controller.state.value.status)
+        assertEquals(0, controller.state.value.pendingCount)
     }
 
     private suspend fun waitFor(condition: () -> Boolean) {

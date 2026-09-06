@@ -115,6 +115,40 @@ class HistoryViewModelTest {
         assertTrue(all.contains("second"))
     }
 
+    @Test
+    fun compatibilityExportResolvesIdFromCurrentAccountInsteadOfUsingStaleObject() = runTest(dispatcher) {
+        val repository = FakeHistoryRepository()
+        val viewModel = viewModel(repository)
+        viewModel.load("user-1")
+        val oldAccountSession = session("shared-id", "old-account-secret")
+        repository.emit("user-1", listOf(oldAccountSession))
+        advanceUntilIdle()
+
+        viewModel.load("user-2")
+        repository.emit("user-2", listOf(session("shared-id", "current-account-text")))
+        advanceUntilIdle()
+
+        val exported = viewModel.export(oldAccountSession)
+        assertTrue(exported.contains("current-account-text"))
+        assertFalse(exported.contains("old-account-secret"))
+    }
+
+    @Test
+    fun compatibilityExportReturnsEmptyWhenStaleObjectIdIsAbsentFromCurrentAccount() = runTest(dispatcher) {
+        val repository = FakeHistoryRepository()
+        val viewModel = viewModel(repository)
+        viewModel.load("user-1")
+        val oldAccountSession = session("old-only", "old-account-secret")
+        repository.emit("user-1", listOf(oldAccountSession))
+        advanceUntilIdle()
+
+        viewModel.load("user-2")
+        repository.emit("user-2", listOf(session("new-only", "current-account-text")))
+        advanceUntilIdle()
+
+        assertEquals("", viewModel.export(oldAccountSession))
+    }
+
     private fun viewModel(repository: FakeHistoryRepository): HistoryViewModel =
         HistoryViewModel(Application(), repository, dispatcher, nowMillis = { 0L })
 

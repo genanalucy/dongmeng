@@ -84,7 +84,6 @@ class InterpretationViewModel(application: Application) : AndroidViewModel(appli
                 mutableState.update { it.copy(error = "历史记录已达上限，请先在历史页删除记录后继续。") }
                 return@launch
             }
-            if (userId != null && localHistory.currentConversation()?.userId != userId) localHistory.startConversation(userId, "solo")
             mutableState.update { it.copy(phase = SessionPhase.STARTING, turns = emptyList(), error = null, sessionEndReason = null, localHistorySave = localHistory.state.value) }
             openTurn(isResume = false)
         }
@@ -186,6 +185,9 @@ class InterpretationViewModel(application: Application) : AndroidViewModel(appli
             if (cloudGrant?.sessionId == grant.sessionId) cloudGrant = null
             return
         }
+        if (localHistory.currentConversation()?.userId != grant.userId) {
+            localHistory.startConversation(grant.userId, "solo")
+        }
         val snapshot = mutableState.value
         val turn = SubtitleTurn(nextTurnId++, snapshot.sourceLanguage, snapshot.targetLanguage)
         lateinit var socket: AgentSocket
@@ -286,6 +288,7 @@ class InterpretationViewModel(application: Application) : AndroidViewModel(appli
 
     private fun becomeIdleIfDrained() {
         if (!sessions.canBecomeIdle()) return
+        if (mutableState.value.phase == SessionPhase.STOPPING) localHistory.finishConversation()
         player.stop()
         mutableState.update { current ->
             if (current.phase == SessionPhase.STOPPING) current.copy(phase = SessionPhase.IDLE) else current

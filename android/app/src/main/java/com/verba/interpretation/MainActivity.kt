@@ -158,6 +158,7 @@ import com.verba.interpretation.ui.FaceToFaceTurn
 import com.verba.interpretation.ui.FaceToFaceViewModel
 import com.verba.interpretation.ui.HistoryViewModel
 import com.verba.interpretation.ui.history.HistoryPage
+import com.verba.interpretation.ui.history.LocalHistorySaveFeedback
 import com.verba.interpretation.ui.InterpretationViewModel
 import com.verba.interpretation.ui.ProductDestination
 import com.verba.interpretation.ui.navigation.ProductBottomBar
@@ -193,6 +194,7 @@ private fun InterpretationApp(
     val interpretationState by viewModel.state.collectAsStateWithLifecycle()
     val accountState by accountViewModel.state.collectAsStateWithLifecycle()
     val navigationMode = accountState.navigationMode
+    var historyTargetSessionId by remember(accountState.user?.id) { mutableStateOf<String?>(null) }
     LaunchedEffect(accountState.user?.id) { historyViewModel.load(accountState.user?.id) }
     var stack by remember(navigationMode) {
         mutableStateOf(ProductNavigationStack.initial(navigationMode))
@@ -241,11 +243,19 @@ private fun InterpretationApp(
                 modifier = Modifier.padding(padding),
                 viewModel = viewModel,
                 onExit = { stack = stack.selectPrimary(ProductDestination.FACE_TO_FACE) },
+                onViewHistory = { id ->
+                    historyTargetSessionId = id
+                    stack = stack.push(ProductScreen.HISTORY)
+                },
             )
             ProductScreen.FACE_TO_FACE_WORKBENCH -> FaceToFaceWorkbench(
                 modifier = Modifier.padding(padding),
+                onViewHistory = { id ->
+                    historyTargetSessionId = id
+                    stack = stack.push(ProductScreen.HISTORY)
+                },
             )
-            ProductScreen.HISTORY -> HistoryPage(Modifier.padding(padding), historyViewModel)
+            ProductScreen.HISTORY -> HistoryPage(Modifier.padding(padding), historyViewModel, historyTargetSessionId)
             ProductScreen.PROFILE -> ProfilePage(
                 modifier = Modifier.padding(padding),
                 onAccount = { stack = stack.push(ProductScreen.ACCOUNT) },
@@ -256,7 +266,10 @@ private fun InterpretationApp(
                 modifier = Modifier.padding(padding),
                 onBack = { stack = stack.pop() },
                 onUsage = { stack = stack.push(ProductScreen.ACCOUNT_USAGE) },
-                onHistory = { stack = stack.push(ProductNavigationPolicy.accountSecondaryScreen(AccountSecondaryDestination.HISTORY)) },
+                onHistory = {
+                    historyTargetSessionId = null
+                    stack = stack.push(ProductNavigationPolicy.accountSecondaryScreen(AccountSecondaryDestination.HISTORY))
+                },
                 onSettings = { stack = stack.push(ProductScreen.ACCOUNT_SETTINGS) },
                 onServiceSettings = { stack = stack.push(ProductNavigationPolicy.accountSecondaryScreen(AccountSecondaryDestination.SERVICE_SETTINGS)) },
                 accountViewModel = accountViewModel,
@@ -515,7 +528,7 @@ private fun WorkbenchHeader(title: String, status: String, onExit: () -> Unit, o
 }
 
 @Composable
-private fun SoloWorkbench(modifier: Modifier, viewModel: InterpretationViewModel, onExit: () -> Unit) {
+private fun SoloWorkbench(modifier: Modifier, viewModel: InterpretationViewModel, onExit: () -> Unit, onViewHistory: (String) -> Unit) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner, viewModel) {
@@ -536,6 +549,7 @@ private fun SoloWorkbench(modifier: Modifier, viewModel: InterpretationViewModel
             permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
         }
     }
+    Column(modifier.fillMaxSize()) {
     InterpretationScreen(
         model = InterpretationUiMapper.map(state),
         onExit = onExit,
@@ -544,8 +558,14 @@ private fun SoloWorkbench(modifier: Modifier, viewModel: InterpretationViewModel
         onResume = viewModel::resume,
         onFinish = viewModel::finish,
         onReset = viewModel::clearError,
-        modifier = modifier,
+        modifier = Modifier.weight(1f),
     )
+    LocalHistorySaveFeedback(
+        state.localHistorySave,
+        canOpenHistory = state.phase == SessionPhase.IDLE || state.phase == SessionPhase.ERROR,
+        onViewHistory = onViewHistory,
+    )
+    }
 }
 
 @Composable
@@ -713,6 +733,7 @@ private fun SoloPrimaryAction(phase: SessionPhase, startWithPermission: () -> Un
 @Composable
 private fun FaceToFaceWorkbench(
     modifier: Modifier,
+    onViewHistory: (String) -> Unit,
     faceViewModel: FaceToFaceViewModel = viewModel(),
 ) {
     val state by faceViewModel.state.collectAsStateWithLifecycle()
@@ -739,12 +760,19 @@ private fun FaceToFaceWorkbench(
         if (hasPermission()) action() else permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
     }
 
-    FaceToFaceScreen(
-        state = state,
-        viewModel = faceViewModel,
-        requestMicrophone = requestOrRun,
-        modifier = modifier,
-    )
+    Column(modifier.fillMaxSize()) {
+        FaceToFaceScreen(
+            state = state,
+            viewModel = faceViewModel,
+            requestMicrophone = requestOrRun,
+            modifier = Modifier.weight(1f),
+        )
+        LocalHistorySaveFeedback(
+            state.localHistorySave,
+            canOpenHistory = state.phase == FaceToFacePhase.IDLE || state.phase == FaceToFacePhase.ERROR,
+            onViewHistory = onViewHistory,
+        )
+    }
 }
 
 @Composable
