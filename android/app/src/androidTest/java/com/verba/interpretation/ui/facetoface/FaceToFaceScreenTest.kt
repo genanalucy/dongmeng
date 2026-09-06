@@ -7,6 +7,10 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.assertContentDescriptionEquals
 import androidx.test.core.app.ApplicationProvider
 import com.verba.interpretation.ui.FaceToFaceState
 import com.verba.interpretation.ui.FaceToFaceViewModel
@@ -38,6 +42,22 @@ class FaceToFaceScreenTest {
         compose.onNodeWithContentDescription("右耳，English，按住说话，译文送至左耳").assertIsDisplayed()
         compose.onNodeWithContentDescription("选择中文语言").assertIsDisplayed()
         compose.onNodeWithContentDescription("选择English语言").assertIsDisplayed()
+    }
+
+    @Test
+    fun conversationIsDefaultAndToggleExposesTwoRotatedPanels() {
+        val viewModel = FaceToFaceViewModel(application())
+        compose.setContent {
+            val state by viewModel.state.collectAsState()
+            MaterialTheme {
+                FaceToFaceScreen(state = state, viewModel = viewModel, requestMicrophone = { _: MicrophonePermissionAction -> })
+            }
+        }
+
+        compose.onNodeWithContentDescription("切换到面对面布局").assertIsDisplayed().performClick()
+        compose.onNodeWithTag("face-to-face-panels").assertIsDisplayed()
+        compose.onNodeWithTag("face-to-face-panel-far").assertContentDescriptionEquals("远端右耳阅读区，旋转180度")
+        compose.onNodeWithTag("face-to-face-panel-near").assertContentDescriptionEquals("近端左耳阅读区，正向")
     }
 
     @Test

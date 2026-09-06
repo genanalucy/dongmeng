@@ -148,33 +148,51 @@ internal fun EarMicControls(
     onStartAuto: () -> Unit,
     onPressRightAuto: () -> Unit,
     onReleaseRightAuto: () -> Unit,
+    onCancelRightAuto: () -> Unit,
     onPauseAuto: () -> Unit,
     onResumeAuto: () -> Unit,
     onStopAuto: () -> Unit,
     onSetLanguages: (String, String) -> Unit,
     modifier: Modifier = Modifier,
+    visibleSides: Set<FaceToFaceSide> = setOf(FaceToFaceSide.LEFT, FaceToFaceSide.RIGHT),
+    showAutoControls: Boolean = true,
 ) {
     val manual = state.mode == FaceToFaceMode.MANUAL
     val activeSide = presentation.activeMic
+    val leftRelease: () -> Unit = if (manual) onManualRelease else ({ })
+    val leftCancel: () -> Unit = if (manual) onManualCancel else ({ })
     Column(modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.Bottom) {
-            EarMicButton(
+            if (FaceToFaceSide.LEFT in visibleSides) EarMicButton(
                 side = FaceToFaceSide.LEFT,
                 language = state.leftLanguage,
                 otherLanguage = state.rightLanguage,
-                pointerEnabled = manual && state.phase == FaceToFacePhase.IDLE,
-                actionEnabled = manual && (state.phase == FaceToFacePhase.IDLE || activeSide == FaceToFaceSide.LEFT),
+                pointerEnabled = if (manual) state.phase == FaceToFacePhase.IDLE else state.phase in setOf(FaceToFacePhase.IDLE, FaceToFacePhase.LISTENING, FaceToFacePhase.PAUSED),
+                actionEnabled = if (manual) state.phase == FaceToFacePhase.IDLE || activeSide == FaceToFaceSide.LEFT else true,
                 active = activeSide == FaceToFaceSide.LEFT,
-                stateLabel = if (manual) "按住说话" else "左侧连续收音",
-                onPress = { if (manual) requestMicrophone(MicrophonePermissionAction.Manual(FaceToFaceSide.LEFT)) else onManualPress(FaceToFaceSide.LEFT) },
-                onRelease = if (manual) onManualRelease else onPauseAuto,
-                onCancel = if (manual) onManualCancel else onPauseAuto,
+                stateLabel = if (manual) "按住说话" else when (state.phase) {
+                    FaceToFacePhase.IDLE -> "开始连续收音"
+                    FaceToFacePhase.PAUSED -> "继续连续收音"
+                    else -> "暂停连续收音"
+                },
+                onPress = {
+                    if (manual) requestMicrophone(MicrophonePermissionAction.Manual(FaceToFaceSide.LEFT))
+                    else when (state.phase) {
+                        FaceToFacePhase.IDLE, FaceToFacePhase.PAUSED -> requestMicrophone(MicrophonePermissionAction.Continuous)
+                        FaceToFacePhase.LISTENING -> onPauseAuto
+                        else -> Unit
+                    }
+                },
+                onRelease = leftRelease,
+                onCancel = leftCancel,
                 onAccessibleClick = if (manual) {
                     { if (state.phase == FaceToFacePhase.IDLE) requestMicrophone(MicrophonePermissionAction.Manual(FaceToFaceSide.LEFT)) else onManualRelease() }
-                } else null,
+                } else {
+                    { if (state.phase == FaceToFacePhase.IDLE || state.phase == FaceToFacePhase.PAUSED) requestMicrophone(MicrophonePermissionAction.Continuous) else onPauseAuto() }
+                },
                 onLanguage = { onSetLanguages(it, state.rightLanguage) },
             )
-            EarMicButton(
+            if (FaceToFaceSide.RIGHT in visibleSides) EarMicButton(
                 side = FaceToFaceSide.RIGHT,
                 language = state.rightLanguage,
                 otherLanguage = state.leftLanguage,
@@ -186,14 +204,14 @@ internal fun EarMicControls(
                     if (manual) requestMicrophone(MicrophonePermissionAction.Manual(FaceToFaceSide.RIGHT)) else onPressRightAuto()
                 },
                 onRelease = if (manual) onManualRelease else onReleaseRightAuto,
-                onCancel = if (manual) onManualCancel else onReleaseRightAuto,
+                onCancel = if (manual) onManualCancel else onCancelRightAuto,
                 onAccessibleClick = if (manual) {
                     { if (state.phase == FaceToFacePhase.IDLE) requestMicrophone(MicrophonePermissionAction.Manual(FaceToFaceSide.RIGHT)) else onManualRelease() }
                 } else null,
                 onLanguage = { onSetLanguages(state.leftLanguage, it) },
             )
         }
-        AutoControls(state, requestMicrophone, onStartAuto, onPauseAuto, onResumeAuto, onStopAuto)
+        if (showAutoControls) AutoControls(state, requestMicrophone, onStartAuto, onPauseAuto, onResumeAuto, onStopAuto)
     }
 }
 
@@ -271,7 +289,7 @@ internal fun EarMicButton(
                         }
                     }
                 }
-                .pointerInput(side) {
+                .pointerInput(side, pointerEnabled) {
                     detectTapGestures(onPress = {
                         if (!currentPointerEnabled) return@detectTapGestures
                         val token = gate.acquire(MicPressOwner.POINTER) ?: return@detectTapGestures

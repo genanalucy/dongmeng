@@ -75,6 +75,11 @@ class FaceToFaceViewModel(application: Application) : AndroidViewModel(applicati
         if (coordinator.setMode(mode)) publishState()
     }
 
+    fun setView(view: FaceToFaceView) = synchronized(actionLock) {
+        val transition = coordinator.setView(view)
+        if (transition.accepted) applyTransition(transition)
+    }
+
     fun setLanguages(leftLanguage: String, rightLanguage: String) = synchronized(actionLock) {
         if (coordinator.setLanguages(leftLanguage, rightLanguage)) publishState()
     }
@@ -107,6 +112,15 @@ class FaceToFaceViewModel(application: Application) : AndroidViewModel(applicati
     fun pressRightAuto() = switchAuto(FaceToFaceSide.RIGHT)
 
     fun releaseRightAuto() = switchAuto(FaceToFaceSide.LEFT)
+
+    fun cancelRightAuto() = startWithCloudGrant(
+        side = FaceToFaceSide.LEFT,
+        canStart = {
+            val snapshot = coordinator.state()
+            snapshot.mode == FaceToFaceMode.AUTO && snapshot.phase == FaceToFacePhase.LISTENING &&
+                snapshot.captureActive && snapshot.activeSide == FaceToFaceSide.RIGHT
+        },
+    ) { created -> applyTransition(coordinator.cancelAutoTakeover(created.turnId, created.socket)) }
 
     fun pauseAuto() = synchronized(actionLock) {
         applyTransition(coordinator.pauseAuto())

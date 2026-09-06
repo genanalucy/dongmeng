@@ -1,6 +1,7 @@
 package com.verba.interpretation.ui.facetoface
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -11,6 +12,8 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Refresh
@@ -23,15 +26,18 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.testTag
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.verba.interpretation.ui.FaceToFaceMode
-import com.verba.interpretation.ui.MicrophonePermissionAction
 import com.verba.interpretation.ui.FaceToFacePhase
+import com.verba.interpretation.ui.FaceToFaceView
 import com.verba.interpretation.ui.FaceToFaceSide
+import com.verba.interpretation.ui.MicrophonePermissionAction
 import com.verba.interpretation.ui.FaceToFaceState
 import com.verba.interpretation.ui.FaceToFaceViewModel
 import com.verba.interpretation.ui.TranslationLanguage
@@ -52,20 +58,20 @@ internal fun FaceToFaceScreen(
     state: FaceToFaceState,
     viewModel: FaceToFaceViewModel,
     requestMicrophone: (MicrophonePermissionAction) -> Unit,
-    clearMicrophoneRequest: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val presentation = faceToFacePresentation(state)
     Column(
         modifier.fillMaxSize().background(conversationCanvas),
     ) {
+        // The header stays upright; only participant panels are rotated.
         Row(
             Modifier.fillMaxWidth().padding(start = 20.dp, top = 14.dp, end = 10.dp, bottom = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Column(Modifier.weight(1f)) {
                 Text(
-                    "对话",
+                    if (state.view == FaceToFaceView.FACE_TO_FACE) "面对面" else "对话",
                     color = Color(0xFFF5F5F2),
                     style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.SemiBold,
@@ -80,6 +86,14 @@ internal fun FaceToFaceScreen(
                     },
                 )
             }
+            androidx.compose.material3.TextButton(
+                onClick = { viewModel.setView(if (state.view == FaceToFaceView.CONVERSATION) FaceToFaceView.FACE_TO_FACE else FaceToFaceView.CONVERSATION) },
+                modifier = Modifier.semantics {
+                    testTag = "face-view-toggle"
+                    contentDescription = if (state.view == FaceToFaceView.CONVERSATION) "切换到面对面布局" else "切换到对话布局"
+                },
+                enabled = state.phase != FaceToFacePhase.PROCESSING && state.phase != FaceToFacePhase.STOPPING && state.phase != FaceToFacePhase.ERROR,
+            ) { Text(if (state.view == FaceToFaceView.CONVERSATION) "面对面" else "对话") }
             FaceToFaceOverflowMenu(
                 state = state,
                 onSelectMode = viewModel::setMode,
@@ -89,15 +103,6 @@ internal fun FaceToFaceScreen(
                 onStopAuto = viewModel::stopAuto,
             )
         }
-
-        ConversationTimeline(
-            turns = state.turns,
-            activeMic = presentation.activeMic,
-            listeningPlaceholder = presentation.timelinePlaceholder,
-            phase = state.phase,
-            activeTurnId = state.activeTurnId,
-            modifier = Modifier.weight(1f),
-        )
 
         presentation.recoveryMessage?.let { message ->
             Surface(
@@ -116,25 +121,105 @@ internal fun FaceToFaceScreen(
             }
         }
 
-        Surface(
-            color = Color(0xFF0E1927),
-            modifier = Modifier.fillMaxWidth(),
-        ) {
+        if (state.view == FaceToFaceView.CONVERSATION) {
+            ConversationLayout(state, presentation, requestMicrophone, viewModel, Modifier.weight(1f))
+        } else {
+            FaceToFacePanels(state, presentation, requestMicrophone, viewModel, Modifier.weight(1f))
+        }
+    }
+}
+
+@Composable
+private fun ConversationLayout(
+    state: FaceToFaceState,
+    presentation: FaceToFacePresentation,
+    requestMicrophone: (MicrophonePermissionAction) -> Unit,
+    viewModel: FaceToFaceViewModel,
+    modifier: Modifier,
+) {
+    Column(modifier.fillMaxWidth()) {
+        ConversationTimeline(
+            turns = state.turns,
+            activeMic = presentation.activeMic,
+            listeningPlaceholder = presentation.timelinePlaceholder,
+            phase = state.phase,
+            modifier = Modifier.weight(1f),
+        )
+        Surface(color = Color(0xFF0E1927), modifier = Modifier.fillMaxWidth()) {
             EarMicControls(
                 state = state,
                 presentation = presentation,
                 requestMicrophone = requestMicrophone,
                 onManualPress = viewModel::manualPress,
-                onManualRelease = { clearMicrophoneRequest(); viewModel.manualRelease() },
-                onManualCancel = { clearMicrophoneRequest(); viewModel.manualCancel() },
+                onManualRelease = viewModel::manualRelease,
+                onManualCancel = viewModel::manualCancel,
                 onStartAuto = viewModel::startAuto,
                 onPressRightAuto = viewModel::pressRightAuto,
                 onReleaseRightAuto = viewModel::releaseRightAuto,
+                onCancelRightAuto = viewModel::cancelRightAuto,
                 onPauseAuto = viewModel::pauseAuto,
                 onResumeAuto = viewModel::resumeAuto,
                 onStopAuto = viewModel::stopAuto,
                 onSetLanguages = viewModel::setLanguages,
             )
+        }
+    }
+}
+
+@Composable
+private fun FaceToFacePanels(
+    state: FaceToFaceState,
+    presentation: FaceToFacePresentation,
+    requestMicrophone: (MicrophonePermissionAction) -> Unit,
+    viewModel: FaceToFaceViewModel,
+    modifier: Modifier,
+) {
+    val panels = faceToFacePanelSpecs()
+    LazyColumn(modifier = modifier.fillMaxSize().semantics { testTag = "face-to-face-panels" }) {
+        items(panels, key = { it.position }) { panel ->
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 220.dp)
+                    .graphicsLayer { rotationZ = panel.rotationDegrees }
+                    .semantics {
+                        testTag = "face-to-face-panel-${panel.position.name.lowercase()}"
+                        contentDescription = when (panel.position) {
+                            FaceToFacePanelPosition.FAR -> "远端${earLabel(panel.side)}阅读区，旋转180度"
+                            FaceToFacePanelPosition.NEAR -> "近端${earLabel(panel.side)}阅读区，正向"
+                        }
+                    },
+            ) {
+                ConversationTimeline(
+                    turns = state.turns,
+                    activeMic = presentation.activeMic,
+                    listeningPlaceholder = presentation.timelinePlaceholder,
+                    phase = state.phase,
+                    contentDescription = "${earLabel(panel.side)}对话记录",
+                    modifier = Modifier.heightIn(min = 96.dp, max = 260.dp).fillMaxWidth(),
+                )
+                EarMicControls(
+                    state = state,
+                    presentation = presentation,
+                    requestMicrophone = requestMicrophone,
+                    onManualPress = viewModel::manualPress,
+                    onManualRelease = viewModel::manualRelease,
+                    onManualCancel = viewModel::manualCancel,
+                    onStartAuto = viewModel::startAuto,
+                    onPressRightAuto = viewModel::pressRightAuto,
+                    onReleaseRightAuto = viewModel::releaseRightAuto,
+                    onCancelRightAuto = viewModel::cancelRightAuto,
+                    onPauseAuto = viewModel::pauseAuto,
+                    onResumeAuto = viewModel::resumeAuto,
+                    onStopAuto = viewModel::stopAuto,
+                    onSetLanguages = viewModel::setLanguages,
+                    visibleSides = setOf(panel.side),
+                    showAutoControls = panel.position == FaceToFacePanelPosition.NEAR,
+                )
+            }
+            if (panel.position == FaceToFacePanelPosition.FAR) {
+                Box(Modifier.fillMaxWidth().padding(horizontal = 34.dp).height(1.dp).background(Color(0xFF36404C)))
+            }
         }
     }
 }

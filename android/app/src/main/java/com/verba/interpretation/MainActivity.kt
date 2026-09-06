@@ -783,7 +783,6 @@ private fun FaceToFaceWorkbench(
             state = state,
             viewModel = faceViewModel,
             requestMicrophone = requestOrRun,
-            clearMicrophoneRequest = permissionPolicy::clear,
             modifier = Modifier.weight(1f),
         )
         LocalHistorySaveFeedback(

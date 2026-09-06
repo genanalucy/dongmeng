@@ -36,6 +36,23 @@ class FaceToFaceCoordinatorTest {
         assertTrue(coordinator.manualPress(5, FaceToFaceSide.RIGHT, "next").accepted)
     }
 
+    @Test fun viewDefaultsToConversationAndSwitchingStopsActiveManualInputSafely() {
+        val coordinator = FaceToFaceCoordinator<String>()
+
+        assertEquals(FaceToFaceView.CONVERSATION, coordinator.state().view)
+        coordinator.manualPress(1, FaceToFaceSide.LEFT, "left")
+        coordinator.updateSubtitle(1, SubtitleKind.SOURCE_PARTIAL, "你好")
+
+        val transition = coordinator.setView(FaceToFaceView.FACE_TO_FACE)
+
+        assertTrue(transition.accepted)
+        assertEquals(listOf("left"), transition.finishSessions)
+        assertTrue(transition.stopCapture)
+        assertEquals(FaceToFaceView.FACE_TO_FACE, coordinator.state().view)
+        assertEquals(FaceToFacePhase.PROCESSING, coordinator.state().phase)
+        assertFalse(coordinator.setView(FaceToFaceView.CONVERSATION).accepted)
+    }
+
     @Test fun sidesUseExpectedLanguagesAndOppositeEars() {
         val coordinator = FaceToFaceCoordinator<String>()
         coordinator.manualPress(1, FaceToFaceSide.LEFT, "left")
@@ -78,6 +95,49 @@ class FaceToFaceCoordinatorTest {
         assertFalse(restore.startCapture)
         assertEquals(FaceToFaceSide.LEFT, coordinator.state().activeSide)
         assertTrue(coordinator.sendToActive { it == "left-2" })
+    }
+
+    @Test fun cancelingRightTakeoverDiscardsItAndRestoresLeftWithOneLiveTurn() {
+        val coordinator = FaceToFaceCoordinator<String>()
+        coordinator.setMode(FaceToFaceMode.AUTO)
+        coordinator.startAuto(1, "left-1")
+        coordinator.updateSubtitle(1, SubtitleKind.SOURCE_PARTIAL, "left")
+        coordinator.switchAuto(2, FaceToFaceSide.RIGHT, "right-1")
+        coordinator.updateSubtitle(2, SubtitleKind.SOURCE_PARTIAL, "cancel me")
+
+        val cancel = coordinator.cancelAutoTakeover(3, "left-2")
+
+        assertTrue(cancel.accepted)
+        assertEquals(listOf("right-1"), cancel.cancelSessions)
+        assertTrue(cancel.finishSessions.isEmpty())
+        assertEquals(FaceToFaceSide.LEFT, coordinator.state().activeSide)
+        assertTrue(coordinator.isActiveTurn(3))
+        assertFalse(coordinator.state().turns.any { it.id == 2L })
+        assertEquals(1, coordinator.state().turns.count { !it.finished })
+    }
+
+    @Test fun finishedRightTakeoverIsPreservedWhileCancelRestoresLeft() {
+        val coordinator = FaceToFaceCoordinator<String>()
+        coordinator.setMode(FaceToFaceMode.AUTO)
+        coordinator.startAuto(1, "left")
+        coordinator.updateSubtitle(1, SubtitleKind.SOURCE_PARTIAL, "left")
+        coordinator.switchAuto(2, FaceToFaceSide.RIGHT, "right")
+        coordinator.updateSubtitle(2, SubtitleKind.SOURCE_FINAL, "right")
+        coordinator.sessionFinished(2)
+        val firstDrain = coordinator.sessionFinished(1)
+        assertTrue(firstDrain is FaceToFaceCoordinator.PlaybackWork.Drain)
+        coordinator.playbackWorkFinished(1, drained = true)
+
+        val cancel = coordinator.cancelAutoTakeover(3, "left-restored")
+
+        assertTrue(cancel.accepted)
+        assertTrue(cancel.cancelSessions.isEmpty())
+        assertTrue(coordinator.state().turns.any { it.id == 2L && it.finished })
+        assertEquals(FaceToFaceSide.LEFT, coordinator.state().activeSide)
+        assertEquals(3L, coordinator.state().activeTurnId)
+        assertFalse(coordinator.cancelAutoTakeover(4, "stale").accepted)
+        assertTrue(coordinator.containsTurn(3))
+        assertEquals(1, coordinator.state().turns.count { !it.finished })
     }
 
     @Test fun pauseThenResumeAutoStopsCaptureAndRestartsDefaultLanguage() {

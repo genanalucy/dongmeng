@@ -152,6 +152,7 @@ internal fun ConversationTimeline(
     listState: LazyListState = rememberLazyListState(),
     phase: FaceToFacePhase = FaceToFacePhase.IDLE,
     activeTurnId: Long? = null,
+    contentDescription: String = "对话记录",
 ) {
     // The old arguments remain source-compatible for continuous mode callers. Live content is
     // now represented by the actual unfinished turn, never by a fixed input row.
@@ -216,7 +217,7 @@ internal fun ConversationTimeline(
     Box(modifier = modifier.fillMaxSize()) {
         LazyColumn(
             state = listState,
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier.fillMaxSize().semantics { this.contentDescription = contentDescription },
             contentPadding = PaddingValues(start = 16.dp, top = 14.dp, end = 16.dp, bottom = 16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp, Alignment.Bottom),
         ) {

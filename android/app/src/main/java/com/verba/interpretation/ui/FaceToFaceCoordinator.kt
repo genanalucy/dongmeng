@@ -5,7 +5,14 @@ import com.verba.interpretation.history.LocalHistorySaveState
 import com.verba.interpretation.protocol.TranslationSessionEndReason
 
 enum class FaceToFaceMode { MANUAL, AUTO }
+enum class FaceToFaceView { CONVERSATION, FACE_TO_FACE }
 enum class FaceToFaceSide { LEFT, RIGHT }
+
+/** Playback stays on the opposite physical side, regardless of presentation orientation. */
+fun faceToFacePlaybackRoute(side: FaceToFaceSide): PlaybackRoute = when (side) {
+    FaceToFaceSide.LEFT -> PlaybackRoute.RIGHT
+    FaceToFaceSide.RIGHT -> PlaybackRoute.LEFT
+}
 enum class FaceToFacePhase { IDLE, LISTENING, PAUSED, PROCESSING, STOPPING, ERROR }
 
 data class FaceToFaceTurn(
@@ -45,6 +52,7 @@ data class FaceToFaceTurn(
 }
 
 data class FaceToFaceState(
+    val view: FaceToFaceView = FaceToFaceView.CONVERSATION,
     val mode: FaceToFaceMode = FaceToFaceMode.MANUAL,
     val phase: FaceToFacePhase = FaceToFacePhase.IDLE,
     val leftLanguage: String = "zh",
@@ -103,6 +111,22 @@ class FaceToFaceCoordinator<S> {
         if (current.phase != FaceToFacePhase.IDLE || entries.isNotEmpty()) return false
         current = current.copy(mode = mode, error = null, sessionEndReason = null)
         return true
+    }
+
+    /** Changes presentation only after active capture has been ended safely. */
+    @Synchronized
+    fun setView(view: FaceToFaceView): Transition<S> {
+        if (current.view == view) return Transition(accepted = false)
+        val transition = when {
+            current.phase == FaceToFacePhase.LISTENING && current.mode == FaceToFaceMode.MANUAL -> endManualInput()
+            current.phase == FaceToFacePhase.LISTENING && current.mode == FaceToFaceMode.AUTO -> stopAuto()
+            current.phase == FaceToFacePhase.PROCESSING || current.phase == FaceToFacePhase.STOPPING ->
+                return Transition(accepted = false)
+            else -> Transition(accepted = true)
+        }
+        if (!transition.accepted) return transition
+        current = current.copy(view = view)
+        return transition
     }
 
     @Synchronized
@@ -209,7 +233,32 @@ class FaceToFaceCoordinator<S> {
         if (current.mode != FaceToFaceMode.AUTO || current.phase != FaceToFacePhase.LISTENING || !current.captureActive || current.activeSide == side) {
             return Transition(accepted = false, cancelSessions = listOf(session))
         }
-        return replaceAutoTurnLocked(turnId, side, session)
+        return replaceAutoTurnLocked(turnId, side, session, discardPrevious = false)
+    }
+
+    /** Cancels a temporary right-side takeover and immediately opens one fresh left turn. */
+    @Synchronized
+    fun cancelAutoTakeover(turnId: Long, session: S): Transition<S> {
+        if (current.mode != FaceToFaceMode.AUTO || current.phase != FaceToFacePhase.LISTENING ||
+            !current.captureActive || current.activeSide != FaceToFaceSide.RIGHT
+        ) return Transition(accepted = false)
+        val previousId = activeTurnId ?: return Transition(accepted = false)
+        val previousEntry = entries[previousId] ?: return Transition(accepted = false)
+        val previousTurn = current.turns.firstOrNull { it.id == previousId } ?: return Transition(accepted = false)
+        // A terminal Finished event belongs to playback drain; never cancel that socket here.
+        val preserveFinished = previousEntry.sessionFinished || previousTurn.finished
+        if (!preserveFinished) {
+            entries.remove(previousId)
+            current = current.copy(turns = current.turns.filterNot { it.id == previousId })
+        }
+        addTurnLocked(turnId, FaceToFaceSide.LEFT, session)
+        activeTurnId = turnId
+        current = current.copy(activeSide = FaceToFaceSide.LEFT, captureLevel = 0f)
+        return Transition(
+            accepted = true,
+            cancelSessions = if (preserveFinished) emptyList() else listOf(previousEntry.session),
+            cancelTimer = true,
+        )
     }
 
     @Synchronized
@@ -372,11 +421,21 @@ class FaceToFaceCoordinator<S> {
         }
     }
 
-    private fun replaceAutoTurnLocked(turnId: Long, side: FaceToFaceSide, session: S): Transition<S> {
+    private fun replaceAutoTurnLocked(
+        turnId: Long,
+        side: FaceToFaceSide,
+        session: S,
+        discardPrevious: Boolean,
+    ): Transition<S> {
         val previousId = activeTurnId
         val previous = previousId?.let { entries[it]?.session }
-        val discard = previousId != null && shouldDiscardTurnLocked(previousId)
-        if (discard && previousId != null) entries.remove(previousId)
+        val discard = discardPrevious || (previousId != null && shouldDiscardTurnLocked(previousId))
+        if (previousId != null) {
+            if (discard) entries.remove(previousId)
+            else current = current.copy(turns = current.turns.map { turn ->
+                if (turn.id == previousId) turn.copy(finished = true) else turn
+            })
+        }
         addTurnLocked(turnId, side, session)
         activeTurnId = turnId
         current = current.copy(
@@ -398,7 +457,7 @@ class FaceToFaceCoordinator<S> {
         check(!entries.containsKey(turnId)) { "Turn $turnId already exists." }
         val source = if (side == FaceToFaceSide.LEFT) current.leftLanguage else current.rightLanguage
         val target = if (side == FaceToFaceSide.LEFT) current.rightLanguage else current.leftLanguage
-        val route = if (side == FaceToFaceSide.LEFT) PlaybackRoute.RIGHT else PlaybackRoute.LEFT
+        val route = faceToFacePlaybackRoute(side)
         entries[turnId] = Entry(session, route)
         current = current.copy(turns = current.turns + FaceToFaceTurn(turnId, side, source, target, route))
     }
