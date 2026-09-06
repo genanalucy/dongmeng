@@ -1,12 +1,37 @@
 package com.verba.interpretation.ui.facetoface
 
 import com.verba.interpretation.audio.PlaybackRoute
+import com.verba.interpretation.ui.FaceToFacePhase
 import com.verba.interpretation.ui.FaceToFaceSide
 import com.verba.interpretation.ui.FaceToFaceTurn
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class ConversationDisplayBubbleTest {
+    @Test
+    fun unfinishedTurnIsOneLiveBilingualBubbleAndFinishesInPlace() {
+        val turn = FaceToFaceTurn(
+            id = 9,
+            side = FaceToFaceSide.RIGHT,
+            sourceLanguage = "en",
+            targetLanguage = "zh",
+            route = PlaybackRoute.LEFT,
+            sourcePartial = "hello",
+            translationPartial = "你好",
+        )
+
+        val live = displayConversationBubbles(listOf(turn), FaceToFacePhase.PROCESSING).single()
+        assertEquals("9:0", live.key)
+        assertEquals("hello", live.sourceText)
+        assertEquals("你好", live.translationText)
+        assertEquals(true, live.isLive)
+        assertEquals(FaceToFacePhase.PROCESSING, live.livePhase)
+
+        val finished = displayConversationBubbles(listOf(turn.copy(finished = true)))
+        assertEquals("9:source-partial", finished.first().key)
+        assertEquals(false, finished.first().isLive)
+    }
+
     @Test
     fun pairsOnlyMatchingFinalEventIndexesRatherThanAggregatedSentenceIndexes() {
         val turn = FaceToFaceTurn(

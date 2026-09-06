@@ -32,12 +32,11 @@ class FaceToFaceScreenTest {
         compose.onNodeWithText("左耳").assertIsDisplayed()
         compose.onNodeWithText("右耳").assertIsDisplayed()
         compose.onNodeWithText("中文").assertIsDisplayed()
-        compose.onNodeWithText("英文").assertIsDisplayed()
-        compose.onNodeWithText("左耳说中文，译文送到右耳；右耳说英文，译文送到左耳").assertIsDisplayed()
+        compose.onNodeWithText("English").assertIsDisplayed()
         compose.onNodeWithContentDescription("左耳，中文，按住说话，译文送至右耳").assertIsDisplayed()
-        compose.onNodeWithContentDescription("右耳，英文，按住说话，译文送至左耳").assertIsDisplayed()
-        compose.onNodeWithText("左耳说中文，译文送到右耳；右耳说英文，译文送到左耳").assertIsDisplayed()
-        compose.onNodeWithText("手动模式：按住任一耳麦说话，松开后提交翻译").assertIsDisplayed()
+        compose.onNodeWithContentDescription("右耳，English，按住说话，译文送至左耳").assertIsDisplayed()
+        compose.onNodeWithContentDescription("选择中文语言").assertIsDisplayed()
+        compose.onNodeWithContentDescription("选择English语言").assertIsDisplayed()
     }
 
     @Test
