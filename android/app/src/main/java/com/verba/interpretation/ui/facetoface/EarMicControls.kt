@@ -1,6 +1,5 @@
 package com.verba.interpretation.ui.facetoface
 
-import androidx.compose.foundation.gestures.GestureCancellationException
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -96,6 +95,18 @@ internal class MicPressGate(
 
     fun release(token: MicPressToken?) = finish(token) { it.release() }
     fun cancel(token: MicPressToken?) = finish(token) { it.cancel() }
+
+    /** A semantics click ends an active pointer press instead of invoking the action twice. */
+    fun accessibleClick(action: () -> Unit): Boolean {
+        val pointer = active?.takeIf { it.token.owner == MicPressOwner.POINTER }
+        if (pointer != null) {
+            release(pointer.token)
+        } else {
+            action()
+        }
+        return true
+    }
+
     fun press() { acquire(MicPressOwner.POINTER) }
     fun release() { active?.token?.let(::release) }
     fun cancel() { active?.token?.let(::cancel) }
@@ -204,7 +215,7 @@ private fun LanguageEntry(side: FaceToFaceSide, language: String, otherLanguage:
 }
 
 @Composable
-private fun EarMicButton(
+internal fun EarMicButton(
     side: FaceToFaceSide,
     language: String,
     otherLanguage: String,
@@ -219,8 +230,11 @@ private fun EarMicButton(
     onLanguage: (String) -> Unit,
 ) {
     val currentPointerEnabled by rememberUpdatedState(pointerEnabled)
-    val gate = remember(side) { MicPressGate(onPress, onRelease, onCancel) }
-    gate.updateCallbacks(onPress, onRelease, onCancel)
+    val currentOnPress by rememberUpdatedState(onPress)
+    val currentOnRelease by rememberUpdatedState(onRelease)
+    val currentOnCancel by rememberUpdatedState(onCancel)
+    val gate = remember(side) { MicPressGate(currentOnPress, currentOnRelease, currentOnCancel) }
+    gate.updateCallbacks(currentOnPress, currentOnRelease, currentOnCancel)
     val color = if (side == FaceToFaceSide.LEFT) Color(0xFF91B5D5) else Color(0xFFE0BC83)
     val target = targetEarLabel(side)
     val description = "${earLabel(side)}，${TranslationLanguage.displayName(language)}，$stateLabel，译文送至$target"
@@ -235,19 +249,17 @@ private fun EarMicButton(
                     if (!actionEnabled) disabled()
                     onAccessibleClick?.let { click ->
                         onClick(label = if (active) "停止${TranslationLanguage.displayName(language)}收音" else "开始${TranslationLanguage.displayName(language)}收音") {
-                            click()
-                            true
+                            gate.accessibleClick(click)
                         }
                     }
                 }
-                .pointerInput(side, pointerEnabled) {
+                .pointerInput(side) {
                     detectTapGestures(onPress = {
                         if (!currentPointerEnabled) return@detectTapGestures
                         val token = gate.acquire(MicPressOwner.POINTER) ?: return@detectTapGestures
-                        try {
-                            awaitRelease()
+                        if (tryAwaitRelease()) {
                             gate.release(token)
-                        } catch (_: GestureCancellationException) {
+                        } else {
                             gate.cancel(token)
                         }
                     })

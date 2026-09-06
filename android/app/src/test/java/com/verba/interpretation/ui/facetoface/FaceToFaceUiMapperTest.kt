@@ -178,6 +178,29 @@ class FaceToFaceUiMapperTest {
     }
 
     @Test
+    fun accessibleClickReleasesActivePointerExactlyOnceWithoutRunningClickAction() {
+        val events = mutableListOf<String>()
+        val gate = MicPressGate(onPress = { events += "press" }, onRelease = { events += "release" })
+        gate.acquire(MicPressOwner.POINTER)
+
+        gate.accessibleClick { events += "click" }
+        gate.accessibleClick { events += "click" }
+
+        assertEquals(listOf("press", "release", "click"), events)
+    }
+
+    @Test
+    fun accessibleClickRunsActionWhenNoPointerIsActive() {
+        var clicks = 0
+        val gate = MicPressGate(onPress = {}, onRelease = {})
+
+        assertTrue(gate.accessibleClick { clicks++ })
+        assertTrue(gate.accessibleClick { clicks++ })
+
+        assertEquals(2, clicks)
+    }
+
+    @Test
     fun nextGestureUsesUpdatedCallbacksAfterOriginalGestureEnds() {
         val events = mutableListOf<String>()
         val gate = MicPressGate(onPress = { events += "oldPress" }, onRelease = { events += "oldRelease" })
