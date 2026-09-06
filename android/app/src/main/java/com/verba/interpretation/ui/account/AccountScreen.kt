@@ -17,8 +17,7 @@ import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.ManageAccounts
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.WorkspacePremium
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -26,6 +25,7 @@ import androidx.compose.material3.ListItem
 import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
@@ -82,64 +82,196 @@ fun AccountScreen(
         entitlement = state.entitlement,
         usage = UsageSummary(0, 0, null),
     )
-    val callbacks = AccountCallbacks(onBack, onUsage, onHistory, onSettings, onServiceSettings, onLogout = onLogout)
+    val displayName = overview.username.ifBlank { state.user?.username ?: "未登录" }
+    val callbacks = AccountCallbacks(
+        onBack = onBack,
+        onUsage = onUsage,
+        onHistory = onHistory,
+        onSettings = onSettings,
+        onServiceSettings = onServiceSettings,
+        onLogout = onLogout,
+    )
+
     Column(modifier.fillMaxSize()) {
         TopAppBar(
-            title = { Text("账户与权益", fontWeight = FontWeight.SemiBold) },
+            title = { Text("我的", fontWeight = FontWeight.SemiBold) },
             navigationIcon = {
-                IconButton(onClick = { AccountActionDispatcher.back(callbacks) }, modifier = Modifier.heightIn(min = 48.dp).semantics { contentDescription = "返回" }) {
+                IconButton(
+                    onClick = { AccountActionDispatcher.back(callbacks) },
+                    modifier = Modifier.heightIn(min = 48.dp).semantics { contentDescription = "返回" },
+                ) {
                     Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null)
                 }
             },
             colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background),
         )
-        LazyColumn(contentPadding = PaddingValues(horizontal = 20.dp, vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(20.dp),
+        ) {
             item {
-                Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)) {
-                    Column(Modifier.padding(20.dp)) {
-                        Text(overview.username, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
-                        Text("账户与权益", modifier = Modifier.padding(top = 4.dp), color = MaterialTheme.colorScheme.onPrimaryContainer)
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = MaterialTheme.shapes.large,
+                    color = MaterialTheme.colorScheme.primaryContainer,
+                ) {
+                    Column(Modifier.padding(horizontal = 20.dp, vertical = 18.dp)) {
+                        Text(
+                            displayName,
+                            style = MaterialTheme.typography.headlineSmall,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer,
+                        )
+                        Text(
+                            accountRoleLabel(state),
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer,
+                            modifier = Modifier.padding(top = 4.dp),
+                        )
+                        if (state.loading) {
+                            Text(
+                                "正在同步账户信息…",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                modifier = Modifier.padding(top = 12.dp),
+                            )
+                        }
                     }
                 }
             }
-            item { AccountStatusCard(overview.entitlement, overview.usage) }
-            item { AccountRow("使用与权益", "查看权益详情与使用记录", Icons.Outlined.WorkspacePremium) { AccountActionDispatcher.dispatch(AccountAction.USAGE, callbacks) } }
-            item { AccountRow("历史记录", "查看本机保存的翻译记录", Icons.Outlined.History) { AccountActionDispatcher.dispatch(AccountAction.HISTORY, callbacks) } }
-            item { AccountRow("账户管理", "查看账户状态或删除账户", Icons.Outlined.ManageAccounts) { AccountActionDispatcher.dispatch(AccountAction.SETTINGS, callbacks) } }
-            if (showServiceSettings) {
-                item { AccountRow("服务设置", "管理语言与播放偏好", Icons.Outlined.Settings) { AccountActionDispatcher.dispatch(AccountAction.SERVICE_SETTINGS, callbacks) } }
+            item {
+                AccountSectionLabel("权益与用量")
+                Surface(
+                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                    shape = MaterialTheme.shapes.medium,
+                    color = MaterialTheme.colorScheme.surfaceContainerLow,
+                ) {
+                    Column {
+                        AccountRow(
+                            title = "使用与权益",
+                            detail = "${entitlementSummary(overview.entitlement)} · ${usageSummary(overview.usage)}",
+                            icon = Icons.Outlined.WorkspacePremium,
+                            onClick = { AccountActionDispatcher.dispatch(AccountAction.USAGE, callbacks) },
+                        )
+                    }
+                }
+            }
+            item {
+                AccountSectionLabel("账户管理")
+                Surface(
+                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                    shape = MaterialTheme.shapes.medium,
+                    color = MaterialTheme.colorScheme.surfaceContainerLow,
+                ) {
+                    Column {
+                        AccountRow("历史记录", "查看本机保存的翻译记录", Icons.Outlined.History) {
+                            AccountActionDispatcher.dispatch(AccountAction.HISTORY, callbacks)
+                        }
+                        AccountRow(
+                            title = "账户设置",
+                            detail = "查看账户状态或删除账户",
+                            icon = Icons.Outlined.ManageAccounts,
+                            accessibilityTitle = "账户管理",
+                        ) {
+                            AccountActionDispatcher.dispatch(AccountAction.SETTINGS, callbacks)
+                        }
+                        if (showServiceSettings) {
+                            AccountRow("服务设置", "管理语言与播放偏好", Icons.Outlined.Settings) {
+                                AccountActionDispatcher.dispatch(AccountAction.SERVICE_SETTINGS, callbacks)
+                            }
+                        }
+                    }
+                }
             }
             item {
                 OutlinedButton(
-                    onClick = { AccountActionDispatcher.dispatch(AccountAction.LOGOUT, callbacks) }, enabled = !state.loading,
-                    modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).semantics { contentDescription = "退出登录" },
-                ) { Icon(Icons.AutoMirrored.Filled.Logout, contentDescription = null); Text("退出登录", modifier = Modifier.padding(start = 8.dp)) }
+                    onClick = { AccountActionDispatcher.dispatch(AccountAction.LOGOUT, callbacks) },
+                    enabled = !state.loading,
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error),
+                ) {
+                    Icon(Icons.AutoMirrored.Filled.Logout, contentDescription = null)
+                    Text("退出登录", modifier = Modifier.padding(start = 8.dp))
+                }
             }
-            state.message?.let { message -> item { Text(message, color = MaterialTheme.colorScheme.error) } }
+            state.message?.takeIf { it.isNotBlank() }?.let { message ->
+                item {
+                    Text(
+                        message,
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.semantics { contentDescription = "账户错误：$message" },
+                    )
+                }
+            }
         }
     }
 }
 
 @Composable
-private fun AccountStatusCard(entitlement: CloudEntitlement?, usage: UsageSummary) {
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(20.dp)) {
-            Text("权益", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-            Text(entitlement?.let { "${if (it.kind == "trial") "试用" else "订阅"}${if (it.active) "有效" else "未生效"}，至 ${it.expiresAt}" } ?: "暂无可用权益", modifier = Modifier.padding(top = 4.dp))
-            Text("使用情况", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 16.dp))
-            Text("累计 ${formatDuration(usage.totalSeconds)} · ${usage.sessionCount} 次会话", modifier = Modifier.padding(top = 4.dp))
-            Text("最近使用：${usage.lastUsedAt ?: "暂无记录"}", modifier = Modifier.padding(top = 4.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-    }
+internal fun AccountSectionLabel(label: String) {
+    Text(
+        label,
+        style = MaterialTheme.typography.labelLarge,
+        color = MaterialTheme.colorScheme.primary,
+        fontWeight = FontWeight.SemiBold,
+    )
 }
 
+private fun accountRoleLabel(state: AccountUiState): String = when {
+    !state.signedIn && state.loading -> "正在加载账户信息"
+    !state.signedIn && !state.message.isNullOrBlank() -> "账户信息加载失败"
+    !state.signedIn -> "未登录"
+    state.isAdmin -> "管理员账户"
+    else -> "正式用户"
+}
+
+private fun entitlementSummary(entitlement: CloudEntitlement?): String = entitlement?.let {
+    val kind = entitlementKindLabel(it.kind)
+    val state = entitlementStateLabel(it)
+    val expiry = formatAccountTime(it.expiresAt)
+    val remaining = "，剩余 ${formatDuration(it.remainingSeconds)}"
+    "$kind · $state · 到期 $expiry$remaining"
+} ?: "暂无可用权益"
+
+private fun usageSummary(usage: UsageSummary): String =
+    "累计 ${formatDuration(usage.totalSeconds)} · ${usage.sessionCount.coerceAtLeast(0)} 次会话 · 最近 ${formatAccountTime(usage.lastUsedAt)}"
+
+private fun entitlementKindLabel(kind: String): String = when (kind.trim().lowercase()) {
+    "trial" -> "试用"
+    "subscription", "subscribed", "paid" -> "订阅"
+    else -> "权益"
+}
+
+private fun entitlementStateLabel(entitlement: CloudEntitlement): String = when {
+    !entitlement.active -> "已过期"
+    isExpired(entitlement.expiresAt) -> "已过期"
+    entitlement.expiresAt.isBlank() || parseAccountInstant(entitlement.expiresAt) == null -> "状态未知"
+    else -> "有效"
+}
+
+internal fun isExpired(value: String): Boolean = parseAccountInstant(value)?.let { it.isBefore(java.time.Instant.now()) } ?: false
+
 @Composable
-private fun AccountRow(title: String, detail: String, icon: androidx.compose.ui.graphics.vector.ImageVector, onClick: () -> Unit) {
+private fun AccountRow(
+    title: String,
+    detail: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    accessibilityTitle: String = title,
+    onClick: () -> Unit,
+) {
     ListItem(
-        headlineContent = { Text(title, fontWeight = FontWeight.Medium) }, supportingContent = { Text(detail) },
-        leadingContent = { Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary) }, trailingContent = { Icon(Icons.Outlined.ChevronRight, contentDescription = null) },
-        colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.surface),
-        modifier = Modifier.fillMaxWidth().heightIn(min = 64.dp).clickable(onClick = onClick).semantics { contentDescription = title },
+        headlineContent = { Text(title, fontWeight = FontWeight.Medium) },
+        supportingContent = { Text(detail) },
+        leadingContent = { Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
+        trailingContent = { Icon(Icons.Outlined.ChevronRight, contentDescription = null) },
+        colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 64.dp)
+            .clickable(onClick = onClick)
+            .semantics { contentDescription = accessibilityTitle },
     )
 }
 
@@ -159,11 +291,30 @@ object AccountSummaryMapper {
             null -> if (state.signedIn) "暂未获得可用权益。" else "登录后可使用云端翻译服务。"
             else -> "权益已启用。"
         }
-        return AccountSummary(if (state.signedIn) "已登录" else "未登录", role, detail, if (state.message.isNullOrBlank()) "" else "账户状态暂时无法更新，请稍后重试。")
+        return AccountSummary(
+            if (state.signedIn) "已登录" else "未登录",
+            role,
+            detail,
+            if (state.message.isNullOrBlank()) "" else "账户状态暂时无法更新，请稍后重试。",
+        )
     }
 }
 
 internal fun formatDuration(seconds: Long): String {
     val minutes = seconds.coerceAtLeast(0) / 60
     return if (minutes >= 60) "${minutes / 60} 小时 ${minutes % 60} 分" else "$minutes 分钟"
+}
+
+internal fun formatAccountTime(value: String?): String {
+    if (value.isNullOrBlank()) return "暂无记录"
+    val instant = parseAccountInstant(value) ?: return "时间不可用"
+    return java.time.format.DateTimeFormatter.ofPattern("yyyy年M月d日 HH:mm")
+        .withZone(java.time.ZoneId.systemDefault())
+        .format(instant)
+}
+
+internal fun parseAccountInstant(value: String): java.time.Instant? = runCatching {
+    java.time.Instant.parse(value)
+}.getOrElse {
+    runCatching { java.time.OffsetDateTime.parse(value).toInstant() }.getOrNull()
 }
