@@ -220,6 +220,34 @@ class FaceToFaceUiMapperTest {
     }
 
     @Test
+    fun continuousActionsFollowPhaseAndDoNotExposeInvalidProcessingActions() {
+        assertEquals(
+            listOf(FaceToFaceAction.START_CONTINUOUS),
+            continuousActions(FaceToFaceState(mode = FaceToFaceMode.AUTO, phase = FaceToFacePhase.IDLE)),
+        )
+        assertEquals(
+            listOf(FaceToFaceAction.PAUSE_CONTINUOUS, FaceToFaceAction.END_CONTINUOUS),
+            continuousActions(FaceToFaceState(mode = FaceToFaceMode.AUTO, phase = FaceToFacePhase.LISTENING)),
+        )
+        assertEquals(
+            listOf(FaceToFaceAction.RESUME_CONTINUOUS, FaceToFaceAction.END_CONTINUOUS),
+            continuousActions(FaceToFaceState(mode = FaceToFaceMode.AUTO, phase = FaceToFacePhase.PAUSED)),
+        )
+        assertTrue(
+            continuousActions(FaceToFaceState(mode = FaceToFaceMode.AUTO, phase = FaceToFacePhase.PROCESSING)).isEmpty(),
+        )
+        assertTrue(
+            continuousActions(FaceToFaceState(mode = FaceToFaceMode.AUTO, phase = FaceToFacePhase.STOPPING)).isEmpty(),
+        )
+    }
+
+    @Test
+    fun phaseAndActionStatusNamesAreStableForAccessibility() {
+        assertEquals("PROCESSING", FaceToFacePhase.PROCESSING.name)
+        assertEquals("END_CONTINUOUS", FaceToFaceAction.END_CONTINUOUS.name)
+    }
+
+    @Test
     fun manualProcessingHasNoRippleAndLocksLanguageChanges() {
         val presentation = faceToFacePresentation(
             FaceToFaceState(

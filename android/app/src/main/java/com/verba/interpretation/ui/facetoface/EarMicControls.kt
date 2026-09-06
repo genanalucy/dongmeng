@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Mic
@@ -37,8 +38,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.disabled
 import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
@@ -55,6 +59,28 @@ internal class MicPressToken internal constructor(val owner: MicPressOwner, val 
     override fun equals(other: Any?): Boolean = other is MicPressToken && owner == other.owner && sequence == other.sequence
     override fun hashCode(): Int = 31 * owner.hashCode() + sequence.hashCode()
 }
+
+internal enum class FaceToFaceAction {
+    START_CONTINUOUS,
+    PAUSE_CONTINUOUS,
+    RESUME_CONTINUOUS,
+    END_CONTINUOUS,
+}
+
+internal fun continuousActions(state: FaceToFaceState): List<FaceToFaceAction> =
+    if (state.mode != FaceToFaceMode.AUTO) {
+        emptyList()
+    } else {
+        when (state.phase) {
+            FaceToFacePhase.IDLE -> listOf(FaceToFaceAction.START_CONTINUOUS)
+            FaceToFacePhase.LISTENING -> listOf(FaceToFaceAction.PAUSE_CONTINUOUS, FaceToFaceAction.END_CONTINUOUS)
+            FaceToFacePhase.PAUSED -> listOf(FaceToFaceAction.RESUME_CONTINUOUS, FaceToFaceAction.END_CONTINUOUS)
+            FaceToFacePhase.PROCESSING,
+            FaceToFacePhase.STOPPING,
+            FaceToFacePhase.ERROR,
+            -> emptyList()
+        }
+    }
 
 internal class MicPressGate(
     onPress: () -> Unit,
@@ -114,7 +140,15 @@ internal fun EarMicControls(
     modifier: Modifier = Modifier,
 ) {
     val manualMode = state.mode == FaceToFaceMode.MANUAL
-    Row(modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+    Column(
+        modifier = modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
         EarMicButton(
             modifier = Modifier.weight(1f), side = FaceToFaceSide.LEFT, language = state.leftLanguage,
             active = presentation.activeMic == FaceToFaceSide.LEFT,
@@ -123,27 +157,91 @@ internal fun EarMicControls(
             stateLabel = if (!manualMode && state.phase == FaceToFacePhase.LISTENING) "连续收音" else "按住说话",
             onPress = { requestMicrophone { onManualPress(FaceToFaceSide.LEFT) } }, onRelease = onManualRelease,
         )
-        AutoControls(state, requestMicrophone, onStartAuto, onPauseAuto, onResumeAuto, onStopAuto)
         EarMicButton(
             modifier = Modifier.weight(1f), side = FaceToFaceSide.RIGHT, language = state.rightLanguage,
             active = presentation.activeMic == FaceToFaceSide.RIGHT,
             pointerEnabled = if (manualMode) state.phase == FaceToFacePhase.IDLE else state.phase == FaceToFacePhase.LISTENING,
             actionEnabled = if (manualMode) state.phase == FaceToFacePhase.IDLE else state.phase == FaceToFacePhase.LISTENING,
-            stateLabel = if (manualMode) "按住说话" else "按住临时切换",
+            stateLabel = if (manualMode) "按住说话" else "按住临时切换，松开恢复左耳",
             onPress = { if (manualMode) requestMicrophone { onManualPress(FaceToFaceSide.RIGHT) } else onPressRightAuto() },
             onRelease = if (manualMode) onManualRelease else onReleaseRightAuto,
+        )
+        }
+        AutoControls(
+            state = state,
+            requestMicrophone = requestMicrophone,
+            onStart = onStartAuto,
+            onPause = onPauseAuto,
+            onResume = onResumeAuto,
+            onStop = onStopAuto,
         )
     }
 }
 
 @Composable
-private fun AutoControls(state: FaceToFaceState, requestMicrophone: (() -> Unit) -> Unit, onStart: () -> Unit, onPause: () -> Unit, onResume: () -> Unit, onStop: () -> Unit) {
-    if (state.mode != FaceToFaceMode.AUTO) return
-    when (state.phase) {
-        FaceToFacePhase.IDLE -> Button(onClick = { requestMicrophone(onStart) }, modifier = Modifier.heightIn(min = 48.dp)) { Icon(Icons.Filled.Mic, contentDescription = "开始连续翻译") }
-        FaceToFacePhase.LISTENING -> OutlinedButton(onClick = onPause, modifier = Modifier.heightIn(min = 48.dp)) { Icon(Icons.Filled.Pause, contentDescription = "暂停连续翻译") }
-        FaceToFacePhase.PAUSED -> Button(onClick = onResume, modifier = Modifier.heightIn(min = 48.dp)) { Icon(Icons.Filled.PlayArrow, contentDescription = "继续连续翻译") }
-        else -> OutlinedButton(onClick = onStop, enabled = false, modifier = Modifier.heightIn(min = 48.dp)) { Icon(Icons.Filled.Stop, contentDescription = "停止连续翻译") }
+private fun AutoControls(
+    state: FaceToFaceState,
+    requestMicrophone: (() -> Unit) -> Unit,
+    onStart: () -> Unit,
+    onPause: () -> Unit,
+    onResume: () -> Unit,
+    onStop: () -> Unit,
+) {
+    val actions = continuousActions(state)
+    if (actions.isEmpty()) return
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        actions.forEach { action ->
+            when (action) {
+                FaceToFaceAction.START_CONTINUOUS -> ActionButton(
+                    label = "开始连续翻译",
+                    icon = Icons.Filled.Mic,
+                    onClick = { requestMicrophone(onStart) },
+                    primary = true,
+                )
+                FaceToFaceAction.PAUSE_CONTINUOUS -> ActionButton(
+                    label = "暂停连续翻译",
+                    icon = Icons.Filled.Pause,
+                    onClick = onPause,
+                    primary = true,
+                )
+                FaceToFaceAction.RESUME_CONTINUOUS -> ActionButton(
+                    label = "恢复连续翻译",
+                    icon = Icons.Filled.PlayArrow,
+                    onClick = onResume,
+                    primary = true,
+                )
+                FaceToFaceAction.END_CONTINUOUS -> ActionButton(
+                    label = "结束连续翻译",
+                    icon = Icons.Filled.Stop,
+                    onClick = onStop,
+                    primary = false,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ActionButton(
+    label: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    onClick: () -> Unit,
+    primary: Boolean,
+) {
+    val buttonModifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)
+    if (primary) {
+        Button(onClick = onClick, modifier = buttonModifier) {
+            Icon(icon, contentDescription = label)
+            Text(label, modifier = Modifier.padding(start = 6.dp))
+        }
+    } else {
+        OutlinedButton(onClick = onClick, modifier = buttonModifier) {
+            Icon(icon, contentDescription = label)
+            Text(label, modifier = Modifier.padding(start = 6.dp))
+        }
     }
 }
 
@@ -164,11 +262,15 @@ private fun EarMicButton(
     gate.updateCallbacks(onPress, onRelease)
     val animatorScale = Settings.Global.getFloat(LocalContext.current.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f)
     val color = MaterialTheme.colorScheme.primary
+    val direction = "译文送至${targetEarLabel(side)}"
+    val description = "${earLabel(side)}，${TranslationLanguage.displayName(language)}，$stateLabel，$direction"
     Surface(
-        modifier = modifier.heightIn(min = 96.dp)
+        modifier = modifier.heightIn(min = 112.dp)
             .semantics {
-                contentDescription = "${earLabel(side)}，${TranslationLanguage.displayName(language)}，$stateLabel，译文送至${targetEarLabel(side)}"
+                role = Role.Button
+                contentDescription = description
                 stateDescription = stateLabel
+                if (!actionEnabled) disabled()
                 if (actionEnabled) {
                     onClick(label = "开始${TranslationLanguage.displayName(language)}收音") {
                         val token = gate.acquire(MicPressOwner.SEMANTICS)

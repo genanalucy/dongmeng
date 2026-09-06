@@ -35,12 +35,12 @@ internal fun FaceToFaceOverflowMenu(
     ) { Icon(Icons.Filled.MoreVert, contentDescription = null) }
     DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
         DropdownMenuItem(
-            text = { Text("按住说话") },
+            text = { Text("按住说话模式") },
             onClick = { onSelectMode(FaceToFaceMode.MANUAL); expanded = false },
             enabled = state.phase == FaceToFacePhase.IDLE,
         )
         DropdownMenuItem(
-            text = { Text("连续翻译") },
+            text = { Text("连续翻译模式") },
             onClick = { onSelectMode(FaceToFaceMode.AUTO); expanded = false },
             enabled = state.phase == FaceToFacePhase.IDLE,
         )
@@ -49,11 +49,11 @@ internal fun FaceToFaceOverflowMenu(
                 FaceToFacePhase.IDLE -> DropdownMenuItem(text = { Text("开始连续翻译") }, onClick = { onStartAuto(); expanded = false })
                 FaceToFacePhase.LISTENING -> {
                     DropdownMenuItem(text = { Text("暂停连续翻译") }, onClick = { onPauseAuto(); expanded = false })
-                    DropdownMenuItem(text = { Text("停止连续翻译") }, onClick = { onStopAuto(); expanded = false })
+                    DropdownMenuItem(text = { Text("结束连续翻译") }, onClick = { onStopAuto(); expanded = false })
                 }
                 FaceToFacePhase.PAUSED -> {
-                    DropdownMenuItem(text = { Text("继续连续翻译") }, onClick = { onResumeAuto(); expanded = false })
-                    DropdownMenuItem(text = { Text("停止连续翻译") }, onClick = { onStopAuto(); expanded = false })
+                    DropdownMenuItem(text = { Text("恢复连续翻译") }, onClick = { onResumeAuto(); expanded = false })
+                    DropdownMenuItem(text = { Text("结束连续翻译") }, onClick = { onStopAuto(); expanded = false })
                 }
                 else -> Unit
             }

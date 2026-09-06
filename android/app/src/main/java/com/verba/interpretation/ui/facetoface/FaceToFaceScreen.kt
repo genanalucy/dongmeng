@@ -45,11 +45,24 @@ import com.verba.interpretation.ui.TranslationLanguage
 
 private fun faceStatusLabel(state: FaceToFaceState): String = when (state.phase) {
     FaceToFacePhase.IDLE -> if (state.mode == FaceToFaceMode.AUTO) "连续翻译待开始" else "按住麦克风开始"
-    FaceToFacePhase.LISTENING -> "正在收音"
+    FaceToFacePhase.LISTENING -> if (state.mode == FaceToFaceMode.AUTO) {
+        if (state.activeSide == FaceToFaceSide.RIGHT) "右耳临时收音中" else "左耳连续收音中"
+    } else {
+        "${state.activeSide?.let(::earLabel) ?: "麦克风"}正在收音"
+    }
     FaceToFacePhase.PAUSED -> "连续翻译已暂停"
-    FaceToFacePhase.PROCESSING -> "正在翻译"
-    FaceToFacePhase.STOPPING -> "正在结束"
-    FaceToFacePhase.ERROR -> "需要处理"
+    FaceToFacePhase.PROCESSING -> "正在翻译，暂不可操作"
+    FaceToFacePhase.STOPPING -> "正在结束，暂不可操作"
+    FaceToFacePhase.ERROR -> "需要处理，暂不可操作"
+}
+
+private fun directionDescription(state: FaceToFaceState): String =
+    "左耳说${TranslationLanguage.displayName(state.leftLanguage)}，译文送到右耳；右耳说${TranslationLanguage.displayName(state.rightLanguage)}，译文送到左耳"
+
+private fun continuousDescription(state: FaceToFaceState): String = if (state.mode == FaceToFaceMode.AUTO) {
+    "连续模式：左侧连续收音；按住右耳临时切换，松开恢复左耳"
+} else {
+    "手动模式：按住任一耳麦说话，松开后提交翻译"
 }
 
 @Composable
@@ -79,6 +92,9 @@ internal fun FaceToFaceScreen(
                     faceStatusLabel(state),
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.semantics {
+                        contentDescription = "phase=${state.phase.name}，action=${faceStatusLabel(state)}"
+                    },
                 )
             }
             FaceToFaceOverflowMenu(
@@ -96,6 +112,28 @@ internal fun FaceToFaceScreen(
             enabled = presentation.canChangeLanguages,
             onSetLanguages = viewModel::setLanguages,
         )
+
+        Surface(
+            color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f),
+            shape = RoundedCornerShape(16.dp),
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp).semantics {
+                contentDescription = "${directionDescription(state)}；${continuousDescription(state)}"
+            },
+        ) {
+            Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
+                Text(
+                    directionDescription(state),
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Medium,
+                )
+                Text(
+                    continuousDescription(state),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 4.dp),
+                )
+            }
+        }
 
         if (presentation.showRecoveryAction) {
             presentation.recoveryMessage?.let { message ->
