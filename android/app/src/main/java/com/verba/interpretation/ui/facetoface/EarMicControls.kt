@@ -40,6 +40,7 @@ import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.verba.interpretation.ui.FaceToFaceMode
+import kotlinx.coroutines.CancellationException
 import com.verba.interpretation.ui.FaceToFacePhase
 import com.verba.interpretation.ui.MicrophonePermissionAction
 import com.verba.interpretation.ui.FaceToFaceSide
@@ -116,6 +117,23 @@ internal class MicPressGate(
         if (token != acquired.token) return
         active = null
         callback(acquired)
+    }
+}
+
+internal suspend fun finishMicPress(
+    gate: MicPressGate,
+    token: MicPressToken,
+    awaitRelease: suspend () -> Boolean,
+) {
+    try {
+        if (awaitRelease()) {
+            gate.release(token)
+        } else {
+            gate.cancel(token)
+        }
+    } catch (error: CancellationException) {
+        gate.cancel(token)
+        throw error
     }
 }
 
@@ -257,11 +275,7 @@ internal fun EarMicButton(
                     detectTapGestures(onPress = {
                         if (!currentPointerEnabled) return@detectTapGestures
                         val token = gate.acquire(MicPressOwner.POINTER) ?: return@detectTapGestures
-                        if (tryAwaitRelease()) {
-                            gate.release(token)
-                        } else {
-                            gate.cancel(token)
-                        }
+                        finishMicPress(gate, token) { tryAwaitRelease() }
                     })
                 },
             shape = CircleShape,

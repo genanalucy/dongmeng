@@ -7,6 +7,8 @@ import com.verba.interpretation.ui.FaceToFaceMode
 import com.verba.interpretation.ui.FaceToFacePhase
 import com.verba.interpretation.ui.FaceToFaceSide
 import com.verba.interpretation.ui.FaceToFaceState
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -112,6 +114,48 @@ class FaceToFaceUiMapperTest {
         assertEquals(1, conversationTimelineUpdateCount(previousTurnToken = listOf("one"), currentTurnToken = listOf("one", "two"), previousHasListeningPlaceholder = false, hasListeningPlaceholder = true))
         assertEquals(1, conversationTimelineUpdateCount(previousTurnToken = listOf("partial"), currentTurnToken = listOf("final"), previousHasListeningPlaceholder = true, hasListeningPlaceholder = true))
         assertEquals(0, conversationTimelineUpdateCount(previousTurnToken = listOf("same"), currentTurnToken = listOf("same"), previousHasListeningPlaceholder = true, hasListeningPlaceholder = true))
+    }
+
+    @Test
+    fun finishMicPressReleasesOnNormalRelease() = runTest {
+        val events = mutableListOf<String>()
+        val gate = MicPressGate(onPress = {}, onRelease = { events += "release" }, onCancel = { events += "cancel" })
+        val token = gate.acquire(MicPressOwner.POINTER)!!
+
+        finishMicPress(gate, token) { true }
+
+        assertEquals(listOf("release"), events)
+    }
+
+    @Test
+    fun finishMicPressCancelsOnFalseRelease() = runTest {
+        val events = mutableListOf<String>()
+        val gate = MicPressGate(onPress = {}, onRelease = { events += "release" }, onCancel = { events += "cancel" })
+        val token = gate.acquire(MicPressOwner.POINTER)!!
+
+        finishMicPress(gate, token) { false }
+
+        assertEquals(listOf("cancel"), events)
+    }
+
+    @Test
+    fun finishMicPressCancelsOnceAndRethrowsCancellation() = runTest {
+        val events = mutableListOf<String>()
+        val gate = MicPressGate(onPress = {}, onRelease = { events += "release" }, onCancel = { events += "cancel" })
+        val token = gate.acquire(MicPressOwner.POINTER)!!
+        val cancellation = CancellationException("gesture scope ended")
+
+        val thrown = try {
+            finishMicPress(gate, token) { throw cancellation }
+            null
+        } catch (error: CancellationException) {
+            error
+        }
+
+        assertTrue(thrown === cancellation)
+        assertEquals(listOf("cancel"), events)
+        gate.cancel(token)
+        assertEquals(listOf("cancel"), events)
     }
 
     @Test
