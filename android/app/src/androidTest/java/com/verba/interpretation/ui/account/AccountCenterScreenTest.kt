@@ -12,6 +12,7 @@ import com.verba.interpretation.cloud.CloudRole
 import com.verba.interpretation.cloud.CloudUser
 import com.verba.interpretation.cloud.UsageSummary
 import com.verba.interpretation.ui.AccountUiState
+import com.verba.interpretation.ui.RedeemUiState
 import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
@@ -25,6 +26,55 @@ class AccountCenterScreenTest {
         compose.onNodeWithText("修改用户名", substring = true).assertDoesNotExist()
         compose.onNodeWithText("alice@example.test", substring = true).assertDoesNotExist()
         compose.onNodeWithContentDescription("账户管理").assertExists()
+    }
+
+    @Test fun signedInAccountScreenExposesRedeemInputAndAction() {
+        var submittedCode: String? = null
+        compose.setContent {
+            MaterialTheme {
+                AccountScreen(
+                    state = signedInState(),
+                    onBack = {}, onUsage = {}, onHistory = {}, onSettings = {}, onServiceSettings = {}, onLogout = {},
+                    onRedeemCodeChange = { submittedCode = it },
+                    onRedeem = { submittedCode = submittedCode?.trim()?.uppercase() },
+                )
+            }
+        }
+
+        compose.onNodeWithContentDescription("兑换码输入框").performTextInput("aaaaaa-bbbbbb-cccccc-dddddd")
+        compose.onNodeWithContentDescription("兑换权益码").performClick()
+
+        assertEquals("AAAAAA-BBBBBB-CCCCCC-DDDDDD", submittedCode)
+    }
+
+    @Test fun accountMessageOverridesRedeemSuccessFeedback() {
+        compose.setContent {
+            MaterialTheme {
+                AccountScreen(
+                    state = signedInState().copy(
+                        message = "登录已过期，请重新登录。",
+                        redeem = RedeemUiState.Success("兑换成功，权益已更新。"),
+                    ),
+                    onBack = {}, onUsage = {}, onHistory = {}, onSettings = {}, onServiceSettings = {}, onLogout = {},
+                )
+            }
+        }
+
+        compose.onNodeWithContentDescription("账户错误：登录已过期，请重新登录。").assertExists()
+        compose.onNodeWithContentDescription("兑换结果：兑换成功，权益已更新。").assertDoesNotExist()
+    }
+
+    @Test fun redeemSuccessFeedbackIsShownWithoutAccountMessage() {
+        compose.setContent {
+            MaterialTheme {
+                AccountScreen(
+                    state = signedInState().copy(redeem = RedeemUiState.Success("兑换成功，权益已更新。")),
+                    onBack = {}, onUsage = {}, onHistory = {}, onSettings = {}, onServiceSettings = {}, onLogout = {},
+                )
+            }
+        }
+
+        compose.onNodeWithContentDescription("兑换结果：兑换成功，权益已更新。").assertExists()
     }
 
     @Test fun deletionDialogRequiresExactUsername() {

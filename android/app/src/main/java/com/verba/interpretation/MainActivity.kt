@@ -799,7 +799,6 @@ private fun AccountPage(
 ) {
     val state by accountViewModel.state.collectAsStateWithLifecycle()
     val latestLoginIdentifier by accountViewModel.latestLoginIdentifier.collectAsStateWithLifecycle()
-    var redemptionCode by remember { mutableStateOf("") }
     if (state.signedIn) {
         AccountScreen(
             state = state,
@@ -808,6 +807,8 @@ private fun AccountPage(
             onHistory = onHistory,
             onSettings = onSettings,
             onServiceSettings = onServiceSettings,
+            onRedeemCodeChange = accountViewModel::updateRedeemCode,
+            onRedeem = accountViewModel::redeem,
             onLogout = accountViewModel::logout,
             modifier = modifier,
             showServiceSettings = showServiceSettings,
@@ -851,26 +852,6 @@ private fun AccountPage(
                         onEditDetails = accountViewModel::returnToRegistrationDetails,
                         initialIdentifier = latestLoginIdentifier,
                     )
-                }
-            } else {
-                if (state.isAdmin && state.previewingUserExperience) {
-                    item {
-                        OutlinedButton(onClick = { accountViewModel.setPreviewingUserExperience(false) }, modifier = Modifier.fillMaxWidth()) {
-                            Text("返回管理员测试版")
-                        }
-                    }
-                }
-                item {
-                    Text("兑换权益码", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                    OutlinedTextField(redemptionCode, { redemptionCode = it }, label = { Text("兑换码") }, singleLine = true, modifier = Modifier.fillMaxWidth().padding(top = 10.dp))
-                    Row(Modifier.fillMaxWidth().padding(top = 10.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Button(
-                            onClick = { accountViewModel.redeem(redemptionCode) },
-                            enabled = !state.loading && redemptionCode.isNotBlank(),
-                            modifier = Modifier.weight(1f),
-                        ) { Text(if (state.loading) "处理中…" else "兑换") }
-                        OutlinedButton(onClick = accountViewModel::logout, enabled = !state.loading, modifier = Modifier.weight(1f)) { Text("退出登录") }
-                    }
                 }
             }
             state.message?.let { message ->

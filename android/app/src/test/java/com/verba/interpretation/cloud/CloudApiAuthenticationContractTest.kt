@@ -43,6 +43,19 @@ class CloudApiAuthenticationContractTest {
         assertFalse(body.has("captcha_answer"))
     }
 
+    @Test fun redeemPostsAuthenticatedCodeContract() {
+        val fake = FakeHttp(201, "{\"kind\":\"subscription\",\"expires_at\":\"2026-09-05T00:00:00Z\"}")
+        val api = CloudApi("https://cloud.example", MemoryTokenStore(AuthTokens("access", "refresh")), FixedInstallationIdStore(), fake.client)
+
+        api.redeem("AAAAAA-BBBBBB-CCCCCC-DDDDDD")
+
+        val request = fake.singleRequest()
+        assertEquals("POST", request.method)
+        assertEquals("/api/v1/redemptions", request.url.encodedPath)
+        assertEquals("Bearer access", request.header("Authorization"))
+        assertEquals("AAAAAA-BBBBBB-CCCCCC-DDDDDD", JSONObject(request.body!!.jsonBody()).getString("code"))
+    }
+
     @Test fun deleteAccountUsesExactUsernameAndClearsTokensOnNoContent() {
         val fake = FakeHttp(204, "")
         val store = MemoryTokenStore(AuthTokens("access", "refresh"))

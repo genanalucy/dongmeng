@@ -34,6 +34,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.util.Locale
 
 sealed interface RegistrationUiState {
     data object Details : RegistrationUiState
@@ -73,6 +74,31 @@ sealed interface RegistrationUiState {
     }
 }
 
+sealed interface RedeemUiState {
+    val code: String
+
+    data class Ready(override val code: String = "") : RedeemUiState
+    data class Submitting(override val code: String) : RedeemUiState
+    data class Success(val message: String = "兑换成功，权益已更新。") : RedeemUiState {
+        override val code: String = ""
+    }
+    data class Error(override val code: String, val message: String) : RedeemUiState
+}
+
+internal object RedemptionCodePolicy {
+    private val format = Regex("^[A-Z2-7]{6}(?:-[A-Z2-7]{6}){3}$")
+
+    fun normalize(code: String): String = code.trim().uppercase(Locale.ROOT)
+    fun isValid(code: String): Boolean = format.matches(code)
+}
+
+private const val RedeemOverviewRefreshPendingMessage = "兑换成功，权益详情稍后刷新。"
+
+private fun RedeemUiState.withOverviewRefreshFailureMessage(): RedeemUiState = when (this) {
+    is RedeemUiState.Success -> RedeemUiState.Success(RedeemOverviewRefreshPendingMessage)
+    else -> this
+}
+
 data class AccountUiState(
     val loading: Boolean = false,
     val user: CloudUser? = null,
@@ -81,6 +107,7 @@ data class AccountUiState(
     val identityProfile: AccountIdentityProfile? = null,
     val usage: UsagePage? = null,
     val message: String? = null,
+    val redeem: RedeemUiState = RedeemUiState.Ready(),
     val registration: RegistrationUiState = RegistrationUiState.Details,
     val previewingUserExperience: Boolean = false,
 ) {
@@ -309,9 +336,53 @@ class AccountViewModel(
         }
     }
 
-    fun redeem(code: String) = runRequest {
-        val entitlement = api.redeem(code)
-        api.currentUser() to entitlement
+    fun updateRedeemCode(code: String) {
+        val redeem = mutableState.value.redeem
+        if (redeem is RedeemUiState.Submitting) return
+        mutableState.value = mutableState.value.copy(redeem = RedeemUiState.Ready(code))
+    }
+
+    fun redeem() {
+        val state = mutableState.value
+        if (state.loading || state.redeem is RedeemUiState.Submitting) return
+        val code = RedemptionCodePolicy.normalize(state.redeem.code)
+        if (code.isEmpty()) {
+            mutableState.value = state.copy(redeem = RedeemUiState.Error(state.redeem.code, "请输入兑换码。"))
+            return
+        }
+        if (!RedemptionCodePolicy.isValid(code)) {
+            mutableState.value = state.copy(redeem = RedeemUiState.Error(state.redeem.code, "兑换码格式不正确，请检查后重试。"))
+            return
+        }
+        mutableState.value = state.copy(loading = true, message = null, redeem = RedeemUiState.Submitting(code))
+        viewModelScope.launch {
+            val entitlement = try {
+                withContext(ioDispatcher) { api.redeem(code) }
+            } catch (error: Exception) {
+                handleRedeemFailure(error)
+                return@launch
+            }
+
+            // 兑换一旦成功即不可回退为失败：先落地接口返回的权益并清空输入，
+            // 再独立刷新详情。刷新期间用户可开始输入下一枚兑换码，故后续更新不得重置 redeem。
+            mutableState.value = mutableState.value.copy(
+                entitlement = entitlement,
+                redeem = RedeemUiState.Success(),
+            )
+            try {
+                val overview = withContext(ioDispatcher) { api.accountOverview() }
+                mutableState.value = mutableState.value.copy(
+                    loading = false,
+                    entitlement = overview.entitlement ?: mutableState.value.entitlement,
+                    overview = overview,
+                )
+            } catch (_: Exception) {
+                mutableState.value = mutableState.value.copy(
+                    loading = false,
+                    redeem = mutableState.value.redeem.withOverviewRefreshFailureMessage(),
+                )
+            }
+        }
     }
 
     fun clearMessage() { mutableState.value = mutableState.value.copy(message = null) }
@@ -342,6 +413,22 @@ class AccountViewModel(
                 handleRequestFailure(error)
             }
         }
+    }
+
+    private fun handleRedeemFailure(error: Exception) {
+        val state = mutableState.value
+        val message = when ((error as? CloudApiException)?.statusCode) {
+            401 -> SessionExpiredMessage
+            400 -> "兑换码无效，请检查后重试。"
+            409 -> "兑换码暂时无法兑换，请联系支持人员或稍后重试。"
+            else -> "网络或服务不可用，请检查连接后重试。"
+        }
+        if (error is CloudApiException && error.statusCode == 401 && error.sessionExpired) {
+            mutableState.value = AccountUiState(message = SessionExpiredMessage)
+            return
+        }
+        val code = state.redeem.code
+        mutableState.value = state.copy(loading = false, redeem = RedeemUiState.Error(code, message))
     }
 
     /** 会话过期时清除登录态并提示重新登录；其余失败维持原状态并给出安全提示。 */

@@ -9,6 +9,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Logout
@@ -17,6 +19,7 @@ import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.ManageAccounts
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.WorkspacePremium
+import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -25,6 +28,7 @@ import androidx.compose.material3.ListItem
 import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
@@ -32,13 +36,17 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.verba.interpretation.cloud.AccountOverview
 import com.verba.interpretation.cloud.CloudEntitlement
 import com.verba.interpretation.cloud.UsageSummary
 import com.verba.interpretation.ui.AccountUiState
+import com.verba.interpretation.ui.RedeemUiState
 
 enum class AccountAction { USAGE, HISTORY, SETTINGS, SERVICE_SETTINGS, HELP, LOGOUT }
 
@@ -76,6 +84,8 @@ fun AccountScreen(
     onLogout: () -> Unit,
     modifier: Modifier = Modifier,
     showServiceSettings: Boolean = true,
+    onRedeemCodeChange: (String) -> Unit = {},
+    onRedeem: () -> Unit = {},
 ) {
     val overview = state.overview ?: AccountOverview(
         username = state.user?.username ?: "未登录",
@@ -158,6 +168,14 @@ fun AccountScreen(
                 }
             }
             item {
+                RedeemCard(
+                    redeem = state.redeem,
+                    enabled = !state.loading,
+                    onCodeChange = onRedeemCodeChange,
+                    onRedeem = onRedeem,
+                )
+            }
+            item {
                 AccountSectionLabel("账户管理")
                 Surface(
                     modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
@@ -195,15 +213,73 @@ fun AccountScreen(
                     Text("退出登录", modifier = Modifier.padding(start = 8.dp))
                 }
             }
-            state.message?.takeIf { it.isNotBlank() }?.let { message ->
+            val accountMessage = state.message?.takeIf { it.isNotBlank() }
+            val feedback = accountMessage ?: when (val redeem = state.redeem) {
+                is RedeemUiState.Error -> redeem.message
+                is RedeemUiState.Success -> redeem.message
+                else -> null
+            }
+            feedback?.let { message ->
+                val success = accountMessage == null && state.redeem is RedeemUiState.Success
                 item {
-                    Text(
-                        message,
-                        color = MaterialTheme.colorScheme.error,
-                        style = MaterialTheme.typography.bodyMedium,
-                        modifier = Modifier.semantics { contentDescription = "账户错误：$message" },
-                    )
+                    Surface(
+                        shape = MaterialTheme.shapes.medium,
+                        color = if (success) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.errorContainer,
+                        modifier = Modifier.fillMaxWidth().semantics {
+                            contentDescription = if (success) "兑换结果：$message" else "账户错误：$message"
+                            liveRegion = LiveRegionMode.Polite
+                        },
+                    ) {
+                        Text(
+                            message,
+                            color = if (success) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onErrorContainer,
+                            style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier.padding(16.dp),
+                        )
+                    }
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun RedeemCard(
+    redeem: RedeemUiState,
+    enabled: Boolean,
+    onCodeChange: (String) -> Unit,
+    onRedeem: () -> Unit,
+) {
+    val submitting = redeem is RedeemUiState.Submitting
+    val code = redeem.code
+    val error = (redeem as? RedeemUiState.Error)?.message
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.medium,
+        color = MaterialTheme.colorScheme.surfaceContainerLow,
+    ) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text("兑换权益码", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            Text("输入四段六码兑换码以更新账户权益。", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            OutlinedTextField(
+                value = code,
+                onValueChange = onCodeChange,
+                modifier = Modifier.fillMaxWidth().semantics { contentDescription = "兑换码输入框" },
+                label = { Text("兑换码") },
+                placeholder = { Text("AAAAAA-BBBBBB-CCCCCC-DDDDDD") },
+                supportingText = error?.let { { Text(it) } },
+                isError = error != null,
+                singleLine = true,
+                enabled = enabled,
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                keyboardActions = KeyboardActions(onDone = { if (enabled && !submitting) onRedeem() }),
+            )
+            Button(
+                onClick = onRedeem,
+                enabled = enabled && !submitting,
+                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).semantics { contentDescription = "兑换权益码" },
+            ) {
+                Text(if (submitting) "正在兑换…" else "兑换")
             }
         }
     }
