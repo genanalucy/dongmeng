@@ -2,7 +2,7 @@ name: Android CI
 
 on:
   push:
-    branches: [android]
+    branches: [android, android-ui-redesign]
     paths:
       - 'android/**'
       - '.github/workflows/android-ci.yml'
@@ -26,7 +26,7 @@ jobs:
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '17'
+          java-version: '21'
           cache: gradle
       - uses: android-actions/setup-android@v3
       - name: Install Android SDK 36
