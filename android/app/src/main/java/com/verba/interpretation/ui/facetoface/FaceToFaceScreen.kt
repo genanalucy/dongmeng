@@ -98,30 +98,14 @@ internal fun FaceToFaceScreen(
                 modifier = Modifier.weight(1f),
             )
         } else {
-            Column(Modifier.weight(1f)) {
-                FaceToFacePanels(
-                    state = state,
-                    presentation = presentation,
-                    modifier = Modifier.weight(1f),
-                )
-                EarMicControls(
-                    state = state,
-                    presentation = presentation,
-                    requestMicrophone = requestMicrophone,
-                    onManualPress = viewModel::manualPress,
-                    onManualRelease = viewModel::manualRelease,
-                    onManualCancel = viewModel::manualCancel,
-                    clearMicrophoneRequest = clearMicrophoneRequest,
-                    onStartAuto = viewModel::startAuto,
-                    onPressRightAuto = viewModel::pressRightAuto,
-                    onReleaseRightAuto = viewModel::releaseRightAuto,
-                    onCancelRightAuto = viewModel::cancelRightAuto,
-                    onPauseAuto = viewModel::pauseAuto,
-                    onResumeAuto = viewModel::resumeAuto,
-                    onStopAuto = { clearMicrophoneRequest(); viewModel.stopAuto() },
-                    onSetLanguages = viewModel::setLanguages,
-                )
-            }
+            FaceToFacePanels(
+                state = state,
+                presentation = presentation,
+                requestMicrophone = requestMicrophone,
+                clearMicrophoneRequest = clearMicrophoneRequest,
+                viewModel = viewModel,
+                modifier = Modifier.weight(1f),
+            )
         }
     }
 }
@@ -227,6 +211,9 @@ private fun ConversationLayout(
 private fun FaceToFacePanels(
     state: FaceToFaceState,
     presentation: FaceToFacePresentation,
+    requestMicrophone: (MicrophonePermissionAction) -> Unit,
+    clearMicrophoneRequest: () -> Unit,
+    viewModel: FaceToFaceViewModel,
     modifier: Modifier,
 ) {
     Column(
@@ -236,6 +223,9 @@ private fun FaceToFacePanels(
             state = state,
             presentation = presentation,
             position = FaceToFacePanelPosition.FAR,
+            requestMicrophone = requestMicrophone,
+            clearMicrophoneRequest = clearMicrophoneRequest,
+            viewModel = viewModel,
             modifier = Modifier.weight(1f),
         )
         Box(Modifier.fillMaxWidth().padding(horizontal = 49.dp).height(1.dp).background(VerbaColors.ShellStroke))
@@ -243,6 +233,9 @@ private fun FaceToFacePanels(
             state = state,
             presentation = presentation,
             position = FaceToFacePanelPosition.NEAR,
+            requestMicrophone = requestMicrophone,
+            clearMicrophoneRequest = clearMicrophoneRequest,
+            viewModel = viewModel,
             modifier = Modifier.weight(1f),
         )
     }
@@ -253,11 +246,14 @@ private fun FaceReadingHalf(
     state: FaceToFaceState,
     presentation: FaceToFacePresentation,
     position: FaceToFacePanelPosition,
+    requestMicrophone: (MicrophonePermissionAction) -> Unit,
+    clearMicrophoneRequest: () -> Unit,
+    viewModel: FaceToFaceViewModel,
     modifier: Modifier,
 ) {
     val rotated = position == FaceToFacePanelPosition.FAR
     val side = if (rotated) FaceToFaceSide.RIGHT else FaceToFaceSide.LEFT
-    Box(
+    Column(
         modifier = modifier
             .fillMaxWidth()
             .graphicsLayer {
@@ -266,7 +262,7 @@ private fun FaceReadingHalf(
             }
             .semantics {
                 testTag = "face-to-face-panel-${position.name.lowercase()}"
-                contentDescription = if (rotated) "远端右耳阅读区，旋转180度" else "近端左耳阅读区，正向"
+                contentDescription = if (rotated) "远端右耳阅读区和麦克风，旋转180度" else "近端左耳阅读区和麦克风，正向"
             },
     ) {
         ConversationTimeline(
@@ -277,7 +273,27 @@ private fun FaceReadingHalf(
             activeTurnId = state.activeTurnId,
             contentDescription = "${earLabel(side)}对话记录",
             visualSpec = ConversationTimelineVisualSpec.Face,
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier.weight(1f),
+        )
+        EarMicControls(
+            state = state,
+            presentation = presentation,
+            requestMicrophone = requestMicrophone,
+            onManualPress = viewModel::manualPress,
+            onManualRelease = viewModel::manualRelease,
+            onManualCancel = viewModel::manualCancel,
+            clearMicrophoneRequest = clearMicrophoneRequest,
+            onStartAuto = viewModel::startAuto,
+            onPressRightAuto = viewModel::pressRightAuto,
+            onReleaseRightAuto = viewModel::releaseRightAuto,
+            onCancelRightAuto = viewModel::cancelRightAuto,
+            onPauseAuto = viewModel::pauseAuto,
+            onResumeAuto = viewModel::resumeAuto,
+            onStopAuto = { clearMicrophoneRequest(); viewModel.stopAuto() },
+            onSetLanguages = viewModel::setLanguages,
+            modifier = Modifier.semantics { testTag = "face-to-face-mic-${position.name.lowercase()}" },
+            visibleSides = setOf(side),
+            showAutoControls = false,
         )
     }
 }

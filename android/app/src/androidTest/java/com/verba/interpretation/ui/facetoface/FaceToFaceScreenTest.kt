@@ -63,8 +63,12 @@ class FaceToFaceScreenTest {
 
         compose.onNodeWithContentDescription("切换到面对面布局").assertIsDisplayed().performClick()
         compose.onNodeWithTag("face-to-face-panels").assertIsDisplayed()
-        compose.onNodeWithTag("face-to-face-panel-far").assertContentDescriptionEquals("远端右耳阅读区，旋转180度")
-        compose.onNodeWithTag("face-to-face-panel-near").assertContentDescriptionEquals("近端左耳阅读区，正向")
+        compose.onNodeWithTag("face-to-face-panel-far").assertContentDescriptionEquals("远端右耳阅读区和麦克风，旋转180度")
+        compose.onNodeWithTag("face-to-face-panel-near").assertContentDescriptionEquals("近端左耳阅读区和麦克风，正向")
+        compose.onNodeWithTag("face-to-face-mic-far").assertIsDisplayed()
+        compose.onNodeWithTag("face-to-face-mic-near").assertIsDisplayed()
+        compose.onNodeWithContentDescription("右耳，English，按住说话，译文送至左耳").assertIsDisplayed()
+        compose.onNodeWithContentDescription("左耳，中文，按住说话，译文送至右耳").assertIsDisplayed()
     }
 
     @Test
@@ -83,9 +87,9 @@ class FaceToFaceScreenTest {
         }
 
         compose.onNodeWithContentDescription("切换到面对面布局").assertIsDisplayed().performClick()
-        compose.onNodeWithTag("face-to-face-panel-far").assertIsDisplayed().assertContentDescriptionEquals("远端右耳阅读区，旋转180度")
+        compose.onNodeWithTag("face-to-face-panel-far").assertIsDisplayed().assertContentDescriptionEquals("远端右耳阅读区和麦克风，旋转180度")
         compose.onNodeWithContentDescription("右耳，English，按住说话，译文送至左耳").performScrollTo().assertIsDisplayed().performClick()
-        compose.onNodeWithTag("face-to-face-panel-near").performScrollTo().assertIsDisplayed().assertContentDescriptionEquals("近端左耳阅读区，正向")
+        compose.onNodeWithTag("face-to-face-panel-near").performScrollTo().assertIsDisplayed().assertContentDescriptionEquals("近端左耳阅读区和麦克风，正向")
         compose.onNodeWithContentDescription("左耳，中文，按住说话，译文送至右耳").performScrollTo().assertIsDisplayed().performClick()
     }
 
@@ -107,9 +111,9 @@ class FaceToFaceScreenTest {
         }
 
         compose.onNodeWithContentDescription("切换到面对面布局").assertIsDisplayed().performClick()
-        compose.onNodeWithTag("face-to-face-panel-far").assertIsDisplayed().assertContentDescriptionEquals("远端右耳阅读区，旋转180度").performScrollTo()
+        compose.onNodeWithTag("face-to-face-panel-far").assertIsDisplayed().assertContentDescriptionEquals("远端右耳阅读区和麦克风，旋转180度").performScrollTo()
         compose.onNodeWithContentDescription("右耳，English，按住说话，译文送至左耳").performScrollTo().assertIsDisplayed().performClick()
-        compose.onNodeWithTag("face-to-face-panel-near").performScrollTo().assertIsDisplayed().assertContentDescriptionEquals("近端左耳阅读区，正向")
+        compose.onNodeWithTag("face-to-face-panel-near").performScrollTo().assertIsDisplayed().assertContentDescriptionEquals("近端左耳阅读区和麦克风，正向")
         compose.onNodeWithContentDescription("左耳，中文，按住说话，译文送至右耳").performScrollTo().assertIsDisplayed().performClick()
     }
 
