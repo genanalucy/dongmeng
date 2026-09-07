@@ -54,6 +54,26 @@ func TestHealthReadyAndPublicConfig(t *testing.T) {
 	}
 }
 
+func TestDomainErrorDistinguishesMissingEntitlementFromGenericForbidden(t *testing.T) {
+	tests := []struct {
+		name, errorCode string
+		err             error
+	}{
+		{name: "missing entitlement", err: domain.ErrNoEntitlement, errorCode: "no_entitlement"},
+		{name: "generic forbidden", err: domain.ErrForbidden, errorCode: "forbidden"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodPost, "/api/v1/translation-sessions", nil)
+			response := httptest.NewRecorder()
+			domainError(response, request, test.err)
+			if response.Code != http.StatusForbidden || !strings.Contains(response.Body.String(), `"error":"`+test.errorCode+`"`) {
+				t.Fatalf("response = %d %s", response.Code, response.Body.String())
+			}
+		})
+	}
+}
+
 func TestReadyHidesDatabaseFailureAndHonorsDeadline(t *testing.T) {
 	database := readinessFunc(func(ctx context.Context) error {
 		<-ctx.Done()

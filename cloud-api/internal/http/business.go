@@ -167,7 +167,9 @@ func domainError(w http.ResponseWriter, r *http.Request, err error) {
 		inputError(w, r)
 	case errors.Is(err, domain.ErrUnauthorized):
 		unauthorized(w, r)
-	case errors.Is(err, domain.ErrForbidden), errors.Is(err, domain.ErrNoEntitlement):
+	case errors.Is(err, domain.ErrNoEntitlement):
+		writeError(w, r, http.StatusForbidden, "no_entitlement")
+	case errors.Is(err, domain.ErrForbidden):
 		writeError(w, r, http.StatusForbidden, "forbidden")
 	case errors.Is(err, domain.ErrNotFound):
 		writeError(w, r, http.StatusNotFound, "not_found")

@@ -187,6 +187,16 @@ class CloudApiAuthenticationContractTest {
         assertEquals("该用户名或邮箱暂不可用，请更换后重试。", error.message)
     }
 
+    @Test fun translationSessionWithoutEntitlementShowsRecoveryMessage() {
+        val fake = FakeHttp(403, "{\"error\":\"no_entitlement\"}")
+        val api = CloudApi("https://cloud.example", MemoryTokenStore(AuthTokens("access", "refresh")), FixedInstallationIdStore(), fake.client)
+
+        val error = assertThrows(CloudApiException::class.java) { api.createTranslationSession() }
+
+        assertEquals("当前账户没有可用权益，请兑换或等待试用生效。", error.message)
+        assertEquals(403, error.statusCode)
+    }
+
     @Test fun translationSessionConflictKeepsSessionMessage() {
         val fake = FakeHttp(409, "{\"error\":\"conflict\"}")
         val api = CloudApi("https://cloud.example", MemoryTokenStore(AuthTokens("access", "refresh")), FixedInstallationIdStore(), fake.client)
