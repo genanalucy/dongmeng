@@ -153,14 +153,21 @@ internal fun EarMicControls(
     onResumeAuto: () -> Unit,
     onStopAuto: () -> Unit,
     onSetLanguages: (String, String) -> Unit,
+    clearMicrophoneRequest: () -> Unit = {},
     modifier: Modifier = Modifier,
     visibleSides: Set<FaceToFaceSide> = setOf(FaceToFaceSide.LEFT, FaceToFaceSide.RIGHT),
     showAutoControls: Boolean = true,
 ) {
     val manual = state.mode == FaceToFaceMode.MANUAL
     val activeSide = presentation.activeMic
-    val leftRelease: () -> Unit = if (manual) onManualRelease else ({ })
-    val leftCancel: () -> Unit = if (manual) onManualCancel else ({ })
+    val leftRelease: () -> Unit = {
+        clearMicrophoneRequest()
+        if (manual) onManualRelease()
+    }
+    val leftCancel: () -> Unit = {
+        clearMicrophoneRequest()
+        if (manual) onManualCancel()
+    }
     Column(modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.Bottom) {
             if (FaceToFaceSide.LEFT in visibleSides) EarMicButton(
@@ -203,8 +210,14 @@ internal fun EarMicControls(
                 onPress = {
                     if (manual) requestMicrophone(MicrophonePermissionAction.Manual(FaceToFaceSide.RIGHT)) else onPressRightAuto()
                 },
-                onRelease = if (manual) onManualRelease else onReleaseRightAuto,
-                onCancel = if (manual) onManualCancel else onCancelRightAuto,
+                onRelease = {
+                    clearMicrophoneRequest()
+                    if (manual) onManualRelease() else onReleaseRightAuto()
+                },
+                onCancel = {
+                    clearMicrophoneRequest()
+                    if (manual) onManualCancel() else onCancelRightAuto()
+                },
                 onAccessibleClick = if (manual) {
                     { if (state.phase == FaceToFacePhase.IDLE) requestMicrophone(MicrophonePermissionAction.Manual(FaceToFaceSide.RIGHT)) else onManualRelease() }
                 } else null,
@@ -289,7 +302,7 @@ internal fun EarMicButton(
                         }
                     }
                 }
-                .pointerInput(side, pointerEnabled) {
+                .pointerInput(side) {
                     detectTapGestures(onPress = {
                         if (!currentPointerEnabled) return@detectTapGestures
                         val token = gate.acquire(MicPressOwner.POINTER) ?: return@detectTapGestures

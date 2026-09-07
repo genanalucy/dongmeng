@@ -1,12 +1,19 @@
 package com.verba.interpretation.ui.facetoface
 
 import android.app.Application
+import androidx.compose.foundation.layout.height
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.dp
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.test.onNodeWithTag
@@ -58,6 +65,46 @@ class FaceToFaceScreenTest {
         compose.onNodeWithTag("face-to-face-panels").assertIsDisplayed()
         compose.onNodeWithTag("face-to-face-panel-far").assertContentDescriptionEquals("远端右耳阅读区，旋转180度")
         compose.onNodeWithTag("face-to-face-panel-near").assertContentDescriptionEquals("近端左耳阅读区，正向")
+    }
+
+    @Test
+    fun constrainedPanelsCanScrollToAndOperateBothEarControls() {
+        val viewModel = FaceToFaceViewModel(application())
+        compose.setContent {
+            MaterialTheme {
+                FaceToFaceScreen(
+                    state = com.verba.interpretation.ui.FaceToFaceState(),
+                    viewModel = viewModel,
+                    requestMicrophone = {},
+                    modifier = Modifier.height(240.dp),
+                )
+            }
+        }
+
+        compose.onNodeWithContentDescription("切换到面对面布局").performClick()
+        compose.onNodeWithContentDescription("左耳，中文，按住说话，译文送至右耳").performScrollTo().performClick()
+        compose.onNodeWithContentDescription("右耳，English，按住说话，译文送至左耳").performScrollTo().performClick()
+    }
+
+    @Test
+    fun constrainedPanelsCanUseFontScaleAndStillExposeControls() {
+        val viewModel = FaceToFaceViewModel(application())
+        compose.setContent {
+            CompositionLocalProvider(LocalDensity provides Density(1f, fontScale = 2f)) {
+                MaterialTheme {
+                    FaceToFaceScreen(
+                        state = com.verba.interpretation.ui.FaceToFaceState(),
+                        viewModel = viewModel,
+                        requestMicrophone = {},
+                        modifier = Modifier.height(260.dp),
+                    )
+                }
+            }
+        }
+
+        compose.onNodeWithContentDescription("切换到面对面布局").performClick()
+        compose.onNodeWithTag("face-to-face-panel-far").performScrollTo()
+        compose.onNodeWithContentDescription("右耳，English，按住说话，译文送至左耳").assertExists()
     }
 
     @Test

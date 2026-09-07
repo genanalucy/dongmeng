@@ -39,4 +39,18 @@ class MicrophonePermissionPolicyTest {
         assertNull(policy.consumeResult(true))
         assertTrue(policy.request(MicrophonePermissionAction.Manual(FaceToFaceSide.LEFT)))
     }
+
+    @Test
+    fun releaseAndCancelClearPendingRequestBeforePermissionCallback() {
+        val policy = MicrophonePermissionPolicy()
+        val manual = MicrophonePermissionAction.Manual(FaceToFaceSide.LEFT)
+        val continuous = MicrophonePermissionAction.Continuous
+
+        assertTrue(policy.request(manual))
+        policy.clear()
+        assertNull(policy.consumeResult(true))
+        assertTrue(policy.request(continuous))
+        policy.clear()
+        assertNull(policy.consumeResult(false))
+    }
 }

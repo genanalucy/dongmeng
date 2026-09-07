@@ -59,6 +59,27 @@ class ConversationDisplayBubbleTest {
     }
 
     @Test
+    fun explicitActiveTurnIdWinsOverPhaseFallback() {
+        val first = FaceToFaceTurn(
+            id = 1,
+            side = FaceToFaceSide.LEFT,
+            sourceLanguage = "zh",
+            targetLanguage = "en",
+            route = PlaybackRoute.RIGHT,
+            sourcePartial = "first",
+        )
+        val second = first.copy(id = 2, sourcePartial = "second")
+
+        val bubbles = displayConversationBubbles(
+            listOf(first, second),
+            phase = FaceToFacePhase.LISTENING,
+            activeTurnId = 1,
+        )
+
+        assertEquals(listOf(true, false), bubbles.map { it.isLive })
+    }
+
+    @Test
     fun pairsOnlyMatchingFinalEventIndexesRatherThanAggregatedSentenceIndexes() {
         val turn = FaceToFaceTurn(
             id = 42,

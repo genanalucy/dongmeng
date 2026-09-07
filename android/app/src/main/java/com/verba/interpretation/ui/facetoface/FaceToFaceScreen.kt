@@ -58,6 +58,7 @@ internal fun FaceToFaceScreen(
     state: FaceToFaceState,
     viewModel: FaceToFaceViewModel,
     requestMicrophone: (MicrophonePermissionAction) -> Unit,
+    clearMicrophoneRequest: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val presentation = faceToFacePresentation(state)
@@ -87,7 +88,10 @@ internal fun FaceToFaceScreen(
                 )
             }
             androidx.compose.material3.TextButton(
-                onClick = { viewModel.setView(if (state.view == FaceToFaceView.CONVERSATION) FaceToFaceView.FACE_TO_FACE else FaceToFaceView.CONVERSATION) },
+                onClick = {
+                    clearMicrophoneRequest()
+                    viewModel.setView(if (state.view == FaceToFaceView.CONVERSATION) FaceToFaceView.FACE_TO_FACE else FaceToFaceView.CONVERSATION)
+                },
                 modifier = Modifier.semantics {
                     testTag = "face-view-toggle"
                     contentDescription = if (state.view == FaceToFaceView.CONVERSATION) "切换到面对面布局" else "切换到对话布局"
@@ -96,11 +100,11 @@ internal fun FaceToFaceScreen(
             ) { Text(if (state.view == FaceToFaceView.CONVERSATION) "面对面" else "对话") }
             FaceToFaceOverflowMenu(
                 state = state,
-                onSelectMode = viewModel::setMode,
+                onSelectMode = { mode -> clearMicrophoneRequest(); viewModel.setMode(mode) },
                 onStartAuto = { requestMicrophone(MicrophonePermissionAction.Continuous) },
                 onPauseAuto = viewModel::pauseAuto,
                 onResumeAuto = viewModel::resumeAuto,
-                onStopAuto = viewModel::stopAuto,
+                onStopAuto = { clearMicrophoneRequest(); viewModel.stopAuto() },
             )
         }
 
@@ -112,7 +116,7 @@ internal fun FaceToFaceScreen(
             ) {
                 Row(Modifier.padding(horizontal = 14.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                     Text(message, color = Color(0xFFFFDAD6), style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
-                    Button(onClick = viewModel::cancel, modifier = Modifier.heightIn(min = 44.dp)) {
+                    Button(onClick = { clearMicrophoneRequest(); viewModel.cancel() }, modifier = Modifier.heightIn(min = 44.dp)) {
                         Icon(Icons.Filled.Refresh, contentDescription = null, modifier = Modifier.size(17.dp))
                         Spacer(Modifier.width(5.dp))
                         Text(FACE_TO_FACE_RECOVERY_ACTION_LABEL)
@@ -122,9 +126,9 @@ internal fun FaceToFaceScreen(
         }
 
         if (state.view == FaceToFaceView.CONVERSATION) {
-            ConversationLayout(state, presentation, requestMicrophone, viewModel, Modifier.weight(1f))
+            ConversationLayout(state, presentation, requestMicrophone, clearMicrophoneRequest, viewModel, Modifier.weight(1f))
         } else {
-            FaceToFacePanels(state, presentation, requestMicrophone, viewModel, Modifier.weight(1f))
+            FaceToFacePanels(state, presentation, requestMicrophone, clearMicrophoneRequest, viewModel, Modifier.weight(1f))
         }
     }
 }
@@ -134,6 +138,7 @@ private fun ConversationLayout(
     state: FaceToFaceState,
     presentation: FaceToFacePresentation,
     requestMicrophone: (MicrophonePermissionAction) -> Unit,
+    clearMicrophoneRequest: () -> Unit,
     viewModel: FaceToFaceViewModel,
     modifier: Modifier,
 ) {
@@ -143,6 +148,7 @@ private fun ConversationLayout(
             activeMic = presentation.activeMic,
             listeningPlaceholder = presentation.timelinePlaceholder,
             phase = state.phase,
+            activeTurnId = state.activeTurnId,
             modifier = Modifier.weight(1f),
         )
         Surface(color = Color(0xFF0E1927), modifier = Modifier.fillMaxWidth()) {
@@ -153,13 +159,14 @@ private fun ConversationLayout(
                 onManualPress = viewModel::manualPress,
                 onManualRelease = viewModel::manualRelease,
                 onManualCancel = viewModel::manualCancel,
+                clearMicrophoneRequest = clearMicrophoneRequest,
                 onStartAuto = viewModel::startAuto,
                 onPressRightAuto = viewModel::pressRightAuto,
                 onReleaseRightAuto = viewModel::releaseRightAuto,
                 onCancelRightAuto = viewModel::cancelRightAuto,
                 onPauseAuto = viewModel::pauseAuto,
                 onResumeAuto = viewModel::resumeAuto,
-                onStopAuto = viewModel::stopAuto,
+                onStopAuto = { clearMicrophoneRequest(); viewModel.stopAuto() },
                 onSetLanguages = viewModel::setLanguages,
             )
         }
@@ -171,6 +178,7 @@ private fun FaceToFacePanels(
     state: FaceToFaceState,
     presentation: FaceToFacePresentation,
     requestMicrophone: (MicrophonePermissionAction) -> Unit,
+    clearMicrophoneRequest: () -> Unit,
     viewModel: FaceToFaceViewModel,
     modifier: Modifier,
 ) {
@@ -181,7 +189,7 @@ private fun FaceToFacePanels(
                 modifier = Modifier
                     .fillMaxWidth()
                     .heightIn(min = 220.dp)
-                    .graphicsLayer { rotationZ = panel.rotationDegrees }
+                    .graphicsLayer { rotationZ = faceToFacePanelRotation(panel.position) }
                     .semantics {
                         testTag = "face-to-face-panel-${panel.position.name.lowercase()}"
                         contentDescription = when (panel.position) {
@@ -195,6 +203,7 @@ private fun FaceToFacePanels(
                     activeMic = presentation.activeMic,
                     listeningPlaceholder = presentation.timelinePlaceholder,
                     phase = state.phase,
+                    activeTurnId = state.activeTurnId,
                     contentDescription = "${earLabel(panel.side)}对话记录",
                     modifier = Modifier.heightIn(min = 96.dp, max = 260.dp).fillMaxWidth(),
                 )
@@ -205,6 +214,7 @@ private fun FaceToFacePanels(
                     onManualPress = viewModel::manualPress,
                     onManualRelease = viewModel::manualRelease,
                     onManualCancel = viewModel::manualCancel,
+                    clearMicrophoneRequest = clearMicrophoneRequest,
                     onStartAuto = viewModel::startAuto,
                     onPressRightAuto = viewModel::pressRightAuto,
                     onReleaseRightAuto = viewModel::releaseRightAuto,
