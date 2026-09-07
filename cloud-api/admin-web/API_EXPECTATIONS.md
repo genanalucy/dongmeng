@@ -32,6 +32,15 @@
 
 `target_id` 可选。HTTP 边界将存储层开放 `metadata` 投影为固定安全对象 `{}`，不会将原始 metadata、secret 或任意嵌套值发送到浏览器。
 
+## 修改密码
+
+`POST /api/v1/admin/password`
+
+- 需要管理员 `Authorization: Bearer <access-token>`，JSON body 为 `{ "current_password", "new_password" }`，上限 16 KiB。
+- 成功返回 `204 No Content`（无 body）；服务端随后将 `auth_version` 加一并撤销全部 refresh token，**旧 access/refresh 立即失效**，前端必须清除本地会话并重新登录。
+- 错误码：`403 invalid_current_password`（当前密码错误）、`400 password_unchanged`（新密码与当前相同）、`400 invalid_request`（畸形 body 或新密码不满足策略）、`401`（会话失效）。
+- 前端区分：`401` 显示登录失效并回登录页；`403 invalid_current_password` 显示当前密码错误且保持登录；其余按通用错误处理并携带请求 ID。密码只存在于组件内存与请求 body，不落任何浏览器存储。
+
 ## 前端行为
 
 控制台固定每页请求 `limit=50`；用户页面提供提交式邮箱搜索，提交或清空会将 `offset` 重置为 `0`。用户与审计页面均提供上一页/下一页；没有 total 时，返回条数小于 50 会禁用下一页，整页后的空页会恢复上一页而不会卡死。401 显示登录失效，403 显示权限不足，其他错误显示受控重试状态。

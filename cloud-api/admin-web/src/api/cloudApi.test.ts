@@ -105,6 +105,34 @@ describe('CloudApiClient', () => {
     expect(((call?.[1] as RequestInit).headers as Headers).get('Authorization')).toBeNull()
   })
 
+  it('changes the administrator password with an authenticated body and accepts 204 without a body', async () => {
+    const fetchMock = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(
+      () => Promise.resolve(new Response(null, { status: 204, headers: { 'X-Request-ID': 'request-1' } })),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(new CloudApiClient('http://api.example.test', 'access-value').changeAdminPassword('current-value', 'replacement-value')).resolves.toEqual({ kind: 'success', data: {}, requestId: 'request-1' })
+
+    const call = fetchMock.mock.calls[0]
+    expect(call?.[0]).toBe('http://api.example.test/api/v1/admin/password')
+    expect(call?.[1]).toMatchObject({ method: 'POST', body: JSON.stringify({ current_password: 'current-value', new_password: 'replacement-value' }) })
+    expect(((call?.[1] as RequestInit).headers as Headers).get('Authorization')).toBe('Bearer access-value')
+    expect(((call?.[1] as RequestInit).headers as Headers).get('Content-Type')).toBe('application/json')
+  })
+
+  it('preserves the stable server error codes for a rejected password change', async () => {
+    const fetchMock = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>()
+      .mockResolvedValueOnce(jsonResponse({ error: 'invalid_current_password' }, 403))
+      .mockResolvedValueOnce(jsonResponse({ error: 'password_unchanged' }, 400))
+      .mockResolvedValueOnce(jsonResponse({ error: 'invalid_request' }, 400))
+    vi.stubGlobal('fetch', fetchMock)
+    const client = new CloudApiClient('http://api.example.test', 'access-value')
+
+    await expect(client.changeAdminPassword('wrong', 'replacement-value')).resolves.toEqual({ kind: 'forbidden', status: 403, error: 'invalid_current_password', requestId: 'request-1' })
+    await expect(client.changeAdminPassword('current-value', 'current-value')).resolves.toEqual({ kind: 'error', status: 400, error: 'password_unchanged', requestId: 'request-1' })
+    await expect(client.changeAdminPassword('current-value', 'short')).resolves.toEqual({ kind: 'error', status: 400, error: 'invalid_request', requestId: 'request-1' })
+  })
+
   it('holds 501 routes in a controlled unavailable state', async () => {
     vi.stubGlobal('fetch', vi.fn(() => Promise.resolve(jsonResponse({ error: 'not_implemented', request_id: 'body-id' }, 501))))
     await expect(new CloudApiClient('http://api.example.test').listAuditLogs()).resolves.toEqual({ kind: 'unavailable', status: 501, error: 'not_implemented', requestId: 'request-1' })

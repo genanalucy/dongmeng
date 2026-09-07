@@ -90,6 +90,7 @@ All endpoints below require exactly one `Authorization: Bearer <access JWT>`.
 - `GET /api/v1/admin/code-batches?limit=&offset=` — returns batch counts and disabled status, never plaintext codes.
 - `POST /api/v1/admin/code-batches` — `{ "name": "…", "count": 1..1000 }`; response includes plaintext codes once only.
 - `POST /api/v1/admin/code-batches/{batchID}/disable` — disables every still-unredeemed code in the batch; redeemed entitlements are unaffected.
+- `POST /api/v1/admin/password` — `{ "current_password", "new_password" }`（JSON body 上限 16 KiB）。认证成功且当前密码验证通过后返回 `204 No Content`；错误码：`400 invalid_request`（畸形/超限 body 或新密码不满足策略）、`400 password_unchanged`、`403 invalid_current_password`。成功后账户 `auth_version` 加一，**旧 access token 立即失效，全部 refresh token 立即撤销**，客户端必须用新密码重新登录。审计追加 `admin.password.change`，metadata 固定为 `{}`，不含密码、hash 或其他敏感信息。
 
 The first administrator is created offline with `bootstrap-admin <username>` and both email and password supplied as separate standard-input lines. It is idempotent only for the same username/email, refuses to create a different administrator once one exists, and accepts only a PostgreSQL URL targeting `127.0.0.1:15432`; no public bootstrap route is exposed.
 

@@ -257,4 +257,143 @@ describe('App', () => {
     await waitFor(() => expect(screen.getAllByText('user.disabled')).toHaveLength(50))
     expect(screen.getByRole('button', { name: '上一页' })).toBeDisabled()
   })
+
+  it('changes the administrator password, clears the stored session, and returns to the login page', async () => {
+    sessionStorage.setItem('cloud-api.admin.access-token', 'access-value')
+    sessionStorage.setItem('cloud-api.admin.refresh-token', 'refresh-value')
+    const fetchMock = vi.fn<(url: string, init?: RequestInit) => Promise<Response>>((url: string) => {
+      if (url.endsWith('/users/me')) return Promise.resolve(adminUser())
+      if (url.endsWith('/admin/password')) return Promise.resolve(new Response(null, { status: 204 }))
+      return Promise.resolve(platformResponse(url))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: '修改密码' }))
+    expect(await screen.findByRole('heading', { name: '修改管理员密码' })).toBeInTheDocument()
+    expect(screen.getByLabelText('当前密码')).toHaveAttribute('autocomplete', 'current-password')
+    expect(screen.getByLabelText('新密码')).toHaveAttribute('autocomplete', 'new-password')
+    expect(screen.getByLabelText('确认新密码')).toHaveAttribute('autocomplete', 'new-password')
+    expect(screen.getByLabelText('当前密码')).toHaveAttribute('type', 'password')
+    fireEvent.change(screen.getByLabelText('当前密码'), { target: { value: 'fixture-current-password' } })
+    fireEvent.change(screen.getByLabelText('新密码'), { target: { value: 'replacement-password-01' } })
+    fireEvent.change(screen.getByLabelText('确认新密码'), { target: { value: 'replacement-password-01' } })
+    fireEvent.click(screen.getByRole('button', { name: '确认修改' }))
+
+    expect(await screen.findByRole('heading', { name: '管理员登录' })).toBeInTheDocument()
+    expect(screen.getByRole('alert')).toHaveTextContent('密码已修改，请重新登录。')
+    const changeCall = fetchMock.mock.calls.find(([url]) => String(url).endsWith('/admin/password'))
+    expect(changeCall?.[1]).toMatchObject({ method: 'POST', body: JSON.stringify({ current_password: 'fixture-current-password', new_password: 'replacement-password-01' }) })
+    expect(((changeCall?.[1] as RequestInit).headers as Headers).get('Authorization')).toBe('Bearer access-value')
+    expect(sessionStorage.getItem('cloud-api.admin.access-token')).toBeNull()
+    expect(sessionStorage.getItem('cloud-api.admin.refresh-token')).toBeNull()
+  })
+
+  it('blocks mismatched new passwords in the browser without submitting credentials', async () => {
+    sessionStorage.setItem('cloud-api.admin.access-token', 'access-value')
+    sessionStorage.setItem('cloud-api.admin.refresh-token', 'refresh-value')
+    const fetchMock = vi.fn<(url: string, init?: RequestInit) => Promise<Response>>((url: string) => {
+      if (url.endsWith('/users/me')) return Promise.resolve(adminUser())
+      return Promise.resolve(platformResponse(url))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: '修改密码' }))
+    await screen.findByRole('heading', { name: '修改管理员密码' })
+    fireEvent.change(screen.getByLabelText('当前密码'), { target: { value: 'fixture-current-password' } })
+    fireEvent.change(screen.getByLabelText('新密码'), { target: { value: 'replacement-password-01' } })
+    fireEvent.change(screen.getByLabelText('确认新密码'), { target: { value: 'different-password' } })
+    fireEvent.click(screen.getByRole('button', { name: '确认修改' }))
+
+    expect(screen.getByRole('alert')).toHaveTextContent('两次输入的新密码不一致。')
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith('/admin/password'))).toHaveLength(0)
+  })
+
+  it('does not repeat a password change submission while the first one is pending', async () => {
+    sessionStorage.setItem('cloud-api.admin.access-token', 'access-value')
+    sessionStorage.setItem('cloud-api.admin.refresh-token', 'refresh-value')
+    let resolveChange: (response: Response) => void = () => undefined
+    const fetchMock = vi.fn<(url: string) => Promise<Response>>((url: string) => {
+      if (url.endsWith('/users/me')) return Promise.resolve(adminUser())
+      if (url.endsWith('/admin/password')) return new Promise<Response>((resolve) => { resolveChange = resolve })
+      return Promise.resolve(platformResponse(url))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: '修改密码' }))
+    await screen.findByRole('heading', { name: '修改管理员密码' })
+    fireEvent.change(screen.getByLabelText('当前密码'), { target: { value: 'fixture-current-password' } })
+    fireEvent.change(screen.getByLabelText('新密码'), { target: { value: 'replacement-password-01' } })
+    fireEvent.change(screen.getByLabelText('确认新密码'), { target: { value: 'replacement-password-01' } })
+    fireEvent.click(screen.getByRole('button', { name: '确认修改' }))
+
+    const pendingButton = await screen.findByRole('button', { name: '正在提交…' })
+    expect(pendingButton).toBeDisabled()
+    fireEvent.click(pendingButton)
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith('/admin/password'))).toHaveLength(1)
+
+    resolveChange(new Response(null, { status: 204 }))
+    expect(await screen.findByRole('heading', { name: '管理员登录' })).toBeInTheDocument()
+  })
+
+  it('maps password change failures to distinct safe messages', async () => {
+    const cases: ReadonlyArray<{ readonly name: string; readonly response: () => Promise<Response>; readonly message: string }> = [
+      { name: 'wrong current password', response: () => Promise.resolve(jsonResponse({ error: 'invalid_current_password' }, 403)), message: '当前密码不正确，请确认后重试。' },
+      { name: 'unchanged password', response: () => Promise.resolve(jsonResponse({ error: 'password_unchanged' }, 400)), message: '新密码不能与当前密码相同。' },
+      { name: 'weak password', response: () => Promise.resolve(jsonResponse({ error: 'invalid_request' }, 400)), message: '新密码不符合安全要求，请更换后重试。' },
+      { name: 'network', response: () => Promise.reject(new TypeError('network unavailable')), message: '连接 Cloud API 失败，请检查网络与服务地址。' },
+      { name: 'server', response: () => Promise.resolve(jsonResponse({ error: 'internal_error', request_id: 'request-example-test' }, 500)), message: '请求失败：internal_error（请求 ID：request-example-test）' },
+    ]
+    for (const testCase of cases) {
+      sessionStorage.setItem('cloud-api.admin.access-token', 'access-value')
+      sessionStorage.setItem('cloud-api.admin.refresh-token', 'refresh-value')
+      const warmup = vi.fn<(url: string) => Promise<Response>>((url: string) => {
+        if (url.endsWith('/users/me')) return Promise.resolve(adminUser())
+        return Promise.resolve(platformResponse(url))
+      })
+      vi.stubGlobal('fetch', warmup)
+      const { unmount } = render(<App />)
+      fireEvent.click(await screen.findByRole('button', { name: '修改密码' }))
+      await screen.findByRole('heading', { name: '修改管理员密码' })
+      vi.stubGlobal('fetch', vi.fn(testCase.response))
+      fireEvent.change(screen.getByLabelText('当前密码'), { target: { value: 'fixture-current-password' } })
+      fireEvent.change(screen.getByLabelText('新密码'), { target: { value: 'replacement-password-01' } })
+      fireEvent.change(screen.getByLabelText('确认新密码'), { target: { value: 'replacement-password-01' } })
+      fireEvent.click(screen.getByRole('button', { name: '确认修改' }))
+      await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent(testCase.message), { timeout: 1000 })
+      if (testCase.name === 'wrong current password') {
+        expect(sessionStorage.getItem('cloud-api.admin.access-token')).toBe('access-value')
+        expect(screen.getByRole('heading', { name: '修改管理员密码' })).toBeInTheDocument()
+      }
+      unmount()
+      sessionStorage.clear()
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('ends the session when a password change meets an expired credential', async () => {
+    sessionStorage.setItem('cloud-api.admin.access-token', 'access-value')
+    sessionStorage.setItem('cloud-api.admin.refresh-token', 'refresh-value')
+    vi.stubGlobal('fetch', vi.fn((url: string) => {
+      if (url.endsWith('/users/me')) return Promise.resolve(adminUser())
+      if (url.endsWith('/admin/password')) return Promise.resolve(jsonResponse({ error: 'unauthorized' }, 401))
+      if (url.endsWith('/auth/refresh')) return Promise.resolve(jsonResponse({ error: 'unauthorized' }, 401))
+      return Promise.resolve(platformResponse(url))
+    }))
+
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: '修改密码' }))
+    await screen.findByRole('heading', { name: '修改管理员密码' })
+    fireEvent.change(screen.getByLabelText('当前密码'), { target: { value: 'fixture-current-password' } })
+    fireEvent.change(screen.getByLabelText('新密码'), { target: { value: 'replacement-password-01' } })
+    fireEvent.change(screen.getByLabelText('确认新密码'), { target: { value: 'replacement-password-01' } })
+    fireEvent.click(screen.getByRole('button', { name: '确认修改' }))
+
+    expect(await screen.findByRole('heading', { name: '管理员登录' })).toBeInTheDocument()
+    expect(screen.getByRole('alert')).toHaveTextContent('登录状态已失效，请重新登录。')
+    expect(sessionStorage.getItem('cloud-api.admin.access-token')).toBeNull()
+    expect(sessionStorage.getItem('cloud-api.admin.refresh-token')).toBeNull()
+  })
 })

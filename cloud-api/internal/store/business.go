@@ -46,7 +46,7 @@ func (p *Postgres) tx(ctx context.Context, f func(pgx.Tx) error) error {
 }
 func scanUser(row pgx.Row) (domain.User, error) {
 	var u domain.User
-	err := row.Scan(&u.ID, &u.Username, &u.Phone, &u.Email, &u.Role, &u.CreatedAt)
+	err := row.Scan(&u.ID, &u.Username, &u.Phone, &u.Email, &u.Role, &u.CreatedAt, &u.AuthVersion)
 	u.Email = publicEmail(u.Email)
 	return u, storeErr(err)
 }
@@ -66,7 +66,7 @@ func scanEnt(row pgx.Row) (domain.Entitlement, error) {
 func registerTx(ctx context.Context, t pgx.Tx, x domain.RegisterParams) (domain.User, domain.Entitlement, error) {
 	var u domain.User
 	var e domain.Entitlement
-	err := t.QueryRow(ctx, `INSERT INTO users(email,username,phone,password_hash) VALUES($1,NULLIF($2,''),NULLIF($3,''),$4) RETURNING id,COALESCE(username,''),COALESCE(phone,''),email,role,created_at`, x.Email, x.Username, x.Phone, x.PasswordHash).Scan(&u.ID, &u.Username, &u.Phone, &u.Email, &u.Role, &u.CreatedAt)
+	err := t.QueryRow(ctx, `INSERT INTO users(email,username,phone,password_hash) VALUES($1,NULLIF($2,''),NULLIF($3,''),$4) RETURNING id,COALESCE(username,''),COALESCE(phone,''),email,role,created_at,auth_version`, x.Email, x.Username, x.Phone, x.PasswordHash).Scan(&u.ID, &u.Username, &u.Phone, &u.Email, &u.Role, &u.CreatedAt, &u.AuthVersion)
 	if err != nil {
 		return u, e, storeErr(err)
 	}
@@ -237,25 +237,25 @@ func (p *Postgres) CleanupRegistrationVerificationRateLimits(ctx context.Context
 func (p *Postgres) UserByEmail(ctx context.Context, email string) (domain.User, string, error) {
 	var u domain.User
 	var hash string
-	err := p.pool.QueryRow(ctx, `SELECT id,COALESCE(username,''),COALESCE(phone,''),email,role,created_at,password_hash FROM users WHERE email=$1 AND disabled_at IS NULL`, email).Scan(&u.ID, &u.Username, &u.Phone, &u.Email, &u.Role, &u.CreatedAt, &hash)
+	err := p.pool.QueryRow(ctx, `SELECT id,COALESCE(username,''),COALESCE(phone,''),email,role,created_at,password_hash,auth_version FROM users WHERE email=$1 AND disabled_at IS NULL`, email).Scan(&u.ID, &u.Username, &u.Phone, &u.Email, &u.Role, &u.CreatedAt, &hash, &u.AuthVersion)
 	u.Email = publicEmail(u.Email)
 	return u, hash, storeErr(err)
 }
 func (p *Postgres) UserByPhone(ctx context.Context, phone string) (domain.User, string, error) {
 	var u domain.User
 	var hash string
-	err := p.pool.QueryRow(ctx, `SELECT id,COALESCE(username,''),phone,role,created_at,password_hash FROM users WHERE phone=$1 AND disabled_at IS NULL`, phone).Scan(&u.ID, &u.Username, &u.Phone, &u.Role, &u.CreatedAt, &hash)
+	err := p.pool.QueryRow(ctx, `SELECT id,COALESCE(username,''),phone,role,created_at,password_hash,auth_version FROM users WHERE phone=$1 AND disabled_at IS NULL`, phone).Scan(&u.ID, &u.Username, &u.Phone, &u.Role, &u.CreatedAt, &hash, &u.AuthVersion)
 	return u, hash, storeErr(err)
 }
 func (p *Postgres) UserByUsername(ctx context.Context, username string) (domain.User, string, error) {
 	var u domain.User
 	var hash string
-	err := p.pool.QueryRow(ctx, `SELECT id,username,COALESCE(phone,''),email,role,created_at,password_hash FROM users WHERE username=$1 AND disabled_at IS NULL`, username).Scan(&u.ID, &u.Username, &u.Phone, &u.Email, &u.Role, &u.CreatedAt, &hash)
+	err := p.pool.QueryRow(ctx, `SELECT id,username,COALESCE(phone,''),email,role,created_at,password_hash,auth_version FROM users WHERE username=$1 AND disabled_at IS NULL`, username).Scan(&u.ID, &u.Username, &u.Phone, &u.Email, &u.Role, &u.CreatedAt, &hash, &u.AuthVersion)
 	u.Email = publicEmail(u.Email)
 	return u, hash, storeErr(err)
 }
 func (p *Postgres) UserByID(ctx context.Context, id uuid.UUID) (domain.User, error) {
-	return scanUser(p.pool.QueryRow(ctx, `SELECT id,COALESCE(username,''),COALESCE(phone,''),email,role,created_at FROM users WHERE id=$1`, id))
+	return scanUser(p.pool.QueryRow(ctx, `SELECT id,COALESCE(username,''),COALESCE(phone,''),email,role,created_at,auth_version FROM users WHERE id=$1`, id))
 }
 
 // ActiveEntitlement resolves the user's currently active entitlement. An
@@ -580,7 +580,7 @@ func (p *Postgres) UpdateIdentity(ctx context.Context, input domain.UpdateIdenti
 		if username == "" && phone == "" {
 			email = existingEmail
 		}
-		return storeErr(t.QueryRow(ctx, `UPDATE users SET username=$2,email=$3,phone=$4 WHERE id=$1 RETURNING id,username,phone,email,role,created_at`, input.UserID, input.Username, email, input.Phone).Scan(&user.ID, &user.Username, &user.Phone, &user.Email, &user.Role, &user.CreatedAt))
+		return storeErr(t.QueryRow(ctx, `UPDATE users SET username=$2,email=$3,phone=$4 WHERE id=$1 RETURNING id,username,phone,email,role,created_at,auth_version`, input.UserID, input.Username, email, input.Phone).Scan(&user.ID, &user.Username, &user.Phone, &user.Email, &user.Role, &user.CreatedAt, &user.AuthVersion))
 	})
 	user.Email = publicEmail(user.Email)
 	return user, err

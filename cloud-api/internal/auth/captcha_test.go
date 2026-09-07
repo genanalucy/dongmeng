@@ -45,6 +45,30 @@ func stubSlideData(targetX int) slide.CaptchaData {
 	return stubCaptchaData{block: &slide.Block{X: targetX, Y: 100, Width: 64, Height: 64, DX: 7, DY: 100}}
 }
 
+type slideSequenceGenerator struct {
+	values []slide.CaptchaData
+	calls  int
+}
+
+func (g *slideSequenceGenerator) Generate() (slide.CaptchaData, error) {
+	value := g.values[g.calls%len(g.values)]
+	g.calls++
+	return value, nil
+}
+
+func TestBoundedSlideGeneratorRetriesEscapingTargetsAndFailsClosed(t *testing.T) {
+	sequence := &slideSequenceGenerator{values: []slide.CaptchaData{stubSlideData(238), stubSlideData(137)}}
+	data, err := (boundedSlideGenerator{generator: sequence}).Generate()
+	if err != nil || data.GetData().X != 137 || sequence.calls != 2 {
+		t.Fatalf("bounded generator data=%v calls=%d err=%v", data.GetData(), sequence.calls, err)
+	}
+
+	alwaysEscaping := &slideSequenceGenerator{values: []slide.CaptchaData{stubSlideData(238)}}
+	if _, err := (boundedSlideGenerator{generator: alwaysEscaping}).Generate(); !errors.Is(err, domain.ErrInvalid) || alwaysEscaping.calls != maxSlideGenerationAttempts {
+		t.Fatalf("escaping generator calls=%d err=%v", alwaysEscaping.calls, err)
+	}
+}
+
 func newTestCaptchaService(t *testing.T) CaptchaService {
 	t.Helper()
 	// Distinct salts per issue mirror production randomness so drafts never

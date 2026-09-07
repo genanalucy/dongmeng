@@ -131,7 +131,27 @@ func NewDefaultSlideGenerator() (SlideGenerator, error) {
 	}
 	builder := slide.NewBuilder(slide.WithImageSize(option.Size{Width: CaptchaImageWidth, Height: CaptchaImageHeight}))
 	builder.SetResources(slide.WithBackgrounds(backgrounds), slide.WithGraphImages(graphs))
-	return builder.Make(), nil
+	return boundedSlideGenerator{generator: builder.Make()}, nil
+}
+
+const maxSlideGenerationAttempts = 8
+
+type boundedSlideGenerator struct {
+	generator SlideGenerator
+}
+
+func (g boundedSlideGenerator) Generate() (slide.CaptchaData, error) {
+	for range maxSlideGenerationAttempts {
+		data, err := g.generator.Generate()
+		if err != nil {
+			return nil, err
+		}
+		block := data.GetData()
+		if block != nil && block.X >= CaptchaTolerance && block.X+block.Width <= CaptchaImageWidth {
+			return data, nil
+		}
+	}
+	return nil, fmt.Errorf("%w: slide captcha target escapes the draggable canvas", domain.ErrInvalid)
 }
 
 // Issue generates one slide challenge, encodes its images, and derives the

@@ -18,7 +18,7 @@ func (p *Postgres) BootstrapAdmin(ctx context.Context, username, email, password
 		if _, err := t.Exec(ctx, `SELECT pg_advisory_xact_lock(1684957579)`); err != nil {
 			return err
 		}
-		err := t.QueryRow(ctx, `SELECT id,COALESCE(username,''),'',email,role,created_at FROM users WHERE role='admin' ORDER BY created_at,id LIMIT 1`).Scan(&user.ID, &user.Username, &user.Phone, &user.Email, &user.Role, &user.CreatedAt)
+		err := t.QueryRow(ctx, `SELECT id,COALESCE(username,''),'',email,role,created_at,auth_version FROM users WHERE role='admin' ORDER BY created_at,id LIMIT 1`).Scan(&user.ID, &user.Username, &user.Phone, &user.Email, &user.Role, &user.CreatedAt, &user.AuthVersion)
 		if err == nil {
 			if user.Username == username && user.Email == email {
 				return nil
@@ -28,7 +28,7 @@ func (p *Postgres) BootstrapAdmin(ctx context.Context, username, email, password
 		if !errors.Is(err, pgx.ErrNoRows) {
 			return err
 		}
-		return t.QueryRow(ctx, `INSERT INTO users(email,username,password_hash,role,created_at) VALUES($1,$2,$3,'admin',$4) RETURNING id,username,'',email,role,created_at`, email, username, passwordHash, now.UTC()).Scan(&user.ID, &user.Username, &user.Phone, &user.Email, &user.Role, &user.CreatedAt)
+		return t.QueryRow(ctx, `INSERT INTO users(email,username,password_hash,role,created_at) VALUES($1,$2,$3,'admin',$4) RETURNING id,username,'',email,role,created_at,auth_version`, email, username, passwordHash, now.UTC()).Scan(&user.ID, &user.Username, &user.Phone, &user.Email, &user.Role, &user.CreatedAt, &user.AuthVersion)
 	})
 	return user, storeErr(err)
 }

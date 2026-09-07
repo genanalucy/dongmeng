@@ -49,6 +49,56 @@ func TestAccessTokenRoundTrip(t *testing.T) {
 	}
 }
 
+func TestAccessTokenVersionRoundTripAndLegacyCompatibility(t *testing.T) {
+	issuer := testIssuer()
+	now := time.Date(2026, 3, 4, 5, 6, 7, 0, time.UTC)
+	userID := uuid.New()
+
+	versioned, err := issuer.AccessTokenVersioned(userID, string(domain.RoleAdmin), 3, 15*time.Minute, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	claims, err := issuer.ParseAccessAt(versioned, now.Add(time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if claims.AuthVersion != 3 {
+		t.Fatalf("versioned claim = %d, want 3", claims.AuthVersion)
+	}
+	if _, err := issuer.ParseTranslationAt(versioned, now.Add(time.Minute)); err == nil {
+		t.Fatal("versioned access token accepted as translation token")
+	}
+
+	legacy, err := issuer.AccessToken(userID, string(domain.RoleUser), time.Minute, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacyClaims, err := issuer.ParseAccessAt(legacy, now.Add(time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if legacyClaims.AuthVersion != 0 {
+		t.Fatalf("unversioned token claim = %d, want 0 for pre-migration compatibility", legacyClaims.AuthVersion)
+	}
+
+	if _, err := issuer.AccessTokenVersioned(userID, string(domain.RoleAdmin), -1, time.Minute, now); !errors.Is(err, domain.ErrInvalid) {
+		t.Fatalf("negative auth version error = %v, want ErrInvalid", err)
+	}
+
+	sessionID, entitlementID, jti := uuid.New(), uuid.New(), uuid.New()
+	translation, err := issuer.TranslationTokenForInstall(sessionID, entitlementID, userID, jti, "install-value", 5*time.Minute, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	translationClaims, err := issuer.ParseTranslationAt(translation, now.Add(time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if translationClaims.AuthVersion != 0 {
+		t.Fatalf("translation token auth version = %d, want 0", translationClaims.AuthVersion)
+	}
+}
+
 func TestTranslationTokenRoundTripAndScopeSeparation(t *testing.T) {
 	issuer := testIssuer()
 	now := time.Date(2026, 2, 3, 4, 5, 6, 0, time.UTC)

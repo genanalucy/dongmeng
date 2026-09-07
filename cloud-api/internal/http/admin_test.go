@@ -19,38 +19,44 @@ import (
 
 type adminContractStore struct {
 	domain.Store
-	enabled         bool
-	enabledErr      error
-	users           []domain.User
-	auditLogs       []domain.AuditLog
-	entitlements    []domain.Entitlement
-	codeBatches     []domain.CodeBatch
-	usersErr        error
-	auditLogsErr    error
-	userSearch      string
-	userLimit       int
-	userOffset      int
-	auditLimit      int
-	auditOffset     int
-	disabledBatch   uuid.UUID
-	phoneUser       domain.User
-	phoneHash       string
-	phoneQuery      string
-	emailQuery      string
-	usernameQuery   string
-	emailCalls      int
-	usernameCalls   int
-	lookupErr       error
-	register        domain.RegisterParams
-	registerErr     error
-	reservedEmail   string
-	storedEmails    []string
-	phoneCalls      int
-	refreshes       []domain.RefreshToken
-	setupEnabled    bool
-	setupEnabledErr error
-	setupErr        error
-	setupParams     domain.AdminSetupParams
+	enabled           bool
+	enabledErr        error
+	authVersion       int
+	users             []domain.User
+	auditLogs         []domain.AuditLog
+	entitlements      []domain.Entitlement
+	codeBatches       []domain.CodeBatch
+	usersErr          error
+	auditLogsErr      error
+	userSearch        string
+	userLimit         int
+	userOffset        int
+	auditLimit        int
+	auditOffset       int
+	disabledBatch     uuid.UUID
+	phoneUser         domain.User
+	phoneHash         string
+	phoneQuery        string
+	emailQuery        string
+	usernameQuery     string
+	emailCalls        int
+	usernameCalls     int
+	lookupErr         error
+	register          domain.RegisterParams
+	registerErr       error
+	reservedEmail     string
+	storedEmails      []string
+	phoneCalls        int
+	refreshes         []domain.RefreshToken
+	setupEnabled      bool
+	setupEnabledErr   error
+	setupErr          error
+	setupParams       domain.AdminSetupParams
+	passwordHash      string
+	passwordHashErr   error
+	passwordChange    domain.AdminPasswordChangeParams
+	passwordChanged   bool
+	passwordChangeErr error
 }
 
 func (s *adminContractStore) AdminSetupEnabled(context.Context, time.Time) (bool, error) {
@@ -127,8 +133,18 @@ func (s *adminContractStore) Register(_ context.Context, params domain.RegisterP
 	return user, trial, nil
 }
 
-func (s *adminContractStore) UserEnabled(context.Context, uuid.UUID) (bool, error) {
-	return s.enabled, s.enabledErr
+func (s *adminContractStore) UserAuthState(context.Context, uuid.UUID) (domain.UserAuthState, error) {
+	return domain.UserAuthState{Enabled: s.enabled, AuthVersion: s.authVersion}, s.enabledErr
+}
+
+func (s *adminContractStore) UserPasswordHash(context.Context, uuid.UUID) (string, error) {
+	return s.passwordHash, s.passwordHashErr
+}
+
+func (s *adminContractStore) ChangeAdminPassword(_ context.Context, params domain.AdminPasswordChangeParams) error {
+	s.passwordChange = params
+	s.passwordChanged = true
+	return s.passwordChangeErr
 }
 
 func (s *adminContractStore) ListUsers(_ context.Context, search string, limit, offset int) ([]domain.User, error) {
@@ -457,5 +473,246 @@ func TestAdminSetupStatusAndCompletionContract(t *testing.T) {
 	}
 	if store.setupParams.Username != "admin_01" || store.setupParams.Email != "admin@example.test" || store.setupParams.PasswordHash == "password1" {
 		t.Fatalf("setup input was not normalized and hashed: %#v", store.setupParams)
+	}
+}
+
+func adminPasswordRequest(router http.Handler, token, body string) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/password", strings.NewReader(body))
+	req.RemoteAddr = "127.0.0.1:12345"
+	if body != "" {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, req)
+	return response
+}
+
+func TestAdminPasswordChangeEnforcesAuthenticationRoleAndEnabledUser(t *testing.T) {
+	adminID := uuid.New()
+	hash, err := auth.HashPassword("fixture-current-password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := &adminContractStore{enabled: true, passwordHash: hash}
+	router, issuer, now := newAdminContractRouter(t, store)
+	userToken := adminAccessToken(t, issuer, uuid.New(), domain.RoleUser, now)
+	adminToken := adminAccessToken(t, issuer, adminID, domain.RoleAdmin, now)
+	body := `{"current_password":"fixture-current-password","new_password":"replacement-password-01"}`
+
+	if response := adminPasswordRequest(router, "", body); response.Code != http.StatusUnauthorized {
+		t.Fatalf("missing token status = %d", response.Code)
+	}
+	if response := adminPasswordRequest(router, "invalid-token", body); response.Code != http.StatusUnauthorized {
+		t.Fatalf("invalid token status = %d", response.Code)
+	}
+	if response := adminPasswordRequest(router, userToken, body); response.Code != http.StatusForbidden || strings.Contains(response.Body.String(), "invalid_current_password") {
+		t.Fatalf("user role status = %d %s", response.Code, response.Body.String())
+	}
+	store.enabled = false
+	if response := adminPasswordRequest(router, adminToken, body); response.Code != http.StatusUnauthorized {
+		t.Fatalf("disabled admin status = %d", response.Code)
+	}
+	if store.passwordChanged {
+		t.Fatal("disabled admin reached the password change store call")
+	}
+	store.enabled = true
+	if response := adminPasswordRequest(router, adminToken, body); response.Code != http.StatusNoContent {
+		t.Fatalf("admin status = %d %s", response.Code, response.Body.String())
+	}
+	if !store.passwordChanged || store.passwordChange.AdminID != adminID {
+		t.Fatalf("store call = %+v", store.passwordChange)
+	}
+}
+
+func TestAdminPasswordChangeRejectsBadInputWithoutTouchingStore(t *testing.T) {
+	adminID := uuid.New()
+	hash, err := auth.HashPassword("fixture-current-password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := &adminContractStore{enabled: true, passwordHash: hash}
+	router, issuer, now := newAdminContractRouter(t, store)
+	token := adminAccessToken(t, issuer, adminID, domain.RoleAdmin, now)
+
+	for _, test := range []struct {
+		name string
+		body string
+		code int
+	}{
+		{name: "unknown field", body: `{"current_password":"fixture-current-password","new_password":"replacement-password-01","extra":"x"}`, code: http.StatusBadRequest},
+		{name: "missing field", body: `{"current_password":"fixture-current-password"}`, code: http.StatusBadRequest},
+		{name: "empty current password", body: `{"current_password":"","new_password":"replacement-password-01"}`, code: http.StatusBadRequest},
+		{name: "weak new password", body: `{"current_password":"fixture-current-password","new_password":"short"}`, code: http.StatusBadRequest},
+		{name: "oversized new password", body: `{"current_password":"fixture-current-password","new_password":"` + strings.Repeat("x", 300) + `"}`, code: http.StatusBadRequest},
+		{name: "wrong current password", body: `{"current_password":"wrong-current-password","new_password":"replacement-password-01"}`, code: http.StatusForbidden},
+		{name: "unchanged password", body: `{"current_password":"fixture-current-password","new_password":"fixture-current-password"}`, code: http.StatusBadRequest},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			store.passwordChanged = false
+			response := adminPasswordRequest(router, token, test.body)
+			if response.Code != test.code {
+				t.Fatalf("status = %d %s, want %d", response.Code, response.Body.String(), test.code)
+			}
+			if store.passwordChanged {
+				t.Fatal("rejected request reached the store")
+			}
+		})
+	}
+
+	store.passwordChanged = false
+	response := adminPasswordRequest(router, token, `{"current_password":"fixture-current-password","new_password":"replacement-password-01","csrf":"1"}`)
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("unknown field status = %d", response.Code)
+	}
+	if store.passwordChanged {
+		t.Fatal("unknown field request reached the store")
+	}
+}
+
+func TestAdminPasswordChangeRejectsBodiesAboveDedicatedLimit(t *testing.T) {
+	adminID := uuid.New()
+	hash, err := auth.HashPassword("fixture-current-password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := &adminContractStore{enabled: true, passwordHash: hash}
+	router, issuer, now := newAdminContractRouter(t, store)
+	token := adminAccessToken(t, issuer, adminID, domain.RoleAdmin, now)
+
+	// 16 KiB of credentials is far beyond any legitimate request yet below
+	// the generic 1 MiB decode ceiling, so this proves the dedicated limit.
+	body := `{"current_password":"` + strings.Repeat("x", 16<<10) + `","new_password":"replacement-password-01"}`
+	response := adminPasswordRequest(router, token, body)
+	if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), "invalid_request") {
+		t.Fatalf("oversized body = %d %s", response.Code, response.Body.String())
+	}
+	if store.passwordChanged {
+		t.Fatal("oversized request reached the store")
+	}
+}
+
+func TestAdminPasswordChangeStableErrorCodes(t *testing.T) {
+	adminID := uuid.New()
+	hash, err := auth.HashPassword("fixture-current-password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := `{"current_password":"fixture-current-password","new_password":"replacement-password-01"}`
+
+	wrongCurrent := &adminContractStore{enabled: true, passwordHash: hash}
+	router, issuer, now := newAdminContractRouter(t, wrongCurrent)
+	response := adminPasswordRequest(router, adminAccessToken(t, issuer, adminID, domain.RoleAdmin, now), `{"current_password":"not-the-current-password","new_password":"replacement-password-01"}`)
+	if response.Code != http.StatusForbidden || !strings.Contains(response.Body.String(), "invalid_current_password") {
+		t.Fatalf("wrong current password = %d %s", response.Code, response.Body.String())
+	}
+	if strings.Contains(response.Body.String(), "argon2") || strings.Contains(response.Body.String(), "hash") {
+		t.Fatalf("wrong current password response leaked internals: %s", response.Body.String())
+	}
+
+	unchanged := &adminContractStore{enabled: true, passwordHash: hash}
+	router, issuer, now = newAdminContractRouter(t, unchanged)
+	response = adminPasswordRequest(router, adminAccessToken(t, issuer, adminID, domain.RoleAdmin, now), `{"current_password":"fixture-current-password","new_password":"fixture-current-password"}`)
+	if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), "password_unchanged") {
+		t.Fatalf("unchanged password = %d %s", response.Code, response.Body.String())
+	}
+
+	store := &adminContractStore{enabled: true, passwordHash: hash}
+	router, issuer, now = newAdminContractRouter(t, store)
+	token := adminAccessToken(t, issuer, adminID, domain.RoleAdmin, now)
+	for _, test := range []struct {
+		name string
+		err  error
+		code int
+		text string
+	}{
+		{name: "concurrent change", err: domain.ErrConflict, code: http.StatusConflict, text: "conflict"},
+		{name: "no longer admin", err: domain.ErrForbidden, code: http.StatusForbidden, text: "forbidden"},
+		{name: "store failure", err: errors.New("password store failure"), code: http.StatusInternalServerError, text: "internal_error"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			store.passwordChangeErr = test.err
+			defer func() { store.passwordChangeErr = nil }()
+			response := adminPasswordRequest(router, token, body)
+			if response.Code != test.code || !strings.Contains(response.Body.String(), test.text) {
+				t.Fatalf("status = %d %s, want %d containing %q", response.Code, response.Body.String(), test.code, test.text)
+			}
+			if strings.Contains(response.Body.String(), "password store failure") {
+				t.Fatal("store failure detail leaked")
+			}
+		})
+	}
+}
+
+func TestAdminPasswordChangeForwardsOnlyHashesToStore(t *testing.T) {
+	adminID := uuid.New()
+	hash, err := auth.HashPassword("fixture-current-password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := &adminContractStore{enabled: true, passwordHash: hash}
+	router, issuer, now := newAdminContractRouter(t, store)
+	token := adminAccessToken(t, issuer, adminID, domain.RoleAdmin, now)
+
+	response := adminPasswordRequest(router, token, `{"current_password":"fixture-current-password","new_password":"replacement-password-01"}`)
+	if response.Code != http.StatusNoContent || response.Body.Len() != 0 {
+		t.Fatalf("success = %d %q", response.Code, response.Body.String())
+	}
+	if !store.passwordChanged {
+		t.Fatal("store was not called")
+	}
+	if store.passwordChange.CurrentHash != hash {
+		t.Fatal("store did not receive the verified current hash as the CAS guard")
+	}
+	if store.passwordChange.NewHash == "" || store.passwordChange.NewHash == "replacement-password-01" || strings.Contains(store.passwordChange.NewHash, "replacement") {
+		t.Fatal("store received plaintext or empty new password instead of a hash")
+	}
+	if store.passwordChange.CurrentHash == store.passwordChange.NewHash {
+		t.Fatal("identical current and new hashes forwarded")
+	}
+	if !store.passwordChange.Now.Equal(now.UTC()) {
+		t.Fatalf("store now = %s, want %s", store.passwordChange.Now, now.UTC())
+	}
+}
+
+func TestRequireRejectsStaleAuthVersionImmediately(t *testing.T) {
+	adminID := uuid.New()
+	store := &adminContractStore{enabled: true, authVersion: 1, users: []domain.User{{ID: adminID, Username: "admin_01", Role: string(domain.RoleAdmin), CreatedAt: time.Now()}}}
+	router, issuer, now := newAdminContractRouter(t, store)
+
+	legacyToken, err := issuer.AccessToken(adminID, string(domain.RoleAdmin), time.Minute, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response := adminRequest(router, "/api/v1/admin/users", legacyToken); response.Code != http.StatusUnauthorized {
+		t.Fatalf("pre-change access token status = %d, want 401 after version bump", response.Code)
+	}
+
+	currentToken, err := issuer.AccessTokenVersioned(adminID, string(domain.RoleAdmin), 1, time.Minute, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response := adminRequest(router, "/api/v1/admin/users", currentToken); response.Code != http.StatusOK {
+		t.Fatalf("current-version access token status = %d", response.Code)
+	}
+
+	store.authVersion = 2
+	if response := adminRequest(router, "/api/v1/admin/users", currentToken); response.Code != http.StatusUnauthorized {
+		t.Fatalf("access token survived a later password change: %d", response.Code)
+	}
+}
+
+func TestRequireStillAcceptsPreMigrationTokensAgainstDefaultVersion(t *testing.T) {
+	adminID := uuid.New()
+	store := &adminContractStore{enabled: true, users: []domain.User{{ID: adminID, Username: "admin_01", Role: string(domain.RoleAdmin), CreatedAt: time.Now()}}}
+	router, issuer, now := newAdminContractRouter(t, store)
+	token, err := issuer.AccessToken(adminID, string(domain.RoleAdmin), time.Minute, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response := adminRequest(router, "/api/v1/admin/users", token); response.Code != http.StatusOK {
+		t.Fatalf("pre-migration token status = %d, want 200 while version stays 0", response.Code)
 	}
 }

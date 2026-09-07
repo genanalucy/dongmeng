@@ -23,7 +23,13 @@ import (
 	"github.com/google/uuid"
 )
 
-const maxBodyBytes int64 = 1 << 20
+const (
+	maxBodyBytes int64 = 1 << 20
+	// maxAdminPasswordBodyBytes bounds POST /api/v1/admin/password to 16 KiB;
+	// the body carries two credentials and needs far less than the generic
+	// 1 MiB envelope shared by the other JSON routes.
+	maxAdminPasswordBodyBytes int64 = 16 << 10
+)
 
 type businessStore interface {
 	domain.Store
@@ -31,7 +37,9 @@ type businessStore interface {
 	auth.EntitlementLifecycleStore
 	auth.ConcurrentTranslationSessionStore
 	CreateSession(context.Context, domain.TranslationSession, time.Time) error
-	UserEnabled(context.Context, uuid.UUID) (bool, error)
+	UserAuthState(context.Context, uuid.UUID) (domain.UserAuthState, error)
+	UserPasswordHash(context.Context, uuid.UUID) (string, error)
+	ChangeAdminPassword(context.Context, domain.AdminPasswordChangeParams) error
 	DisableUser(context.Context, uuid.UUID, uuid.UUID, time.Time) error
 	GrantEntitlementByAdmin(context.Context, uuid.UUID, uuid.UUID, time.Time) (domain.Entitlement, error)
 	RevokeEntitlementByAdmin(context.Context, uuid.UUID, uuid.UUID, uuid.UUID, time.Time) error
@@ -111,8 +119,13 @@ func (a api) require(next http.Handler) http.Handler {
 			unauthorized(w, r)
 			return
 		}
-		enabled, err := a.store.UserEnabled(r.Context(), id)
-		if err != nil || !enabled {
+		// The per-request state check covers both account disablement and a
+		// stale auth version. A committed password change bumps the persisted
+		// version, so every access token issued before it fails here on its
+		// next request instead of surviving until natural expiry. Tokens issued
+		// before the version column existed carry no claim and compare as 0.
+		state, err := a.store.UserAuthState(r.Context(), id)
+		if err != nil || !state.Enabled || state.AuthVersion != c.AuthVersion {
 			unauthorized(w, r)
 			return
 		}
@@ -146,10 +159,16 @@ func unauthorized(w http.ResponseWriter, r *http.Request) {
 	writeError(w, r, http.StatusUnauthorized, "unauthorized")
 }
 func decode(w http.ResponseWriter, r *http.Request, d any) error {
+	return decodeLimit(w, r, d, maxBodyBytes)
+}
+
+// decodeLimit is decode with an explicit body ceiling for handlers whose
+// payload should stay well below the generic 1 MiB envelope.
+func decodeLimit(w http.ResponseWriter, r *http.Request, d any, limit int64) error {
 	if !strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") {
 		return errors.New("content-type")
 	}
-	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBodyBytes))
+	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, limit))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(d); err != nil {
 		return err
@@ -445,7 +464,7 @@ func (a api) register(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a api) writeRegistrationCreated(w http.ResponseWriter, r *http.Request, user domain.User, trial domain.Entitlement) {
-	access, err := a.tokens.AccessToken(user.ID, user.Role, 15*time.Minute, a.now())
+	access, err := a.tokens.AccessTokenVersioned(user.ID, user.Role, user.AuthVersion, 15*time.Minute, a.now())
 	if err != nil {
 		writeError(w, r, http.StatusInternalServerError, "internal_error")
 		return
@@ -657,7 +676,7 @@ func (a api) phoneVerification(w http.ResponseWriter, r *http.Request) {
 }
 func (a api) issueTokens(w http.ResponseWriter, r *http.Request, u domain.User) {
 	now := a.now()
-	access, e := a.tokens.AccessToken(u.ID, u.Role, 15*time.Minute, now)
+	access, e := a.tokens.AccessTokenVersioned(u.ID, u.Role, u.AuthVersion, 15*time.Minute, now)
 	if e != nil {
 		writeError(w, r, 500, "internal_error")
 		return
@@ -687,7 +706,7 @@ func (a api) refresh(w http.ResponseWriter, r *http.Request) {
 		unauthorized(w, r)
 		return
 	}
-	access, e := a.tokens.AccessToken(u.ID, u.Role, 15*time.Minute, a.now())
+	access, e := a.tokens.AccessTokenVersioned(u.ID, u.Role, u.AuthVersion, 15*time.Minute, a.now())
 	if e != nil {
 		writeError(w, r, 500, "internal_error")
 		return

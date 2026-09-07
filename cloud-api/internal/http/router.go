@@ -155,6 +155,7 @@ func NewRouter(options RouterOptions) http.Handler {
 		r.Group(func(ad chi.Router) {
 			ad.Use(api.admin)
 			ad.Get("/api/v1/admin/users", api.users)
+			ad.Post("/api/v1/admin/password", api.changeAdminPassword)
 			ad.Get("/api/v1/admin/users/{userID}/entitlements", api.entitlementsAdmin)
 			ad.Get("/api/v1/admin/users/{userID}/translation-sessions", api.sessionsAdmin)
 			ad.Post("/api/v1/admin/users/{userID}/translation-sessions/{sessionID}/revoke", api.revokeTranslationSessionAdmin)

@@ -115,15 +115,6 @@ func (p *Postgres) RevokeEntitlement(ctx context.Context, user, id uuid.UUID, no
 		return storeErr(err)
 	})
 }
-func (p *Postgres) UserEnabled(ctx context.Context, user uuid.UUID) (bool, error) {
-	var enabled bool
-	err := p.pool.QueryRow(ctx, `SELECT disabled_at IS NULL FROM users WHERE id=$1`, user).Scan(&enabled)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return false, domain.ErrNotFound
-	}
-	return enabled, storeErr(err)
-}
-
 func (p *Postgres) DisableUser(ctx context.Context, admin, user uuid.UUID, now time.Time) error {
 	return p.tx(ctx, func(t pgx.Tx) error {
 		// Disablement shares the per-user arbitration lock with session

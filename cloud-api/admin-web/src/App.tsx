@@ -18,8 +18,9 @@ import {
 import { AdminListPanel } from './components/AdminListPanel'
 import { AdminLogin } from './components/AdminLogin'
 import { AdminSetup } from './components/AdminSetup'
+import { ChangePassword } from './components/ChangePassword'
 
-type Page = 'overview' | 'users' | 'codes' | 'audit'
+type Page = 'overview' | 'users' | 'codes' | 'audit' | 'password'
 type PlatformState = { readonly health: ProbeResult; readonly ready: ProbeResult; readonly config: ServiceConfig }
 type AuthenticationState = 'checking' | 'anonymous' | 'authenticated'
 type FailureResult<T> = Exclude<ApiResult<T>, { readonly kind: 'success' }>
@@ -29,6 +30,7 @@ const navigation: ReadonlyArray<{ readonly page: Page; readonly label: string }>
   { page: 'users', label: '用户' },
   { page: 'codes', label: '兑换码' },
   { page: 'audit', label: '审计' },
+  { page: 'password', label: '修改密码' },
 ]
 
 function defaultBaseUrl(): string {
@@ -49,6 +51,19 @@ function shortId(value: string): string {
 function failureMessage<T>(result: FailureResult<T>): string {
   if (result.kind === 'forbidden') return '当前管理员无权执行此操作。'
   if (result.kind === 'unauthorized') return '管理员登录状态已失效。'
+  return apiErrorMessage(result)
+}
+
+// Maps the stable POST /api/v1/admin/password failure codes to safe, distinct
+// messages: an expired session (401) must never be confused with a wrong
+// current password (403 invalid_current_password), and server/network
+// failures keep the request id without echoing backend internals.
+function changePasswordFailure(result: FailureResult<Record<string, never>>): string {
+  if (result.kind === 'unauthorized') return '管理员登录状态已失效，请重新登录。'
+  if (result.kind === 'forbidden') return result.error === 'invalid_current_password' ? '当前密码不正确，请确认后重试。' : '当前管理员无权执行此操作。'
+  if (result.status === null) return '连接 Cloud API 失败，请检查网络与服务地址。'
+  if (result.status === 400 && result.error === 'password_unchanged') return '新密码不能与当前密码相同。'
+  if (result.status === 400) return '新密码不符合安全要求，请更换后重试。'
   return apiErrorMessage(result)
 }
 
@@ -192,6 +207,8 @@ export function App(): ReactElement {
   const [setupLoading, setSetupLoading] = useState(false)
   const [platform, setPlatform] = useState<PlatformState | null>(null)
   const [platformError, setPlatformError] = useState<string | null>(null)
+  const [passwordError, setPasswordError] = useState<string | null>(null)
+  const [passwordLoading, setPasswordLoading] = useState(false)
   const baseUrl = defaultBaseUrl()
 
   const endSession = useCallback((message: string | null): void => {
@@ -251,6 +268,22 @@ export function App(): ReactElement {
   const logout = async (): Promise<void> => {
     try { if (session !== null) await client.logout(session.refreshToken) } finally { endSession(null) }
   }
+  const changePassword = async (currentPassword: string, newPassword: string): Promise<boolean> => {
+    setPasswordLoading(true); setPasswordError(null)
+    try {
+      const result = await client.changeAdminPassword(currentPassword, newPassword)
+      if (result.kind === 'success') {
+        // The server revoked the access and every refresh token; clearing the
+        // local session and returning to the login page is mandatory.
+        endSession('密码已修改，请重新登录。')
+        return true
+      }
+      setPasswordError(changePasswordFailure(result))
+      return false
+    } finally {
+      setPasswordLoading(false)
+    }
+  }
   const loadUsers = useCallback((query: { readonly limit: number; readonly offset: number; readonly q?: string }) => client.listUsers(query), [client])
   const loadAuditLogs = useCallback((query: { readonly limit: number; readonly offset: number }) => client.listAuditLogs(query), [client])
 
@@ -264,8 +297,9 @@ export function App(): ReactElement {
     if (page === 'users') return <AdminListPanel<AdminUser> description="按用户名、用户 ID 或已知完整邮箱查找账户；列表仅显示脱敏邮箱。" emptyMessage="没有匹配用户。" endpoint="GET /api/v1/admin/users" eyebrow="账户运营" headers={['用户', '身份', '角色', '创建时间', '操作']} load={loadUsers} renderRow={(user) => <tr key={user.id}><td><code>{shortId(user.id)}</code></td><td>{user.username ?? user.email ?? '—'}</td><td><span className="role-badge">{user.disabled_at === undefined ? user.role : '已禁用'}</span></td><td>{readableTime(user.created_at)}</td><td><button className="table-action" onClick={() => setSelectedUser(user)} type="button">查看</button></td></tr>} searchLabel="搜索用户" title="用户" />
     if (page === 'codes') return <CodesPage client={client} />
     if (page === 'audit') return <AdminListPanel<AuditLog> description="只展示安全审计字段，不展开开放 metadata。" emptyMessage="暂无审计记录。" endpoint="GET /api/v1/admin/audit-logs" eyebrow="安全追踪" headers={['操作', '对象', '对象 ID', '管理员', '时间']} load={loadAuditLogs} renderRow={(audit) => <AuditRow audit={audit} key={audit.id} />} title="审计日志" />
+    if (page === 'password') return <ChangePassword error={passwordError} loading={passwordLoading} onCancel={() => setPage('overview')} onSubmit={changePassword} />
     return <><section className="page-heading"><div><p className="eyebrow">运行概览</p><h1>服务运行态</h1><p>只展示服务器真实探针，不填充模拟业务指标。</p></div><button className="secondary-button" onClick={() => void refreshPlatform()} type="button">刷新状态</button></section>{platformError === null ? null : <div className="error-banner" role="alert">{platformError}</div>}<section className="metric-grid"><MetricCard detail="Cloud API" label="服务存活" value={platform?.health.status === 'ok' ? '正常' : '未确认'} /><MetricCard detail="PostgreSQL" label="数据就绪" value={platform?.ready.status === 'ok' ? '正常' : '未确认'} /><MetricCard detail="服务器配置" label="环境" value={platform?.config.environment ?? '未确认'} /><MetricCard detail="构建版本" label="版本" value={platform?.config.version ?? '未确认'} /></section>{platform === null ? null : <section className="panel"><ul className="status-list"><StatusRow result={platform.health} /><StatusRow result={platform.ready} /></ul></section>}</>
   }
 
-  return <div className="app-shell"><a className="skip-link" href="#main-content">跳到主内容</a><header><div className="brand-lockup"><span className="brand-mark" aria-hidden="true">言</span><span><strong>言枢</strong><small>ADMIN CONSOLE</small></span></div><div className="header-actions"><div className="connection-indicator"><span className={platform?.health.status === 'ok' ? 'status-dot ok' : 'status-dot'} />{currentUser?.username ?? currentUser?.email ?? '管理员'}</div><button className="header-logout" onClick={() => void logout()} type="button">退出登录</button></div></header><div className="console-layout"><nav aria-label="管理导航"><p>控制台</p>{navigation.map((item) => <button aria-current={selectedUser === null && page === item.page ? 'page' : undefined} key={item.page} onClick={() => { setSelectedUser(null); setPage(item.page) }} type="button">{item.label}</button>)}</nav><main id="main-content">{renderPage()}</main></div></div>
+  return <div className="app-shell"><a className="skip-link" href="#main-content">跳到主内容</a><header><div className="brand-lockup"><span className="brand-mark" aria-hidden="true">言</span><span><strong>言枢</strong><small>ADMIN CONSOLE</small></span></div><div className="header-actions"><div className="connection-indicator"><span className={platform?.health.status === 'ok' ? 'status-dot ok' : 'status-dot'} />{currentUser?.username ?? currentUser?.email ?? '管理员'}</div><button className="header-logout" onClick={() => void logout()} type="button">退出登录</button></div></header><div className="console-layout"><nav aria-label="管理导航"><p>控制台</p>{navigation.map((item) => <button aria-current={selectedUser === null && page === item.page ? 'page' : undefined} key={item.page} onClick={() => { setSelectedUser(null); setPasswordError(null); setPage(item.page) }} type="button">{item.label}</button>)}</nav><main id="main-content">{renderPage()}</main></div></div>
 }

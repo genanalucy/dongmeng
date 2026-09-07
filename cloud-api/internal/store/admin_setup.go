@@ -71,7 +71,7 @@ func (p *Postgres) CompleteAdminSetup(ctx context.Context, x domain.AdminSetupPa
 			WHERE role='admin'`, x.Now.UTC()); err != nil {
 			return err
 		}
-		err = t.QueryRow(ctx, `INSERT INTO users(email,username,password_hash,role,created_at) VALUES($1,$2,$3,'admin',$4) RETURNING id,username,'',email,role,created_at`, x.Email, x.Username, x.PasswordHash, x.Now.UTC()).Scan(&user.ID, &user.Username, &user.Phone, &user.Email, &user.Role, &user.CreatedAt)
+		err = t.QueryRow(ctx, `INSERT INTO users(email,username,password_hash,role,created_at) VALUES($1,$2,$3,'admin',$4) RETURNING id,username,'',email,role,created_at,auth_version`, x.Email, x.Username, x.PasswordHash, x.Now.UTC()).Scan(&user.ID, &user.Username, &user.Phone, &user.Email, &user.Role, &user.CreatedAt, &user.AuthVersion)
 		if err != nil {
 			return storeErr(err)
 		}

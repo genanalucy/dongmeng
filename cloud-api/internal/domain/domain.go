@@ -338,6 +338,32 @@ type User struct {
 	CreatedAt  time.Time  `json:"created_at"`
 	Email      string     `json:"email,omitempty"`
 	DisabledAt *time.Time `json:"disabled_at,omitempty"`
+	// AuthVersion is the persisted access-token generation of the account.
+	// Access tokens are issued under the current version; the middleware
+	// rejects any token whose version is stale, so a password change commits
+	// every previously issued access token to immediate invalidation. It is
+	// deliberately absent from every public JSON projection.
+	AuthVersion int `json:"-"`
+}
+
+// UserAuthState is the per-request authorization truth for one access-token
+// subject: whether the account is still enabled and the current token
+// generation. A stale AuthVersion means a password change (or any future
+// credential reset) has already invalidated the presented token.
+type UserAuthState struct {
+	Enabled     bool
+	AuthVersion int
+}
+
+// AdminPasswordChangeParams carries only digests and identifiers. The HTTP
+// boundary reads the current hash, verifies the presented current password
+// against it, hashes the validated new password, and passes both hashes here;
+// plaintext passwords never cross this boundary.
+type AdminPasswordChangeParams struct {
+	AdminID     uuid.UUID
+	CurrentHash string
+	NewHash     string
+	Now         time.Time
 }
 
 type Device struct {

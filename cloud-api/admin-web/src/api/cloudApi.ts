@@ -330,6 +330,12 @@ export class CloudApiClient {
     return this.post('/api/v1/auth/logout', { refresh_token: refreshToken }, (body) => isRecord(body) ? {} : {}, true)
   }
 
+  // 204 No Content yields a null body; the parser returns a fixed empty
+  // object so the generic request path still reports success.
+  changeAdminPassword(currentPassword: string, newPassword: string): Promise<ApiResult<Record<string, never>>> {
+    return this.post('/api/v1/admin/password', { current_password: currentPassword, new_password: newPassword }, () => ({}), true)
+  }
+
   me(): Promise<ApiResult<CurrentUser>> {
     return this.get('/api/v1/users/me', parseCurrentUser)
   }

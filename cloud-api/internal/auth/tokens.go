@@ -41,7 +41,13 @@ type Claims struct {
 	// EntitlementID is retained only for Cloud's persisted authorization
 	// checks. It is not used as, or substituted for, an install_id.
 	EntitlementID string `json:"entitlement_id,omitempty"`
-	Scope         Scope  `json:"scope"`
+	// AuthVersion is the users.auth_version generation this access token was
+	// issued under. It is omitted when zero so tokens issued before the
+	// column existed (and translation tokens) parse as version 0 and stay
+	// compatible. The middleware compares it per request so a password change
+	// invalidates every outstanding access token immediately.
+	AuthVersion int   `json:"auth_version,omitempty"`
+	Scope       Scope `json:"scope"`
 	jwt.RegisteredClaims
 }
 
@@ -54,6 +60,14 @@ type TokenIssuer struct {
 }
 
 func (i TokenIssuer) AccessToken(userID uuid.UUID, role string, ttl time.Duration, now time.Time) (string, error) {
+	return i.AccessTokenVersioned(userID, role, 0, ttl, now)
+}
+
+// AccessTokenVersioned signs an access token bound to the account's current
+// auth version. Callers that just loaded the user from the store must pass
+// the persisted version so the middleware rejects the token after the next
+// credential reset; version 0 matches pre-migration accounts.
+func (i TokenIssuer) AccessTokenVersioned(userID uuid.UUID, role string, authVersion int, ttl time.Duration, now time.Time) (string, error) {
 	if err := i.validateConfiguration(); err != nil {
 		return "", err
 	}
@@ -61,10 +75,13 @@ func (i TokenIssuer) AccessToken(userID uuid.UUID, role string, ttl time.Duratio
 	if err != nil {
 		return "", err
 	}
+	if authVersion < 0 {
+		return "", fmt.Errorf("%w: auth version must not be negative", domain.ErrInvalid)
+	}
 	if err := validateTokenArguments(i.Issuer, i.Audience, i.AccessSecret, userID, ttl, now); err != nil {
 		return "", err
 	}
-	return sign(i.AccessSecret, Claims{Role: parsedRole, Scope: ScopeAPI, RegisteredClaims: registeredClaims(i.Issuer, i.Audience, userID, uuid.New(), ttl, now)}, "JWT")
+	return sign(i.AccessSecret, Claims{Role: parsedRole, AuthVersion: authVersion, Scope: ScopeAPI, RegisteredClaims: registeredClaims(i.Issuer, i.Audience, userID, uuid.New(), ttl, now)}, "JWT")
 }
 
 // TranslationToken implements the main Agent contract. installID is an opaque,

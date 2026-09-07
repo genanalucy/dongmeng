@@ -345,8 +345,8 @@ func TestAccountSelfDeletionStoreLifecycle(t *testing.T) {
 	if _, _, err := db.UserByPhone(ctx, victimPhone); !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("deleted phone lookup error = %v", err)
 	}
-	if enabled, err := db.UserEnabled(ctx, victim); err != nil || enabled {
-		t.Fatalf("deleted account still enabled: %v (%v)", enabled, err)
+	if state, err := db.UserAuthState(ctx, victim); err != nil || state.Enabled {
+		t.Fatalf("deleted account still enabled: %v (%v)", state.Enabled, err)
 	}
 	if err := raw.QueryRow(ctx, `INSERT INTO users(email,username,password_hash) VALUES($1,$2,$3) RETURNING id`, victimEmail, rebornUsername, hash).Scan(&reborn); err != nil {
 		t.Fatalf("original identity was not freed: %v", err)
