@@ -22,9 +22,9 @@ class InterpretationDisplayBubbleTest {
         )
     }
 
-    @Test fun usesFixedPendingCopyForSourceWithoutTranslation() {
+    @Test fun preservesAnEmptyTranslationLineForSourceWithoutTranslation() {
         assertEquals(
-            listOf(InterpretationDisplayBubble("3:0", "甲。", "正在翻译…")),
+            listOf(InterpretationDisplayBubble("3:0", "甲。", null)),
             InterpretationDisplayBubble.map(3, listOf("甲。"), "", emptyList(), ""),
         )
     }

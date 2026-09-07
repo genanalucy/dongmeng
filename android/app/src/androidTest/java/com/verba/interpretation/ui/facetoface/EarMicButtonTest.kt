@@ -10,6 +10,7 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTouchInput
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import com.verba.interpretation.ui.FaceToFacePhase
 import com.verba.interpretation.ui.FaceToFaceSide
 import org.junit.Assert.assertEquals
 import org.junit.Rule
@@ -36,6 +37,8 @@ class EarMicButtonTest {
                     pointerEnabled = pointerEnabled,
                     actionEnabled = true,
                     active = active,
+                    activeSide = if (active) FaceToFaceSide.LEFT else null,
+                    phase = if (active) FaceToFacePhase.LISTENING else FaceToFacePhase.IDLE,
                     stateLabel = stateLabel,
                     onPress = {
                         events += "press"
@@ -81,6 +84,8 @@ class EarMicButtonTest {
                     pointerEnabled = false,
                     actionEnabled = true,
                     active = active,
+                    activeSide = if (active) FaceToFaceSide.RIGHT else FaceToFaceSide.LEFT,
+                    phase = FaceToFacePhase.LISTENING,
                     stateLabel = if (active) "结束右侧临时接话" else "开始右侧临时接话",
                     onPress = {},
                     onRelease = {},
@@ -120,6 +125,8 @@ class EarMicButtonTest {
                         pointerEnabled = true,
                         actionEnabled = true,
                         active = true,
+                        activeSide = FaceToFaceSide.LEFT,
+                        phase = FaceToFacePhase.LISTENING,
                         stateLabel = "按住说话",
                         onPress = {
                             events += "press"

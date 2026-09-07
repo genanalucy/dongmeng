@@ -544,7 +544,7 @@ private fun SoloWorkbench(modifier: Modifier, viewModel: InterpretationViewModel
             permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
         }
     }
-    Column(modifier.fillMaxSize()) {
+    Box(modifier.fillMaxSize()) {
     InterpretationScreen(
         model = InterpretationUiMapper.map(state),
         onExit = onExit,
@@ -553,13 +553,25 @@ private fun SoloWorkbench(modifier: Modifier, viewModel: InterpretationViewModel
         onResume = viewModel::resume,
         onFinish = viewModel::finish,
         onReset = viewModel::clearError,
-        modifier = Modifier.weight(1f),
+        modifier = Modifier.fillMaxSize(),
+        overlayContent = {
+            LocalHistorySaveFeedback(
+                state = state.localHistorySave,
+                canOpenHistory = state.phase == SessionPhase.IDLE || state.phase == SessionPhase.ERROR,
+                onViewHistory = onViewHistory,
+                modifier = Modifier.align(Alignment.TopCenter).padding(top = 8.dp),
+            )
+        },
     )
+    /* Save feedback is hosted inside the reading overlay, above the operation row. */
+    /*
     LocalHistorySaveFeedback(
         state.localHistorySave,
         canOpenHistory = state.phase == SessionPhase.IDLE || state.phase == SessionPhase.ERROR,
         onViewHistory = onViewHistory,
+        modifier = Modifier.align(Alignment.BottomCenter),
     )
+    */
     }
 }
 
@@ -680,18 +692,21 @@ private fun FaceToFaceWorkbench(
         }
     }
 
-    Column(modifier.fillMaxSize()) {
+    Box(modifier.fillMaxSize()) {
         FaceToFaceScreen(
             state = state,
             viewModel = faceViewModel,
             requestMicrophone = requestOrRun,
             clearMicrophoneRequest = permissionPolicy::clear,
-            modifier = Modifier.weight(1f),
+            modifier = Modifier.fillMaxSize(),
         )
         LocalHistorySaveFeedback(
             state.localHistorySave,
             canOpenHistory = state.phase == FaceToFacePhase.IDLE || state.phase == FaceToFacePhase.ERROR,
             onViewHistory = onViewHistory,
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .padding(top = 74.dp, bottom = 148.dp),
         )
     }
 }

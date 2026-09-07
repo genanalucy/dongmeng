@@ -1,57 +1,50 @@
 package com.verba.interpretation.ui.facetoface
 
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.testTag
 import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.layout.width
+import androidx.compose.ui.unit.sp
 import com.verba.interpretation.ui.FaceToFaceMode
 import com.verba.interpretation.ui.FaceToFacePhase
-import com.verba.interpretation.ui.FaceToFaceView
-import com.verba.interpretation.ui.FaceToFaceSide
-import com.verba.interpretation.ui.MicrophonePermissionAction
 import com.verba.interpretation.ui.FaceToFaceState
+import com.verba.interpretation.ui.FaceToFaceSide
+import com.verba.interpretation.ui.FaceToFaceView
 import com.verba.interpretation.ui.FaceToFaceViewModel
-import com.verba.interpretation.ui.TranslationLanguage
+import com.verba.interpretation.ui.MicrophonePermissionAction
+import com.verba.interpretation.ui.design.ConversationTimelineVisualSpec
+import com.verba.interpretation.ui.design.TranslationVisualTokens
+import com.verba.interpretation.ui.design.VerbaColors
 
-private val conversationCanvas = Color(0xFF07111F)
-
-private fun faceStatusLabel(state: FaceToFaceState): String = when (state.phase) {
-    FaceToFacePhase.IDLE -> if (state.mode == FaceToFaceMode.AUTO) "点击左侧开始连续收音" else "按住对应麦克风开始"
-    FaceToFacePhase.LISTENING -> "${state.activeSide?.let(::earLabel) ?: "麦克风"}正在收音"
-    FaceToFacePhase.PAUSED -> "连续翻译已暂停"
-    FaceToFacePhase.PROCESSING -> "正在翻译，暂不可操作"
-    FaceToFacePhase.STOPPING -> "正在结束，暂不可操作"
-    FaceToFacePhase.ERROR -> "会话已停止"
-}
+private fun recoveryLabel(presentation: FaceToFacePresentation): String? = presentation.recoveryMessage
 
 @Composable
 internal fun FaceToFaceScreen(
@@ -62,74 +55,133 @@ internal fun FaceToFaceScreen(
     modifier: Modifier = Modifier,
 ) {
     val presentation = faceToFacePresentation(state)
-    Column(
-        modifier.fillMaxSize().background(conversationCanvas),
-    ) {
-        // The header stays upright; only participant panels are rotated.
-        Row(
-            Modifier.fillMaxWidth().padding(start = 20.dp, top = 14.dp, end = 10.dp, bottom = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Column(Modifier.weight(1f)) {
-                Text(
-                    if (state.view == FaceToFaceView.FACE_TO_FACE) "面对面" else "对话",
-                    color = Color(0xFFF5F5F2),
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.SemiBold,
-                    modifier = Modifier.semantics { heading() },
-                )
-                Text(
-                    faceStatusLabel(state),
-                    color = if (state.phase == FaceToFacePhase.ERROR) Color(0xFFFF9B9B) else Color(0xFFABB5C3),
-                    style = MaterialTheme.typography.labelMedium,
-                    modifier = Modifier.semantics {
-                        contentDescription = "phase=${state.phase.name}，${faceStatusLabel(state)}"
-                    },
-                )
-            }
-            androidx.compose.material3.TextButton(
-                onClick = {
-                    clearMicrophoneRequest()
-                    viewModel.setView(if (state.view == FaceToFaceView.CONVERSATION) FaceToFaceView.FACE_TO_FACE else FaceToFaceView.CONVERSATION)
-                },
-                modifier = Modifier.semantics {
-                    testTag = "face-view-toggle"
-                    contentDescription = if (state.view == FaceToFaceView.CONVERSATION) "切换到面对面布局" else "切换到对话布局"
-                },
-                enabled = state.phase != FaceToFacePhase.PROCESSING && state.phase != FaceToFacePhase.STOPPING && state.phase != FaceToFacePhase.ERROR,
-            ) { Text(if (state.view == FaceToFaceView.CONVERSATION) "面对面" else "对话") }
-            FaceToFaceOverflowMenu(
-                state = state,
-                onSelectMode = { mode -> clearMicrophoneRequest(); viewModel.setMode(mode) },
-                onStartAuto = { requestMicrophone(MicrophonePermissionAction.ContinuousStart) },
-                onPauseAuto = viewModel::pauseAuto,
-                onResumeAuto = { requestMicrophone(MicrophonePermissionAction.ContinuousResume) },
-                onStopAuto = { clearMicrophoneRequest(); viewModel.stopAuto() },
-            )
-        }
+    Column(modifier.fillMaxSize().background(VerbaColors.Canvas)) {
+        TranslationTopBar(
+            title = if (state.view == FaceToFaceView.FACE_TO_FACE) "面对面" else "对话",
+            state = state,
+            onToggleView = {
+                clearMicrophoneRequest()
+                viewModel.setView(if (state.view == FaceToFaceView.CONVERSATION) FaceToFaceView.FACE_TO_FACE else FaceToFaceView.CONVERSATION)
+            },
+            onSelectMode = { mode -> clearMicrophoneRequest(); viewModel.setMode(mode) },
+            onStartAuto = { requestMicrophone(MicrophonePermissionAction.ContinuousStart) },
+            onPauseAuto = viewModel::pauseAuto,
+            onResumeAuto = { requestMicrophone(MicrophonePermissionAction.ContinuousResume) },
+            onStopAuto = { clearMicrophoneRequest(); viewModel.stopAuto() },
+        )
 
-        presentation.recoveryMessage?.let { message ->
+        recoveryLabel(presentation)?.let { message ->
             Surface(
-                color = Color(0xFF35242A),
-                shape = RoundedCornerShape(16.dp),
+                color = VerbaColors.ErrorSurface,
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp),
             ) {
                 Row(Modifier.padding(horizontal = 14.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text(message, color = Color(0xFFFFDAD6), style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
-                    Button(onClick = { clearMicrophoneRequest(); viewModel.cancel() }, modifier = Modifier.heightIn(min = 44.dp)) {
-                        Icon(Icons.Filled.Refresh, contentDescription = null, modifier = Modifier.size(17.dp))
-                        Spacer(Modifier.width(5.dp))
-                        Text(FACE_TO_FACE_RECOVERY_ACTION_LABEL)
+                    Text(message, color = VerbaColors.Danger, modifier = Modifier.weight(1f))
+                    Button(
+                        onClick = { clearMicrophoneRequest(); viewModel.cancel() },
+                        modifier = Modifier.semantics { contentDescription = FACE_TO_FACE_RECOVERY_ACTION_LABEL },
+                    ) {
+                        Icon(Icons.Filled.Refresh, contentDescription = null)
+                        Text(FACE_TO_FACE_RECOVERY_ACTION_LABEL, modifier = Modifier.padding(start = 5.dp))
                     }
                 }
             }
         }
 
         if (state.view == FaceToFaceView.CONVERSATION) {
-            ConversationLayout(state, presentation, requestMicrophone, clearMicrophoneRequest, viewModel, Modifier.weight(1f))
+            ConversationLayout(
+                state = state,
+                presentation = presentation,
+                requestMicrophone = requestMicrophone,
+                clearMicrophoneRequest = clearMicrophoneRequest,
+                viewModel = viewModel,
+                modifier = Modifier.weight(1f),
+            )
         } else {
-            FaceToFacePanels(state, presentation, requestMicrophone, clearMicrophoneRequest, viewModel, Modifier.weight(1f))
+            Column(Modifier.weight(1f)) {
+                FaceToFacePanels(
+                    state = state,
+                    presentation = presentation,
+                    modifier = Modifier.weight(1f),
+                )
+                EarMicControls(
+                    state = state,
+                    presentation = presentation,
+                    requestMicrophone = requestMicrophone,
+                    onManualPress = viewModel::manualPress,
+                    onManualRelease = viewModel::manualRelease,
+                    onManualCancel = viewModel::manualCancel,
+                    clearMicrophoneRequest = clearMicrophoneRequest,
+                    onStartAuto = viewModel::startAuto,
+                    onPressRightAuto = viewModel::pressRightAuto,
+                    onReleaseRightAuto = viewModel::releaseRightAuto,
+                    onCancelRightAuto = viewModel::cancelRightAuto,
+                    onPauseAuto = viewModel::pauseAuto,
+                    onResumeAuto = viewModel::resumeAuto,
+                    onStopAuto = { clearMicrophoneRequest(); viewModel.stopAuto() },
+                    onSetLanguages = viewModel::setLanguages,
+                )
+            }
         }
+    }
+}
+
+@Composable
+private fun TranslationTopBar(
+    title: String,
+    state: FaceToFaceState,
+    onToggleView: () -> Unit,
+    onSelectMode: (FaceToFaceMode) -> Unit,
+    onStartAuto: () -> Unit,
+    onPauseAuto: () -> Unit,
+    onResumeAuto: () -> Unit,
+    onStopAuto: () -> Unit,
+) {
+    Box(
+        Modifier.fillMaxWidth().height(TranslationVisualTokens.TopBarHeight).padding(horizontal = 16.dp),
+    ) {
+        Surface(
+            modifier = Modifier
+                .align(Alignment.CenterStart)
+                .width(64.dp)
+                .height(44.dp)
+                .clickable(
+                    enabled = state.phase != FaceToFacePhase.PROCESSING && state.phase != FaceToFacePhase.STOPPING && state.phase != FaceToFacePhase.ERROR,
+                    role = Role.Button,
+                    onClick = onToggleView,
+                )
+                .semantics {
+                    testTag = "face-view-toggle"
+                    contentDescription = if (state.view == FaceToFaceView.CONVERSATION) "切换到面对面布局" else "切换到对话布局"
+                },
+            shape = androidx.compose.foundation.shape.RoundedCornerShape(22.dp),
+            color = VerbaColors.TopControl,
+            border = androidx.compose.foundation.BorderStroke(1.dp, VerbaColors.ShellStroke),
+        ) { Box(contentAlignment = Alignment.Center) { Text("视图", color = VerbaColors.Ink, fontSize = 16.sp) } }
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Text(title, color = VerbaColors.Ink, fontSize = 19.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.semantics { heading() }, textAlign = TextAlign.Center)
+        }
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.CenterEnd) {
+            FaceToFaceOverflowMenu(
+                state = state,
+                onSelectMode = onSelectMode,
+                onStartAuto = onStartAuto,
+                onPauseAuto = onPauseAuto,
+                onResumeAuto = onResumeAuto,
+                onStopAuto = onStopAuto,
+            )
+        }
+    }
+}
+
+@Composable
+private fun HorizontalMoreIcon() {
+    Canvas(Modifier.size(22.dp)) {
+        val radius = 2.dp.toPx()
+        val y = size.height / 2f
+        drawCircle(VerbaColors.Ink, radius, androidx.compose.ui.geometry.Offset(size.width * 0.2f, y))
+        drawCircle(VerbaColors.Ink, radius, androidx.compose.ui.geometry.Offset(size.width * 0.5f, y))
+        drawCircle(VerbaColors.Ink, radius, androidx.compose.ui.geometry.Offset(size.width * 0.8f, y))
     }
 }
 
@@ -151,25 +203,23 @@ private fun ConversationLayout(
             activeTurnId = state.activeTurnId,
             modifier = Modifier.weight(1f),
         )
-        Surface(color = Color(0xFF0E1927), modifier = Modifier.fillMaxWidth()) {
-            EarMicControls(
-                state = state,
-                presentation = presentation,
-                requestMicrophone = requestMicrophone,
-                onManualPress = viewModel::manualPress,
-                onManualRelease = viewModel::manualRelease,
-                onManualCancel = viewModel::manualCancel,
-                clearMicrophoneRequest = clearMicrophoneRequest,
-                onStartAuto = viewModel::startAuto,
-                onPressRightAuto = viewModel::pressRightAuto,
-                onReleaseRightAuto = viewModel::releaseRightAuto,
-                onCancelRightAuto = viewModel::cancelRightAuto,
-                onPauseAuto = viewModel::pauseAuto,
-                onResumeAuto = viewModel::resumeAuto,
-                onStopAuto = { clearMicrophoneRequest(); viewModel.stopAuto() },
-                onSetLanguages = viewModel::setLanguages,
-            )
-        }
+        EarMicControls(
+            state = state,
+            presentation = presentation,
+            requestMicrophone = requestMicrophone,
+            onManualPress = viewModel::manualPress,
+            onManualRelease = viewModel::manualRelease,
+            onManualCancel = viewModel::manualCancel,
+            clearMicrophoneRequest = clearMicrophoneRequest,
+            onStartAuto = viewModel::startAuto,
+            onPressRightAuto = viewModel::pressRightAuto,
+            onReleaseRightAuto = viewModel::releaseRightAuto,
+            onCancelRightAuto = viewModel::cancelRightAuto,
+            onPauseAuto = viewModel::pauseAuto,
+            onResumeAuto = viewModel::resumeAuto,
+            onStopAuto = { clearMicrophoneRequest(); viewModel.stopAuto() },
+            onSetLanguages = viewModel::setLanguages,
+        )
     }
 }
 
@@ -177,61 +227,57 @@ private fun ConversationLayout(
 private fun FaceToFacePanels(
     state: FaceToFaceState,
     presentation: FaceToFacePresentation,
-    requestMicrophone: (MicrophonePermissionAction) -> Unit,
-    clearMicrophoneRequest: () -> Unit,
-    viewModel: FaceToFaceViewModel,
     modifier: Modifier,
 ) {
-    val panels = faceToFacePanelSpecs()
-    LazyColumn(modifier = modifier.fillMaxSize().semantics { testTag = "face-to-face-panels" }) {
-        items(panels, key = { it.position }) { panel ->
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(min = 220.dp)
-                    .graphicsLayer { rotationZ = faceToFacePanelRotation(panel.position) }
-                    .semantics {
-                        testTag = "face-to-face-panel-${panel.position.name.lowercase()}"
-                        contentDescription = when (panel.position) {
-                            FaceToFacePanelPosition.FAR -> "远端${earLabel(panel.side)}阅读区，旋转180度"
-                            FaceToFacePanelPosition.NEAR -> "近端${earLabel(panel.side)}阅读区，正向"
-                        }
-                    },
-            ) {
-                ConversationTimeline(
-                    // Each participant reads only their own side. The coordinator's real
-                    // activeTurnId still decides which of those turns is live.
-                    turns = faceToFacePanelTurns(state, panel.side),
-                    activeMic = presentation.activeMic,
-                    listeningPlaceholder = presentation.timelinePlaceholder,
-                    phase = state.phase,
-                    activeTurnId = state.activeTurnId,
-                    contentDescription = "${earLabel(panel.side)}对话记录",
-                    modifier = Modifier.heightIn(min = 96.dp, max = 260.dp).fillMaxWidth(),
-                )
-                EarMicControls(
-                    state = state,
-                    presentation = presentation,
-                    requestMicrophone = requestMicrophone,
-                    onManualPress = viewModel::manualPress,
-                    onManualRelease = viewModel::manualRelease,
-                    onManualCancel = viewModel::manualCancel,
-                    clearMicrophoneRequest = clearMicrophoneRequest,
-                    onStartAuto = viewModel::startAuto,
-                    onPressRightAuto = viewModel::pressRightAuto,
-                    onReleaseRightAuto = viewModel::releaseRightAuto,
-                    onCancelRightAuto = viewModel::cancelRightAuto,
-                    onPauseAuto = viewModel::pauseAuto,
-                    onResumeAuto = viewModel::resumeAuto,
-                    onStopAuto = { clearMicrophoneRequest(); viewModel.stopAuto() },
-                    onSetLanguages = viewModel::setLanguages,
-                    visibleSides = setOf(panel.side),
-                    showAutoControls = panel.position == FaceToFacePanelPosition.NEAR,
-                )
+    Column(
+        modifier = modifier.fillMaxSize().semantics { testTag = "face-to-face-panels" },
+    ) {
+        FaceReadingHalf(
+            state = state,
+            presentation = presentation,
+            position = FaceToFacePanelPosition.FAR,
+            modifier = Modifier.weight(1f),
+        )
+        Box(Modifier.fillMaxWidth().padding(horizontal = 49.dp).height(1.dp).background(VerbaColors.ShellStroke))
+        FaceReadingHalf(
+            state = state,
+            presentation = presentation,
+            position = FaceToFacePanelPosition.NEAR,
+            modifier = Modifier.weight(1f),
+        )
+    }
+}
+
+@Composable
+private fun FaceReadingHalf(
+    state: FaceToFaceState,
+    presentation: FaceToFacePresentation,
+    position: FaceToFacePanelPosition,
+    modifier: Modifier,
+) {
+    val rotated = position == FaceToFacePanelPosition.FAR
+    val side = if (rotated) FaceToFaceSide.RIGHT else FaceToFaceSide.LEFT
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .graphicsLayer {
+                rotationZ = if (rotated) 180f else 0f
+                clip = true
             }
-            if (panel.position == FaceToFacePanelPosition.FAR) {
-                Box(Modifier.fillMaxWidth().padding(horizontal = 34.dp).height(1.dp).background(Color(0xFF36404C)))
-            }
-        }
+            .semantics {
+                testTag = "face-to-face-panel-${position.name.lowercase()}"
+                contentDescription = if (rotated) "远端右耳阅读区，旋转180度" else "近端左耳阅读区，正向"
+            },
+    ) {
+        ConversationTimeline(
+            turns = faceToFacePanelTurns(state, side),
+            activeMic = presentation.activeMic,
+            listeningPlaceholder = presentation.timelinePlaceholder,
+            phase = state.phase,
+            activeTurnId = state.activeTurnId,
+            contentDescription = "${earLabel(side)}对话记录",
+            visualSpec = ConversationTimelineVisualSpec.Face,
+            modifier = Modifier.fillMaxSize(),
+        )
     }
 }

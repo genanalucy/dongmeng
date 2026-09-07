@@ -13,6 +13,7 @@ import androidx.compose.foundation.interaction.DragInteraction
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -25,7 +26,6 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -67,7 +67,10 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.verba.interpretation.ui.SessionPhase
+import com.verba.interpretation.ui.design.TranslationVisualTokens
+import com.verba.interpretation.ui.design.VerbaColors
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 
@@ -99,6 +102,7 @@ fun InterpretationScreen(
     onFinish: () -> Unit,
     onReset: () -> Unit,
     modifier: Modifier = Modifier,
+    overlayContent: @Composable BoxScope.() -> Unit = {},
 ) {
     val callbacks = InterpretationCallbacks(onExit, onStart, onPause, onResume, onFinish, onReset)
     val isSessionActive = model.phase in setOf(
@@ -194,27 +198,25 @@ fun InterpretationScreen(
             LazyColumn(
                 state = listState,
                 modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp),
-                verticalArrangement = Arrangement.spacedBy(20.dp),
+                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp),
             ) {
-                if (model.bubbles.isEmpty() && model.errorMessage == null) {
-                    item { InterpretationEmptyState(phase = model.phase, statusLabel = model.statusLabel) }
-                }
                 items(model.bubbles, key = InterpretationDisplayBubble::key) { bubble ->
                     InterpretationBubble(bubble)
                 }
                 model.errorMessage?.let { error ->
                     item {
-                        Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)) {
+                        Card(colors = CardDefaults.cardColors(containerColor = VerbaColors.ErrorSurface)) {
                             Text(
                                 text = error,
                                 modifier = Modifier.padding(16.dp),
-                                color = MaterialTheme.colorScheme.onErrorContainer,
+                                color = VerbaColors.Danger,
                             )
                         }
                     }
                 }
             }
+            overlayContent()
             if (!follow.followsLatest) {
                 FloatingActionButton(
                     onClick = {
@@ -262,35 +264,28 @@ private fun CompactHeader(
     onExit: () -> Unit,
 ) {
     val languages = languageDirection.split(" → ", limit = 2)
-
-    Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            IconButton(
-                onClick = onExit,
-                modifier = Modifier.semantics { contentDescription = "退出实时同传" },
-            ) {
-                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null)
+    Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
+        Row(Modifier.height(TranslationVisualTokens.TopBarHeight), verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(48.dp), contentAlignment = Alignment.Center) {
+                IconButton(onClick = onExit, modifier = Modifier.semantics { contentDescription = "退出实时同传" }) {
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null, tint = VerbaColors.Ink)
+                }
             }
-            Column(modifier = Modifier.weight(1f)) {
-                Text("实时同传", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-                Text(statusLabel, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
+                Text("实时同传", fontSize = 19.sp, lineHeight = 26.sp, fontWeight = FontWeight.SemiBold, color = VerbaColors.Ink)
             }
-            if (sessionActive && phase in setOf(SessionPhase.RUNNING, SessionPhase.PAUSED)) {
-                LiveMarker(microphoneRunning)
+            Box(Modifier.size(48.dp), contentAlignment = Alignment.Center) {
+                if (sessionActive && phase in setOf(SessionPhase.RUNNING, SessionPhase.PAUSED)) LiveMarker(microphoneRunning)
             }
         }
         Row(
-            modifier = Modifier.fillMaxWidth().padding(start = 48.dp, top = 2.dp),
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            Modifier.fillMaxWidth().height(TranslationVisualTokens.InterpretationDirectionRowHeight),
+            horizontalArrangement = Arrangement.Center,
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            LanguageChip(
-                text = "${languages.firstOrNull().orEmpty()} 原文",
-                modifier = Modifier.weight(1f),
-            )
-            LanguageChip(
-                text = "${languages.getOrNull(1).orEmpty()} 译文",
-                modifier = Modifier.weight(1f),
-            )
+            Text(languages.firstOrNull().orEmpty(), fontSize = 13.sp, lineHeight = 18.sp, color = VerbaColors.Muted)
+            Text(" → ", fontSize = 13.sp, lineHeight = 18.sp, color = VerbaColors.Muted)
+            Text(languages.getOrNull(1).orEmpty(), fontSize = 13.sp, lineHeight = 18.sp, color = VerbaColors.Translation)
         }
     }
 }
@@ -312,14 +307,14 @@ private fun LiveMarker(microphoneRunning: Boolean) {
 private fun LanguageChip(text: String, modifier: Modifier = Modifier) {
     Surface(
         modifier = modifier,
-        shape = RoundedCornerShape(10.dp),
-        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        shape = RoundedCornerShape(18.dp),
+        color = VerbaColors.Canvas,
     ) {
         Text(
             text = text,
             modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
             style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            color = VerbaColors.Muted,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
@@ -329,27 +324,19 @@ private fun LanguageChip(text: String, modifier: Modifier = Modifier) {
 @Composable
 private fun InterpretationEmptyState(phase: SessionPhase, statusLabel: String) {
     Surface(
-        modifier = Modifier.fillMaxWidth().heightIn(min = 176.dp),
+        modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(20.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant,
+        color = VerbaColors.Canvas,
     ) {
         Column(
             modifier = Modifier.fillMaxWidth().padding(24.dp),
             verticalArrangement = Arrangement.Center,
         ) {
             Text(
-                text = if (phase == SessionPhase.IDLE) "译文会显示在这里" else statusLabel,
+                text = statusLabel,
                 style = MaterialTheme.typography.titleLarge,
                 color = MaterialTheme.colorScheme.onSurface,
             )
-            if (phase == SessionPhase.IDLE) {
-                Spacer(Modifier.height(8.dp))
-                Text(
-                    text = "开始同传后，原文和译文会按顺序出现。",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
         }
     }
 }
@@ -359,28 +346,44 @@ private fun InterpretationBubble(bubble: InterpretationDisplayBubble) {
     Surface(
         modifier = Modifier.fillMaxWidth().semantics {
             contentDescription = listOfNotNull(
-                "译文。${bubble.translationText}",
+                bubble.translationText?.let { "译文。$it" },
                 bubble.sourceText?.let { "原文。$it" },
             ).joinToString(" ")
         },
-        shape = RoundedCornerShape(20.dp),
-        color = MaterialTheme.colorScheme.surface,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        shape = RoundedCornerShape(22.dp),
+        color = VerbaColors.History,
+        border = BorderStroke(1.dp, VerbaColors.ShellStroke),
     ) {
-        Column(modifier = Modifier.padding(horizontal = 20.dp, vertical = 18.dp)) {
-            Text(
-                text = bubble.translationText,
-                style = MaterialTheme.typography.headlineSmall,
-                color = MaterialTheme.colorScheme.onSurface,
-            )
-            bubble.sourceText?.let { source ->
-                Spacer(Modifier.height(10.dp))
+        Column(modifier = Modifier.padding(horizontal = 15.dp, vertical = 16.dp)) {
+            if (bubble.sourceText != null) {
                 Text(
-                    text = source,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    text = bubble.sourceText,
+                    style = MaterialTheme.typography.bodyLarge.copy(fontSize = 19.sp, lineHeight = 26.sp, fontWeight = FontWeight.Medium),
+                    color = VerbaColors.Ink,
+                )
+            } else {
+                Text(
+                    text = "",
+                    style = MaterialTheme.typography.bodyLarge.copy(
+                        fontSize = 19.sp,
+                        lineHeight = 26.sp,
+                        fontWeight = FontWeight.Medium,
+                    ),
+                    minLines = 1,
+                    color = VerbaColors.Ink,
                 )
             }
+            Spacer(Modifier.height(12.dp))
+            Spacer(Modifier.fillMaxWidth().height(1.dp).background(VerbaColors.Divider))
+            Spacer(Modifier.height(12.dp))
+            bubble.translationText?.let { translation ->
+                Text(
+                    text = translation,
+                    style = MaterialTheme.typography.titleLarge.copy(fontSize = 22.sp, lineHeight = 29.sp, fontWeight = FontWeight.Medium),
+                    color = VerbaColors.Translation,
+                    modifier = Modifier.heightIn(min = TranslationVisualTokens.TranslationMinHeight),
+                )
+            } ?: Spacer(Modifier.height(TranslationVisualTokens.TranslationMinHeight))
         }
     }
 }
@@ -395,51 +398,38 @@ private fun PinnedControls(
     onAction: (InterpretationAction) -> Unit,
 ) {
     val finishAction = actions.firstOrNull { it == InterpretationAction.FINISH }
-
+    val visiblePrimary = primaryAction?.takeIf { it in actions }
     Surface(
-        modifier = Modifier.fillMaxWidth(),
-        color = MaterialTheme.colorScheme.surface,
-        tonalElevation = 2.dp,
+        modifier = Modifier.fillMaxWidth().height(76.dp),        color = VerbaColors.Canvas,
+        tonalElevation = 0.dp,
     ) {
-        Column(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 14.dp),
+            horizontalArrangement = Arrangement.Center,
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            Row(
-                modifier = Modifier.fillMaxWidth().wrapContentHeight(),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                MicrophoneStatus(running = microphoneRunning)
-                Text(
-                    text = statusLabel,
-                    modifier = Modifier.weight(1f),
-                    style = MaterialTheme.typography.labelLarge,
-                )
+            if (visiblePrimary != null) ActionButton(visiblePrimary, onClick = { onAction(visiblePrimary) })
+            if (visiblePrimary == null && statusLabel.isNotBlank()) {
+                Text(statusLabel, color = VerbaColors.Muted, fontSize = 13.sp, lineHeight = 18.sp)
             }
-            if (primaryAction != null || finishAction != null) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End,
-                    verticalAlignment = Alignment.CenterVertically,
+            if (finishAction != null) {
+                if (visiblePrimary != null) Spacer(Modifier.width(12.dp))
+                OutlinedButton(
+                    onClick = { onAction(finishAction) },
+                    modifier = Modifier
+                        .widthIn(min = TranslationVisualTokens.SecondaryActionWidth)
+                        .height(48.dp)
+                        .semantics {
+                            contentDescription = if (phase == SessionPhase.STARTING) "取消连接" else "结束同传"
+                        },
+                    colors = ButtonDefaults.outlinedButtonColors(
+                        containerColor = VerbaColors.TopControl,
+                        contentColor = VerbaColors.Ink,
+                    ),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
                 ) {
-                    primaryAction?.let { action ->
-                        ActionButton(action = action, onClick = { onAction(action) })
-                    }
-                    finishAction?.let { action ->
-                        if (primaryAction != null) {
-                            Spacer(Modifier.width(12.dp))
-                        }
-                        OutlinedButton(
-                            onClick = { onAction(action) },
-                            modifier = Modifier.heightIn(min = 48.dp).widthIn(min = 48.dp).semantics {
-                                contentDescription = if (phase == SessionPhase.STARTING) "取消连接" else "结束同传"
-                            },
-                        ) {
-                            Icon(Icons.Filled.Stop, contentDescription = null)
-                            Text(if (phase == SessionPhase.STARTING) "取消" else "结束", modifier = Modifier.padding(start = 6.dp))
-                        }
-                    }
+                    Icon(Icons.Filled.Stop, contentDescription = null, modifier = Modifier.size(22.dp))
+                    Text(if (phase == SessionPhase.STARTING) "取消" else "结束", modifier = Modifier.padding(start = 6.dp))
                 }
             }
         }
@@ -491,7 +481,10 @@ private fun ActionButton(action: InterpretationAction, onClick: () -> Unit) {
     }
     Button(
         onClick = onClick,
-        modifier = Modifier.heightIn(min = 48.dp).widthIn(min = 48.dp).semantics {
+        modifier = Modifier
+            .then(if (action == InterpretationAction.RESET) Modifier.widthIn(min = TranslationVisualTokens.PrimaryActionMinWidth) else Modifier.width(TranslationVisualTokens.PrimaryActionMinWidth))
+            .height(48.dp)
+            .semantics {
             contentDescription = when (action) {
                 InterpretationAction.START -> "开始同传"
                 InterpretationAction.PAUSE -> "暂停同传"
@@ -500,9 +493,11 @@ private fun ActionButton(action: InterpretationAction, onClick: () -> Unit) {
                 InterpretationAction.FINISH -> "结束同传"
             }
         },
+        shape = RoundedCornerShape(24.dp),
+        colors = ButtonDefaults.buttonColors(containerColor = VerbaColors.LeftMic, contentColor = VerbaColors.Canvas),
         contentPadding = ButtonDefaults.ContentPadding,
     ) {
-        Icon(icon, contentDescription = null)
+        Icon(icon, contentDescription = null, modifier = Modifier.size(22.dp))
         Text(label, modifier = Modifier.padding(start = 6.dp))
     }
 }

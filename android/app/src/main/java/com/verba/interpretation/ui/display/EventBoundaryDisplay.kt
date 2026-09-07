@@ -6,7 +6,7 @@ internal const val TRANSLATION_PENDING_COPY = "正在翻译…"
 internal data class EventBoundaryDisplayRow(
     val key: String,
     val sourceText: String?,
-    val translationText: String,
+    val translationText: String?,
 )
 
 internal object EventBoundaryDisplay {
@@ -32,7 +32,7 @@ internal object EventBoundaryDisplay {
     private fun MutableList<EventBoundaryDisplayRow>.addUnpairedSource(key: String, text: String) {
         val segments = DisplaySentenceSplitter.splitForVisualCap(text)
         segments.forEachIndexed { index, segment ->
-            add(EventBoundaryDisplayRow(segmentKey(key, index, segments.size), segment, TRANSLATION_PENDING_COPY))
+            add(EventBoundaryDisplayRow(segmentKey(key, index, segments.size), segment, null))
         }
     }
 

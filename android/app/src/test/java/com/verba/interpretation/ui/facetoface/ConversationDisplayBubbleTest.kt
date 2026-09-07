@@ -4,10 +4,30 @@ import com.verba.interpretation.audio.PlaybackRoute
 import com.verba.interpretation.ui.FaceToFacePhase
 import com.verba.interpretation.ui.FaceToFaceSide
 import com.verba.interpretation.ui.FaceToFaceTurn
+import com.verba.interpretation.ui.design.ConversationTimelineVisualSpec
+import com.verba.interpretation.ui.design.TranslationVisualTokens
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class ConversationDisplayBubbleTest {
+    @Test fun visualSpecsKeepConversationAndFaceTypographyDistinct() {
+        assertEquals(19f, ConversationTimelineVisualSpec.Conversation.sourceFontSize.value)
+        assertEquals(22f, ConversationTimelineVisualSpec.Conversation.translationFontSize.value)
+        assertEquals(17f, ConversationTimelineVisualSpec.Face.sourceFontSize.value)
+        assertEquals(20f, ConversationTimelineVisualSpec.Face.translationFontSize.value)
+        assertEquals(16f, ConversationTimelineVisualSpec.Conversation.turnSpacing.value)
+        assertEquals(12f, ConversationTimelineVisualSpec.Face.turnSpacing.value)
+        assertEquals(22f, TranslationVisualTokens.BubbleRadius.value)
+    }
+
+    @Test fun micVisualPolicyUsesPhaseAndActiveSideNotStatusText() {
+        assertEquals(MicVisualPolicy(1f, false), micVisualPolicy(FaceToFaceSide.LEFT, null, FaceToFacePhase.IDLE))
+        assertEquals(MicVisualPolicy(1.065f, true), micVisualPolicy(FaceToFaceSide.LEFT, FaceToFaceSide.LEFT, FaceToFacePhase.LISTENING))
+        assertEquals(MicVisualPolicy(0.92f, false), micVisualPolicy(FaceToFaceSide.RIGHT, FaceToFaceSide.LEFT, FaceToFacePhase.LISTENING))
+        assertEquals(MicVisualPolicy(1f, false), micVisualPolicy(FaceToFaceSide.RIGHT, FaceToFaceSide.LEFT, FaceToFacePhase.PROCESSING))
+        assertEquals(MicVisualPolicy(1f, false), micVisualPolicy(FaceToFaceSide.RIGHT, null, FaceToFacePhase.PAUSED))
+    }
+
     @Test fun productionPanelPolicyKeepsOnlyActiveSpeakerLiveAcrossTakeoverAndCancel() {
         val coordinator = com.verba.interpretation.ui.FaceToFaceCoordinator<String>()
         coordinator.setMode(com.verba.interpretation.ui.FaceToFaceMode.AUTO)
@@ -17,9 +37,8 @@ class ConversationDisplayBubbleTest {
         coordinator.updateSubtitle(2, com.verba.interpretation.ui.SubtitleKind.SOURCE_FINAL, "right")
         fun liveSides(): List<FaceToFaceSide> {
             val state = coordinator.state()
-            return FaceToFaceSide.entries.flatMap { side ->
-                displayConversationBubbles(faceToFacePanelTurns(state, side), state.phase, state.activeTurnId)
-            }.filter { it.isLive }.map { it.side }
+            return displayConversationBubbles(state.turns, state.phase, state.activeTurnId)
+                .filter { it.isLive }.map { it.side }
         }
         assertEquals(listOf(FaceToFaceSide.RIGHT), liveSides())
         coordinator.sessionFinished(2)
@@ -27,8 +46,8 @@ class ConversationDisplayBubbleTest {
         coordinator.cancelAutoTakeover(3, "restored")
         coordinator.updateSubtitle(3, com.verba.interpretation.ui.SubtitleKind.SOURCE_PARTIAL, "restored")
         assertEquals(listOf(FaceToFaceSide.LEFT), liveSides())
-        assertEquals(listOf(2L), faceToFacePanelTurns(coordinator.state(), FaceToFaceSide.RIGHT).map { it.id })
-        assertEquals(PlaybackRoute.LEFT, faceToFacePanelTurns(coordinator.state(), FaceToFaceSide.RIGHT).single().route)
+        assertEquals(listOf(1L, 2L, 3L), faceToFacePanelTurns(coordinator.state(), FaceToFaceSide.RIGHT).map { it.id })
+        assertEquals(PlaybackRoute.RIGHT, faceToFacePanelTurns(coordinator.state(), FaceToFaceSide.RIGHT).first().route)
     }
 
     @Test
@@ -179,7 +198,7 @@ class ConversationDisplayBubbleTest {
         assertEquals(
             listOf(
                 ConversationDisplayBubble("43:0", "已经翻译。", "Already translated.", FaceToFaceSide.LEFT, "zh", "en", FaceToFaceTurnAlignment.START),
-                ConversationDisplayBubble("43:source-partial", "正在识别", "正在翻译…", FaceToFaceSide.LEFT, "zh", "en", FaceToFaceTurnAlignment.START),
+                ConversationDisplayBubble("43:source-partial", "正在识别", null, FaceToFaceSide.LEFT, "zh", "en", FaceToFaceTurnAlignment.START),
             ),
             displayConversationBubbles(listOf(turn)),
         )
@@ -201,7 +220,7 @@ class ConversationDisplayBubbleTest {
             ),
         )
 
-        assertEquals(longTranslation, bubbles.joinToString("") { it.translationText })
+        assertEquals(longTranslation, bubbles.joinToString("") { it.translationText.orEmpty() })
         assertEquals(listOf(null, null), bubbles.map { it.sourceText })
         assertEquals(listOf("44:0:0", "44:0:1"), bubbles.map { it.key })
     }

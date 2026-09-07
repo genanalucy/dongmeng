@@ -1,18 +1,22 @@
 package com.verba.interpretation.ui.facetoface
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.interaction.DragInteraction
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
@@ -38,12 +42,20 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalDensity
 import com.verba.interpretation.ui.FaceToFacePhase
 import com.verba.interpretation.ui.FaceToFaceSide
 import com.verba.interpretation.ui.FaceToFaceTurn
 import com.verba.interpretation.ui.TranslationLanguage
+import com.verba.interpretation.ui.design.ConversationTimelineVisualSpec
+import com.verba.interpretation.ui.design.TranslationVisualTokens
+import com.verba.interpretation.ui.design.VerbaColors
 import com.verba.interpretation.ui.display.EventBoundaryDisplay
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
@@ -54,7 +66,7 @@ internal fun conversationTimelineLatestIndex(turnCount: Int, hasListeningPlaceho
 internal data class ConversationDisplayBubble(
     val key: String,
     val sourceText: String?,
-    val translationText: String,
+    val translationText: String?,
     val side: FaceToFaceSide,
     val sourceLanguage: String,
     val targetLanguage: String,
@@ -88,7 +100,7 @@ internal fun displayConversationBubbles(
                 // updates the same LazyColumn item instead of replacing it.
                 key = conversationBubbleKey(turn.id, "0"),
                 sourceText = turn.sourceText.takeIf(String::isNotBlank),
-                translationText = turn.translatedText,
+                translationText = turn.translatedText.takeIf(String::isNotBlank),
                 side = turn.side,
                 sourceLanguage = turn.sourceLanguage,
                 targetLanguage = turn.targetLanguage,
@@ -153,6 +165,7 @@ internal fun ConversationTimeline(
     phase: FaceToFacePhase = FaceToFacePhase.IDLE,
     activeTurnId: Long? = null,
     contentDescription: String = "对话记录",
+    visualSpec: ConversationTimelineVisualSpec = ConversationTimelineVisualSpec.Conversation,
 ) {
     // The old arguments remain source-compatible for continuous mode callers. Live content is
     // now represented by the actual unfinished turn, never by a fixed input row.
@@ -218,24 +231,20 @@ internal fun ConversationTimeline(
         LazyColumn(
             state = listState,
             modifier = Modifier.fillMaxSize().semantics { this.contentDescription = contentDescription },
-            contentPadding = PaddingValues(start = 16.dp, top = 14.dp, end = 16.dp, bottom = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp, Alignment.Bottom),
+            contentPadding = PaddingValues(
+                start = visualSpec.horizontalPadding,
+                top = 12.dp,
+                end = visualSpec.horizontalPadding,
+                bottom = 5.dp,
+            ),
+            verticalArrangement = Arrangement.spacedBy(visualSpec.turnSpacing),
         ) {
-            if (bubbles.isEmpty() && phase != FaceToFacePhase.ERROR) {
-                item {
-                    Text(
-                        "按住对应麦克风开始对话",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.fillMaxWidth().padding(top = 28.dp),
-                    )
-                }
-            }
-            items(bubbles, key = { it.key }) { bubble -> ConversationBubble(bubble) }
+            items(bubbles, key = { it.key }) { bubble -> ConversationBubble(bubble, visualSpec) }
             if (phase == FaceToFacePhase.ERROR) {
                 item(key = "conversation-error") {
                     Text(
                         "当前会话已停止，请从下方重新开始。",
-                        color = MaterialTheme.colorScheme.error,
+                        color = VerbaColors.Danger,
                         modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 18.dp),
                     )
                 }
@@ -257,27 +266,44 @@ internal fun ConversationTimeline(
 }
 
 @Composable
-private fun ConversationBubble(bubble: ConversationDisplayBubble) {
+private fun ConversationBubble(
+    bubble: ConversationDisplayBubble,
+    visualSpec: ConversationTimelineVisualSpec,
+) {
     val isRight = bubble.alignment == FaceToFaceTurnAlignment.END
     val sourceLanguage = TranslationLanguage.displayName(bubble.sourceLanguage)
     val targetLanguage = TranslationLanguage.displayName(bubble.targetLanguage)
+    val targetEar = targetEarLabel(bubble.side)
+    val sourceLineHeight = visualSpec.sourceLineHeight.value.dp
     val liveLabel = when (bubble.livePhase) {
         FaceToFacePhase.LISTENING -> "${earLabel(bubble.side)} · 收音中"
         FaceToFacePhase.PROCESSING -> "${earLabel(bubble.side)} · 翻译中"
         else -> null
     }
-    val targetEar = targetEarLabel(bubble.side)
     Column(Modifier.fillMaxWidth(), horizontalAlignment = if (isRight) Alignment.End else Alignment.Start) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = if (isRight) Arrangement.End else Arrangement.Start,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
         Surface(
-            modifier = Modifier.widthIn(max = 360.dp).semantics {
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = if (isRight) 54.dp else 0.dp, end = if (isRight) 0.dp else 54.dp)
+                .semantics {
                 contentDescription = listOfNotNull(
                     liveLabel,
                     bubble.sourceText?.let { "$sourceLanguage 原文。$it" },
-                    bubble.translationText.takeIf { it.isNotBlank() }?.let { "$targetLanguage 译文。$it" },
+                    bubble.translationText?.let { "$targetLanguage 译文。$it" },
                     "译音送至$targetEar",
                 ).joinToString(" ")
             },
-            shape = RoundedCornerShape(22.dp),
+            shape = RoundedCornerShape(
+                topStart = TranslationVisualTokens.BubbleRadius,
+                topEnd = TranslationVisualTokens.BubbleRadius,
+                bottomStart = if (isRight) TranslationVisualTokens.BubbleRadius else TranslationVisualTokens.BubbleTailRadius,
+                bottomEnd = if (isRight) TranslationVisualTokens.BubbleTailRadius else TranslationVisualTokens.BubbleRadius,
+            ),
             color = if (bubble.isLive) {
                 if (isRight) ConversationColors.rightLive else ConversationColors.leftLive
             } else ConversationColors.history,
@@ -288,36 +314,113 @@ private fun ConversationBubble(bubble: ConversationDisplayBubble) {
                 } else ConversationColors.historyBorder,
             ),
         ) {
-            Column(Modifier.padding(horizontal = 16.dp, vertical = 13.dp)) {
-                liveLabel?.let {
-                    Text(it, style = MaterialTheme.typography.labelSmall, color = if (isRight) ConversationColors.rightAccent else ConversationColors.leftAccent, fontWeight = FontWeight.Medium)
-                    Spacer(Modifier.height(6.dp))
+            Column(Modifier.padding(horizontal = visualSpec.bubbleHorizontalPadding, vertical = visualSpec.bubbleVerticalPadding)) {
+                Box(Modifier.fillMaxWidth().height(22.dp)) {
+                    if (liveLabel != null) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            LiveWaveform(color = if (isRight) ConversationColors.rightAccent else ConversationColors.leftAccent)
+                            Text(liveLabel, fontSize = 11.sp, lineHeight = 16.sp, color = if (isRight) ConversationColors.rightAccent else ConversationColors.leftAccent, fontWeight = FontWeight.Medium)
+                        }
+                    }
                 }
+                Spacer(Modifier.height(8.dp))
                 if (bubble.sourceText != null) {
-                    Text(bubble.sourceText, style = MaterialTheme.typography.bodyLarge, color = ConversationColors.ink)
-                } else if (bubble.isLive && bubble.livePhase == FaceToFacePhase.LISTENING) {
-                    Text("原文正在识别…", style = MaterialTheme.typography.bodyLarge, color = ConversationColors.muted)
+                    LiveText(
+                        text = bubble.sourceText,
+                        style = MaterialTheme.typography.bodyLarge.copy(
+                            fontSize = visualSpec.sourceFontSize,
+                            lineHeight = visualSpec.sourceLineHeight,
+                            fontWeight = FontWeight.Medium,
+                        ),
+                        color = ConversationColors.ink,
+                        cursor = bubble.isLive && bubble.livePhase == FaceToFacePhase.LISTENING,
+                    )
                 } else {
-                    Spacer(Modifier.height(25.dp))
+                    EmptyLiveLine(
+                        height = sourceLineHeight,
+                        color = ConversationColors.ink,
+                        cursor = bubble.isLive && bubble.livePhase == FaceToFacePhase.LISTENING,
+                    )
                 }
-                Spacer(Modifier.height(9.dp))
+                Spacer(Modifier.height(12.dp))
                 Spacer(Modifier.fillMaxWidth().height(1.dp).background(ConversationColors.divider))
-                Spacer(Modifier.height(9.dp))
-                Text(
-                    bubble.translationText.takeIf { it.isNotBlank() }
-                        ?: if (bubble.isLive) "译文将在识别完成后显示" else "",
-                    style = MaterialTheme.typography.bodyMedium,
+                Spacer(Modifier.height(12.dp))
+                bubble.translationText?.let { translation ->
+                    LiveText(
+                        text = translation,
+                        style = MaterialTheme.typography.titleLarge.copy(
+                            fontSize = visualSpec.translationFontSize,
+                            lineHeight = visualSpec.translationLineHeight,
+                            fontWeight = FontWeight.Medium,
+                        ),
+                        color = ConversationColors.translation,
+                        cursor = bubble.isLive && bubble.livePhase == FaceToFacePhase.PROCESSING,
+                        modifier = Modifier.heightIn(min = 42.dp),
+                    )
+                } ?: EmptyLiveLine(
+                    height = 42.dp,
                     color = ConversationColors.translation,
-                )
-                Text(
-                    "译音 → $targetEar",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = ConversationColors.muted,
-                    modifier = Modifier.padding(top = 8.dp),
+                    cursor = bubble.isLive && bubble.livePhase == FaceToFacePhase.PROCESSING,
                 )
             }
         }
+        // No playback callback is available in this model. Keep the outside slot empty rather than
+        // exposing a fake control or changing the article's geometry when playback is added.
+        Spacer(Modifier.width(TranslationVisualTokens.BubbleGap))
+        Spacer(Modifier.width(TranslationVisualTokens.BubbleOuterSlot).height(62.dp))
+        }
     }
+}
+
+@Composable
+private fun LiveWaveform(color: Color) {
+    Canvas(Modifier.width(22.dp).height(17.dp)) {
+        val barWidth = 2.dp.toPx()
+        val gap = 3.dp.toPx()
+        val heights = floatArrayOf(8.dp.toPx(), 13.dp.toPx(), 17.dp.toPx(), 11.dp.toPx(), 8.dp.toPx())
+        heights.forEachIndexed { index, height ->
+            val x = index * (barWidth + gap)
+            drawRoundRect(
+                color = color,
+                topLeft = androidx.compose.ui.geometry.Offset(x, (size.height - height) / 2),
+                size = androidx.compose.ui.geometry.Size(barWidth, height),
+                cornerRadius = androidx.compose.ui.geometry.CornerRadius(1.dp.toPx(), 1.dp.toPx()),
+            )
+        }
+    }
+}
+
+@Composable
+private fun LiveText(
+    text: String,
+    style: androidx.compose.ui.text.TextStyle,
+    color: Color,
+    cursor: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    var layout by remember { mutableStateOf<TextLayoutResult?>(null) }
+    val cursorWidth = with(LocalDensity.current) { 2.dp.toPx() }
+    Text(
+        text = text,
+        style = style,
+        color = color,
+        modifier = modifier.drawBehind {
+            if (cursor && layout != null) {
+                val line = layout!!.lineCount - 1
+                val top = layout!!.getLineTop(line)
+                val bottom = layout!!.getLineBottom(line)
+                drawRect(color, androidx.compose.ui.geometry.Offset(layout!!.getLineRight(line) + 2.dp.toPx(), top), androidx.compose.ui.geometry.Size(cursorWidth, bottom - top))
+            }
+        },
+        onTextLayout = { layout = it },
+    )
+}
+
+@Composable
+private fun EmptyLiveLine(height: androidx.compose.ui.unit.Dp, color: Color, cursor: Boolean) {
+    Box(Modifier.fillMaxWidth().height(height).drawBehind {
+        if (cursor) drawRect(color, androidx.compose.ui.geometry.Offset.Zero, androidx.compose.ui.geometry.Size(2.dp.toPx(), size.height))
+    })
 }
 
 private object ConversationColors {

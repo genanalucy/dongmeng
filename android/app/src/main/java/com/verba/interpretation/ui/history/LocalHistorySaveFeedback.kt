@@ -1,19 +1,27 @@
 package com.verba.interpretation.ui.history
 
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.verba.interpretation.history.LocalHistorySaveState
 import com.verba.interpretation.history.LocalHistorySaveStatus
+import com.verba.interpretation.ui.design.VerbaColors
+import kotlinx.coroutines.delay
 
-/** Device-local persistence only: this component makes no cloud synchronization claim. */
+/** Save feedback is event-driven; IDLE deliberately renders no persistent footer. */
 @Composable
 internal fun LocalHistorySaveFeedback(
     state: LocalHistorySaveState,
@@ -21,26 +29,48 @@ internal fun LocalHistorySaveFeedback(
     onViewHistory: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    var showSaved by remember { mutableStateOf(false) }
+    LaunchedEffect(state.status, state.sessionId) {
+        showSaved = state.status != LocalHistorySaveStatus.SAVED
+        if (state.status == LocalHistorySaveStatus.SAVED) {
+            showSaved = true
+            delay(SAVED_FEEDBACK_MILLIS)
+            showSaved = false
+        }
+    }
+    if (state.status == LocalHistorySaveStatus.SAVED && !showSaved) return
     val message = when (state.status) {
-        LocalHistorySaveStatus.IDLE -> "完成的文字自动保存，不保存音频"
+        LocalHistorySaveStatus.IDLE -> null
         LocalHistorySaveStatus.SAVING -> "正在保存到本机…"
         LocalHistorySaveStatus.SAVED -> "已保存到本机"
         LocalHistorySaveStatus.FAILED -> "部分文字未能保存到本机"
-    }
-    Column(modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 4.dp)) {
+    } ?: return
+    Surface(
+        modifier = modifier.padding(horizontal = 20.dp, vertical = 4.dp),
+        shape = androidx.compose.foundation.shape.RoundedCornerShape(18.dp),
+        color = VerbaColors.TopControl,
+        border = BorderStroke(1.dp, VerbaColors.ShellStroke),
+    ) {
+    Row(
+        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
         Text(
             message,
             style = MaterialTheme.typography.labelMedium,
             color = if (state.status == LocalHistorySaveStatus.FAILED) MaterialTheme.colorScheme.error
-                else MaterialTheme.colorScheme.onSurfaceVariant,
+            else MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.weight(1f),
         )
         val sessionId = state.sessionId
         if (state.status == LocalHistorySaveStatus.SAVED && sessionId != null) {
             TextButton(
                 onClick = { onViewHistory(sessionId) },
                 enabled = canOpenHistory,
-                modifier = Modifier.heightIn(min = 48.dp),
-            ) { Text(if (canOpenHistory) "查看本次记录" else "结束翻译后可查看记录") }
+            ) { Text("查看本次记录") }
         }
     }
+    }
 }
+
+private const val SAVED_FEEDBACK_MILLIS = 3_000L

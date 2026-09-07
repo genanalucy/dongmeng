@@ -5,7 +5,7 @@ import com.verba.interpretation.ui.display.EventBoundaryDisplay
 data class InterpretationDisplayBubble(
     val key: String,
     val sourceText: String?,
-    val translationText: String,
+    val translationText: String?,
 ) {
     companion object {
         fun map(

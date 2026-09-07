@@ -10,6 +10,14 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class InterpretationUiMapperTest {
+    @Test fun visualShellConstantsMatchFinalSpecs() {
+        assertEquals(66f, com.verba.interpretation.ui.design.TranslationVisualTokens.TopBarHeight.value)
+        assertEquals(36f, com.verba.interpretation.ui.design.TranslationVisualTokens.InterpretationDirectionRowHeight.value)
+        assertEquals(102f, com.verba.interpretation.ui.design.TranslationVisualTokens.InterpretationHeaderTotalHeight.value)
+        assertEquals(104f, com.verba.interpretation.ui.design.TranslationVisualTokens.PrimaryActionMinWidth.value)
+        assertEquals(88f, com.verba.interpretation.ui.design.TranslationVisualTokens.SecondaryActionWidth.value)
+    }
+
     @Test fun simultaneousRunningShowsRippleAndPauseFinishActions() {
         val model = InterpretationUiMapper.map(
             InterpretationUiState(
@@ -81,7 +89,7 @@ class InterpretationUiMapperTest {
         assertEquals(
             listOf(
                 InterpretationDisplayBubble("2:0", "已确认。", "Confirmed."),
-                InterpretationDisplayBubble("2:source-partial", "还在说", "正在翻译…"),
+                InterpretationDisplayBubble("2:source-partial", "还在说", null),
             ),
             model.bubbles,
         )
@@ -111,9 +119,16 @@ class InterpretationUiMapperTest {
         )
 
         assertEquals("Français → Tiếng Việt", idle.languageDirection)
-        assertEquals("准备开始", idle.statusLabel)
+        assertEquals("", idle.statusLabel)
         assertEquals("翻译未完成", error.statusLabel)
         assertEquals("Français → Tiếng Việt", error.languageDirection)
+    }
+
+    @Test fun startingKeepsOnlyFinishForCancellationAndShowsSingleConnectionStatus() {
+        val model = InterpretationUiMapper.map(InterpretationUiState(phase = SessionPhase.STARTING))
+        assertEquals(listOf(InterpretationAction.FINISH), model.actions)
+        assertEquals(null, model.primaryAction)
+        assertEquals("正在连接翻译服务", model.statusLabel)
     }
 
     @Test fun eachSessionPhaseExposesOnlyPermittedActions() {

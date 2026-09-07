@@ -47,8 +47,9 @@ internal fun faceToFacePresentation(state: FaceToFaceState): FaceToFacePresentat
     },
 )
 
+/** Both participants read the same conversation; `side` only names the panel for semantics. */
 internal fun faceToFacePanelTurns(state: FaceToFaceState, side: FaceToFaceSide): List<FaceToFaceTurn> =
-    state.turns.filter { it.side == side }
+    state.turns
 
 internal fun faceToFaceTurnAlignment(turn: FaceToFaceTurn): FaceToFaceTurnAlignment =
     if (turn.side == FaceToFaceSide.LEFT) FaceToFaceTurnAlignment.START else FaceToFaceTurnAlignment.END

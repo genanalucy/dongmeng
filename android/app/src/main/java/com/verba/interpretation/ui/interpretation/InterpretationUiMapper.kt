@@ -106,7 +106,7 @@ object InterpretationUiMapper {
     }
 
     private fun statusLabelFor(phase: SessionPhase): String = when (phase) {
-        SessionPhase.IDLE -> "准备开始"
+        SessionPhase.IDLE -> ""
         SessionPhase.STARTING -> "正在连接翻译服务"
         SessionPhase.RUNNING -> "正在翻译"
         SessionPhase.PAUSED -> "已暂停"

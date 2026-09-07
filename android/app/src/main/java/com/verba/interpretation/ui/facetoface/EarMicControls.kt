@@ -2,23 +2,29 @@ package com.verba.interpretation.ui.facetoface
 
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.border
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Mic
-import androidx.compose.material.icons.filled.Pause
-import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Stop
-import androidx.compose.material3.Button
+import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -29,6 +35,7 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -39,6 +46,9 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.verba.interpretation.ui.design.TranslationVisualTokens
+import com.verba.interpretation.ui.design.VerbaColors
 import com.verba.interpretation.ui.FaceToFaceMode
 import kotlinx.coroutines.CancellationException
 import com.verba.interpretation.ui.FaceToFacePhase
@@ -55,6 +65,18 @@ internal class MicPressToken internal constructor(val owner: MicPressOwner, val 
 }
 
 internal enum class FaceToFaceAction { START_CONTINUOUS, PAUSE_CONTINUOUS, RESUME_CONTINUOUS, END_CONTINUOUS }
+
+internal data class MicVisualPolicy(val scale: Float, val breathing: Boolean)
+
+internal fun micVisualPolicy(
+    side: FaceToFaceSide,
+    activeSide: FaceToFaceSide?,
+    phase: FaceToFacePhase,
+): MicVisualPolicy = if (phase == FaceToFacePhase.LISTENING && activeSide != null) {
+    MicVisualPolicy(scale = if (side == activeSide) 1.065f else 0.92f, breathing = side == activeSide)
+} else {
+    MicVisualPolicy(scale = 1f, breathing = false)
+}
 
 internal fun continuousActions(state: FaceToFaceState): List<FaceToFaceAction> =
     if (state.mode != FaceToFaceMode.AUTO) emptyList() else when (state.phase) {
@@ -188,8 +210,15 @@ internal fun EarMicControls(
         clearMicrophoneRequest()
         if (manual) onManualCancel()
     }
-    Column(modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.Bottom) {
+    Column(
+        modifier.fillMaxWidth().height(TranslationVisualTokens.OperationHeight).padding(horizontal = 20.dp, vertical = 7.dp),
+        verticalArrangement = Arrangement.Top,
+    ) {
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(TranslationVisualTokens.MicGroupGap, Alignment.CenterHorizontally),
+            verticalAlignment = Alignment.Bottom,
+        ) {
             if (FaceToFaceSide.LEFT in visibleSides) EarMicButton(
                 side = FaceToFaceSide.LEFT,
                 language = state.leftLanguage,
@@ -197,6 +226,8 @@ internal fun EarMicControls(
                 pointerEnabled = if (manual) state.phase == FaceToFacePhase.IDLE else state.phase in setOf(FaceToFacePhase.IDLE, FaceToFacePhase.LISTENING, FaceToFacePhase.PAUSED),
                 actionEnabled = if (manual) state.phase == FaceToFacePhase.IDLE || activeSide == FaceToFaceSide.LEFT else continuousLeftAction(state.phase) != null,
                 active = activeSide == FaceToFaceSide.LEFT,
+                activeSide = activeSide,
+                phase = state.phase,
                 stateLabel = if (manual) "按住说话" else when (state.phase) {
                     FaceToFacePhase.IDLE -> "开始连续收音"
                     FaceToFacePhase.PAUSED -> "继续连续收音"
@@ -225,6 +256,8 @@ internal fun EarMicControls(
                 pointerEnabled = if (manual) state.phase == FaceToFacePhase.IDLE else state.phase == FaceToFacePhase.LISTENING,
                 actionEnabled = if (manual) state.phase == FaceToFacePhase.IDLE || activeSide == FaceToFaceSide.RIGHT else state.phase == FaceToFacePhase.LISTENING,
                 active = activeSide == FaceToFaceSide.RIGHT,
+                activeSide = activeSide,
+                phase = state.phase,
                 stateLabel = if (manual) "按住说话" else if (activeSide == FaceToFaceSide.RIGHT) "结束右侧临时接话" else "开始右侧临时接话",
                 onPress = {
                     if (manual) requestMicrophone(MicrophonePermissionAction.Manual(FaceToFaceSide.RIGHT)) else onPressRightAuto()
@@ -255,14 +288,6 @@ internal fun EarMicControls(
                 onLanguage = { onSetLanguages(state.leftLanguage, it) },
             )
         }
-        if (showAutoControls) AutoControls(
-            state,
-            requestMicrophone,
-            onStartAuto,
-            { clearMicrophoneRequest(); onPauseAuto() },
-            onResumeAuto,
-            onStopAuto,
-        )
     }
 }
 
@@ -279,6 +304,14 @@ private fun LanguagePairRow(
     }
 }
 
+private fun languageShortLabel(language: String): String = when (language) {
+    "zh" -> "中"
+    "en" -> "EN"
+    "vi" -> "VI"
+    "fr" -> "FR"
+    else -> language.uppercase()
+}
+
 @Composable
 private fun LanguageEntry(side: FaceToFaceSide, language: String, otherLanguage: String, enabled: Boolean, onSelect: (String) -> Unit) {
     var expanded by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
@@ -289,7 +322,19 @@ private fun LanguageEntry(side: FaceToFaceSide, language: String, otherLanguage:
             contentDescription = "选择${TranslationLanguage.displayName(language)}语言"
         },
     ) {
-        Text(TranslationLanguage.displayName(language), color = Color(0xFFCBD5E1), style = MaterialTheme.typography.labelLarge)
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(5.dp),
+        ) {
+            Text(
+                TranslationLanguage.displayName(language),
+                color = VerbaColors.Muted,
+                fontSize = 13.sp,
+                lineHeight = 18.sp,
+                fontWeight = FontWeight.Medium,
+            )
+            Icon(Icons.Filled.KeyboardArrowDown, contentDescription = null, tint = VerbaColors.Muted, modifier = Modifier.size(16.dp))
+        }
     }
     androidx.compose.material3.DropdownMenu(expanded = expanded && enabled, onDismissRequest = { expanded = false }) {
         TranslationLanguage.entries.filter { it.code != otherLanguage }.forEach { choice ->
@@ -309,6 +354,8 @@ internal fun EarMicButton(
     pointerEnabled: Boolean,
     actionEnabled: Boolean,
     active: Boolean,
+    activeSide: FaceToFaceSide?,
+    phase: FaceToFacePhase,
     stateLabel: String,
     onPress: () -> Unit,
     onRelease: () -> Unit,
@@ -322,14 +369,51 @@ internal fun EarMicButton(
     val currentOnCancel by rememberUpdatedState(onCancel)
     val gate = remember(side) { MicPressGate(currentOnPress, currentOnRelease, currentOnCancel) }
     gate.updateCallbacks(currentOnPress, currentOnRelease, currentOnCancel)
-    val color = if (side == FaceToFaceSide.LEFT) Color(0xFF91B5D5) else Color(0xFFE0BC83)
+    val color = if (side == FaceToFaceSide.LEFT) VerbaColors.LeftMic else VerbaColors.RightMic
     val target = targetEarLabel(side)
+    val motionEnabled = android.animation.ValueAnimator.areAnimatorsEnabled()
+    val transition = rememberInfiniteTransition(label = "${side.name.lowercase()}MicBreathing")
+    val breathing by transition.animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(1600, easing = FastOutSlowInEasing), RepeatMode.Reverse),
+        label = "breathing",
+    )
+    val visualPolicy = micVisualPolicy(side, activeSide, phase)
+    val activeScale = visualPolicy.scale
     val description = "${earLabel(side)}，${TranslationLanguage.displayName(language)}，$stateLabel，译文送至$target"
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+    Column(
+        modifier = Modifier.width(TranslationVisualTokens.MicGroupWidth),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
         LanguageEntry(side, language, otherLanguage, actionEnabled && !active, onLanguage)
-        Surface(
-            modifier = Modifier.size(86.dp)
-                .semantics {
+        androidx.compose.foundation.layout.Spacer(Modifier.height(5.dp))
+        Box(
+            modifier = Modifier
+                .size(TranslationVisualTokens.MicDiameter)
+                .drawBehind {
+                    if (visualPolicy.breathing) {
+                        val scaledRadius = size.minDimension / 2f * visualPolicy.scale
+                        val extra = if (motionEnabled) {
+                            (5.dp + 4.dp * breathing).toPx()
+                        } else {
+                            5.dp.toPx()
+                        }
+                        drawCircle(
+                            color = color.copy(alpha = if (motionEnabled) 0.08f + 0.07f * breathing else 0.28f),
+                            radius = scaledRadius + extra,
+                            style = androidx.compose.ui.graphics.drawscope.Stroke(width = 2.dp.toPx()),
+                        )
+                    }
+                },
+            contentAlignment = Alignment.Center,
+        ) {
+            Surface(
+                modifier = Modifier
+                    .size(TranslationVisualTokens.MicDiameter)
+                    .graphicsLayer { scaleX = activeScale; scaleY = activeScale }
+                    .then(if (active && !motionEnabled) Modifier.border(2.dp, color.copy(alpha = 0.8f), CircleShape) else Modifier)
+                    .semantics {
                     role = Role.Button
                     contentDescription = description
                     stateDescription = stateLabel
@@ -349,19 +433,25 @@ internal fun EarMicButton(
                 },
             shape = CircleShape,
             color = color,
-            tonalElevation = if (active) 5.dp else 1.dp,
+            tonalElevation = 0.dp,
         ) {
             Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
-                Icon(Icons.Filled.Mic, contentDescription = null, tint = Color(0xFF07111F), modifier = Modifier.size(28.dp))
-                Text(earLabel(side), color = Color(0xFF07111F), style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
-                Text("→ $target", color = Color(0xFF07111F), style = MaterialTheme.typography.labelSmall)
+                Icon(Icons.Filled.Mic, contentDescription = null, tint = VerbaColors.Canvas, modifier = Modifier.size(26.dp))
+                Text(
+                    "${earLabel(side)} · ${languageShortLabel(language)}",
+                    color = VerbaColors.Canvas,
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                )
             }
+        }
         }
     }
 }
 
-@Composable
-private fun AutoControls(
+/* Continuous actions remain reachable through the overflow menu; no duplicate action row is rendered. */
+/*
     state: FaceToFaceState,
     requestMicrophone: (MicrophonePermissionAction) -> Unit,
     onStart: () -> Unit,
@@ -383,12 +473,4 @@ private fun AutoControls(
     }
 }
 
-@Composable
-private fun RowScope.ActionButton(label: String, icon: androidx.compose.ui.graphics.vector.ImageVector, onClick: () -> Unit, primary: Boolean) {
-    val modifier = Modifier.weight(1f).heightIn(min = 48.dp)
-    if (primary) {
-        Button(onClick = onClick, modifier = modifier) { Icon(icon, contentDescription = label); Text(label, modifier = Modifier.padding(start = 4.dp)) }
-    } else {
-        OutlinedButton(onClick = onClick, modifier = modifier) { Icon(icon, contentDescription = label); Text(label, modifier = Modifier.padding(start = 4.dp)) }
-    }
-}
+*/

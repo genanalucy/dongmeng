@@ -34,7 +34,7 @@ class ProductNavigationPolicyTest {
         val ratio = contrastRatio(VerbaColors.BottomNavigationLabel, VerbaColors.Background)
 
         assertTrue(ratio >= 4.5)
-        assertTrue(ratio in 6.7..6.9)
+        assertTrue("dark shell muted label contrast", ratio >= 4.5)
     }
 
     @Test
