@@ -71,9 +71,10 @@ class FaceToFaceScreenTest {
     fun constrainedPanelsCanScrollToAndOperateBothEarControls() {
         val viewModel = FaceToFaceViewModel(application())
         compose.setContent {
+            val state by viewModel.state.collectAsState()
             MaterialTheme {
                 FaceToFaceScreen(
-                    state = com.verba.interpretation.ui.FaceToFaceState(),
+                    state = state,
                     viewModel = viewModel,
                     requestMicrophone = {},
                     modifier = Modifier.height(240.dp),
@@ -81,19 +82,22 @@ class FaceToFaceScreenTest {
             }
         }
 
-        compose.onNodeWithContentDescription("切换到面对面布局").performClick()
-        compose.onNodeWithContentDescription("左耳，中文，按住说话，译文送至右耳").performScrollTo().performClick()
-        compose.onNodeWithContentDescription("右耳，English，按住说话，译文送至左耳").performScrollTo().performClick()
+        compose.onNodeWithContentDescription("切换到面对面布局").assertIsDisplayed().performClick()
+        compose.onNodeWithTag("face-to-face-panel-far").assertIsDisplayed().assertContentDescriptionEquals("远端右耳阅读区，旋转180度")
+        compose.onNodeWithContentDescription("右耳，English，按住说话，译文送至左耳").performScrollTo().assertIsDisplayed().performClick()
+        compose.onNodeWithTag("face-to-face-panel-near").performScrollTo().assertIsDisplayed().assertContentDescriptionEquals("近端左耳阅读区，正向")
+        compose.onNodeWithContentDescription("左耳，中文，按住说话，译文送至右耳").performScrollTo().assertIsDisplayed().performClick()
     }
 
     @Test
     fun constrainedPanelsCanUseFontScaleAndStillExposeControls() {
         val viewModel = FaceToFaceViewModel(application())
         compose.setContent {
+            val state by viewModel.state.collectAsState()
             CompositionLocalProvider(LocalDensity provides Density(1f, fontScale = 2f)) {
                 MaterialTheme {
                     FaceToFaceScreen(
-                        state = com.verba.interpretation.ui.FaceToFaceState(),
+                        state = state,
                         viewModel = viewModel,
                         requestMicrophone = {},
                         modifier = Modifier.height(260.dp),
@@ -102,9 +106,11 @@ class FaceToFaceScreenTest {
             }
         }
 
-        compose.onNodeWithContentDescription("切换到面对面布局").performClick()
-        compose.onNodeWithTag("face-to-face-panel-far").performScrollTo()
-        compose.onNodeWithContentDescription("右耳，English，按住说话，译文送至左耳").assertExists()
+        compose.onNodeWithContentDescription("切换到面对面布局").assertIsDisplayed().performClick()
+        compose.onNodeWithTag("face-to-face-panel-far").assertIsDisplayed().assertContentDescriptionEquals("远端右耳阅读区，旋转180度").performScrollTo()
+        compose.onNodeWithContentDescription("右耳，English，按住说话，译文送至左耳").performScrollTo().assertIsDisplayed().performClick()
+        compose.onNodeWithTag("face-to-face-panel-near").performScrollTo().assertIsDisplayed().assertContentDescriptionEquals("近端左耳阅读区，正向")
+        compose.onNodeWithContentDescription("左耳，中文，按住说话，译文送至右耳").performScrollTo().assertIsDisplayed().performClick()
     }
 
     @Test

@@ -221,7 +221,7 @@ private fun FaceToFacePanels(
                     onCancelRightAuto = viewModel::cancelRightAuto,
                     onPauseAuto = viewModel::pauseAuto,
                     onResumeAuto = viewModel::resumeAuto,
-                    onStopAuto = viewModel::stopAuto,
+                    onStopAuto = { clearMicrophoneRequest(); viewModel.stopAuto() },
                     onSetLanguages = viewModel::setLanguages,
                     visibleSides = setOf(panel.side),
                     showAutoControls = panel.position == FaceToFacePanelPosition.NEAR,
