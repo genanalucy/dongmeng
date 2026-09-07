@@ -17,6 +17,7 @@ import {
 } from './api/cloudApi'
 import { AdminListPanel } from './components/AdminListPanel'
 import { AdminLogin } from './components/AdminLogin'
+import { AdminSetup } from './components/AdminSetup'
 
 type Page = 'overview' | 'users' | 'codes' | 'audit'
 type PlatformState = { readonly health: ProbeResult; readonly ready: ProbeResult; readonly config: ServiceConfig }
@@ -184,6 +185,11 @@ export function App(): ReactElement {
   const [selectedUser, setSelectedUser] = useState<AdminUser | null>(null)
   const [loginError, setLoginError] = useState<string | null>(null)
   const [loginLoading, setLoginLoading] = useState(false)
+  const [showSetup, setShowSetup] = useState(false)
+  const [setupEnabled, setSetupEnabled] = useState(false)
+  const [setupStatusLoading, setSetupStatusLoading] = useState(false)
+  const [setupError, setSetupError] = useState<string | null>(null)
+  const [setupLoading, setSetupLoading] = useState(false)
   const [platform, setPlatform] = useState<PlatformState | null>(null)
   const [platformError, setPlatformError] = useState<string | null>(null)
   const baseUrl = defaultBaseUrl()
@@ -222,8 +228,25 @@ export function App(): ReactElement {
     setLoginLoading(true); setLoginError(null)
     const result = await new CloudApiClient(baseUrl).login(identifier.trim(), password)
     if (result.kind === 'success') { setSession(result.data); saveAdminSession(result.data); setAuthenticationState('checking') }
-    else setLoginError('账号或密码错误，或暂时无法登录。')
+    else if (result.kind === 'unauthorized') setLoginError('账号或密码错误。')
+    else if (result.status === null) setLoginError('连接 Cloud API 失败，请检查网络与服务地址。')
+    else setLoginError(result.requestId === null ? '服务暂时无法处理登录请求。' : `服务暂时无法处理登录请求（请求 ID：${result.requestId}）。`)
     setLoginLoading(false)
+  }
+  const openSetup = async (): Promise<void> => {
+    setShowSetup(true); setSetupStatusLoading(true); setSetupError(null)
+    const result = await new CloudApiClient(baseUrl).adminSetupStatus()
+    if (result.kind === 'success') setSetupEnabled(result.data.enabled)
+    else setSetupError(result.status === null ? '连接 Cloud API 失败，请检查网络与服务地址。' : '无法确认设置权限，请稍后重试。')
+    setSetupStatusLoading(false)
+  }
+  const completeSetup = async (token: string, username: string, email: string, password: string): Promise<void> => {
+    setSetupLoading(true); setSetupError(null)
+    const result = await new CloudApiClient(baseUrl).completeAdminSetup(token, username, email, password)
+    if (result.kind === 'success') { setShowSetup(false); setLoginError('新管理员已设置完成，请使用新账号登录。') }
+    else if (result.status === null) setSetupError('连接 Cloud API 失败，请检查网络与服务地址。')
+    else setSetupError(result.requestId === null ? '设置未完成。请确认 token 有效后重试。' : `设置未完成（请求 ID：${result.requestId}）。`)
+    setSetupLoading(false)
   }
   const logout = async (): Promise<void> => {
     try { if (session !== null) await client.logout(session.refreshToken) } finally { endSession(null) }
@@ -232,7 +255,9 @@ export function App(): ReactElement {
   const loadAuditLogs = useCallback((query: { readonly limit: number; readonly offset: number }) => client.listAuditLogs(query), [client])
 
   if (authenticationState === 'checking') return <main className="session-check" aria-busy="true"><span role="status">正在验证管理员身份…</span></main>
-  if (authenticationState === 'anonymous') return <AdminLogin error={loginError} loading={loginLoading} onSubmit={login} />
+  if (authenticationState === 'anonymous') return showSetup
+    ? <AdminSetup enabled={setupEnabled} error={setupError} loading={setupLoading} loadingStatus={setupStatusLoading} onBack={() => { setShowSetup(false); setSetupError(null) }} onSubmit={completeSetup} />
+    : <AdminLogin error={loginError} loading={loginLoading} onSetup={() => void openSetup()} onSubmit={login} />
 
   const renderPage = (): ReactElement => {
     if (selectedUser !== null) return <UserDetail client={client} onBack={() => setSelectedUser(null)} user={selectedUser} />

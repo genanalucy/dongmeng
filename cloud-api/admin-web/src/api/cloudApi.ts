@@ -75,6 +75,10 @@ export interface AuthTokens {
   readonly expiresIn: number
 }
 
+export interface AdminSetupStatus {
+  readonly enabled: boolean
+}
+
 export interface Pagination {
   readonly limit: number
   readonly offset: number
@@ -168,6 +172,10 @@ function parseCurrentUser(value: unknown): CurrentUser | null {
   const email = optionalString(value, 'email')
   const role = requiredString(value, 'role')
   return id === null || role === null || (username === undefined && email === undefined) ? null : { id, ...(username === undefined ? {} : { username }), ...(email === undefined ? {} : { email }), role }
+}
+
+function parseAdminSetupStatus(value: unknown): AdminSetupStatus | null {
+  return isRecord(value) && typeof value.enabled === 'boolean' ? { enabled: value.enabled } : null
 }
 
 function parseAuthTokens(value: unknown): AuthTokens | null {
@@ -304,6 +312,14 @@ export class CloudApiClient {
 
   login(identifier: string, password: string): Promise<ApiResult<AuthTokens>> {
     return this.post('/api/v1/auth/login', { identifier, password }, parseAuthTokens)
+  }
+
+  adminSetupStatus(): Promise<ApiResult<AdminSetupStatus>> {
+    return this.get('/api/v1/admin/setup/status', parseAdminSetupStatus, false)
+  }
+
+  completeAdminSetup(setupToken: string, username: string, email: string, password: string): Promise<ApiResult<Record<string, never>>> {
+    return this.post('/api/v1/admin/setup', { setup_token: setupToken, username, email, password }, () => ({}))
   }
 
   refresh(refreshToken: string): Promise<ApiResult<AuthTokens>> {

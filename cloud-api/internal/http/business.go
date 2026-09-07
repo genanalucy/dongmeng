@@ -190,6 +190,70 @@ func registrationVerificationUnavailable(w http.ResponseWriter, r *http.Request)
 	writeError(w, r, http.StatusServiceUnavailable, "registration_verification_not_enabled")
 }
 
+// adminSetupStatus and adminSetup are deliberately unauthenticated recovery
+// endpoints. Availability is entirely challenge-driven, never admin-count driven.
+func (a api) adminSetupStatus(w http.ResponseWriter, r *http.Request) {
+	enabled, err := a.store.AdminSetupEnabled(r.Context(), a.now().UTC())
+	if err != nil {
+		writeError(w, r, http.StatusInternalServerError, "internal_error")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"enabled": enabled})
+}
+
+func (a api) adminSetup(w http.ResponseWriter, r *http.Request) {
+	// Do not log from this handler: its body carries an offline recovery token
+	// and a password. AccessLog intentionally records metadata only.
+	var x struct {
+		SetupToken string `json:"setup_token"`
+		Username   string `json:"username"`
+		Email      string `json:"email"`
+		Password   string `json:"password"`
+	}
+	if decode(w, r, &x) != nil {
+		inputError(w, r)
+		return
+	}
+	if _, err := domain.ParseRefreshToken(x.SetupToken); err != nil {
+		inputError(w, r)
+		return
+	}
+	input, err := domain.ParseRegistrationVerificationInput(x.Username, x.Email, x.Password)
+	if err != nil {
+		inputError(w, r)
+		return
+	}
+	// Check availability before the deliberately expensive password hash so
+	// unauthenticated traffic cannot force bcrypt work while no challenge can
+	// be redeemed anyway. The 403 matches the post-hash failure on purpose.
+	enabled, err := a.store.AdminSetupEnabled(r.Context(), a.now().UTC())
+	if err != nil {
+		writeError(w, r, http.StatusInternalServerError, "internal_error")
+		return
+	}
+	if !enabled {
+		writeError(w, r, http.StatusForbidden, "setup_unavailable")
+		return
+	}
+	passwordHash, err := auth.HashPassword(input.Password.String())
+	if err != nil {
+		writeError(w, r, http.StatusInternalServerError, "internal_error")
+		return
+	}
+	_, err = a.store.CompleteAdminSetup(r.Context(), domain.AdminSetupParams{
+		TokenHash: auth.HashSecret(x.SetupToken), Username: input.Username.String(), Email: input.Email.String(), PasswordHash: passwordHash, Now: a.now().UTC(),
+	})
+	if errors.Is(err, domain.ErrSetupUnavailable) || errors.Is(err, domain.ErrConflict) {
+		writeError(w, r, http.StatusForbidden, "setup_unavailable")
+		return
+	}
+	if err != nil {
+		writeError(w, r, http.StatusInternalServerError, "internal_error")
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]string{"status": "configured"})
+}
+
 func (a api) warnCaptcha(r *http.Request, stage string) {
 	if a.logger != nil {
 		// Only bounded metadata: never the challenge images, target

@@ -4,9 +4,10 @@ interface AdminLoginProps {
   readonly onSubmit: (account: string, password: string) => Promise<void>
   readonly error: string | null
   readonly loading: boolean
+  readonly onSetup: () => void
 }
 
-export function AdminLogin({ onSubmit, error, loading }: AdminLoginProps): ReactElement {
+export function AdminLogin({ onSubmit, error, loading, onSetup }: AdminLoginProps): ReactElement {
   const accountId = useId()
   const passwordId = useId()
   const errorId = useId()
@@ -54,6 +55,7 @@ export function AdminLogin({ onSubmit, error, loading }: AdminLoginProps): React
             value={password}
           />
           <button className="primary-button login-submit" disabled={loading} type="submit">{loading ? '正在登录…' : '登录'}</button>
+          <button className="secondary-button" disabled={loading} onClick={onSetup} type="button">初次设置/重新设置管理员</button>
         </form>
       </section>
     </main>

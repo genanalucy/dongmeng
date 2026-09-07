@@ -31,6 +31,9 @@ var (
 	ErrRegistrationVerificationFailed = errors.New("registration verification failed")
 	ErrCaptchaFailed                  = errors.New("captcha failed")
 	ErrRateLimited                    = errors.New("rate limited")
+	// ErrSetupUnavailable deliberately covers missing, expired, consumed, and
+	// invalid setup challenges so the public boundary cannot disclose state.
+	ErrSetupUnavailable = errors.New("setup unavailable")
 )
 
 // RateLimitedError reports a rejected fixed-window rate limit together with
@@ -582,6 +585,20 @@ type RegisterParams struct {
 	Now                                  time.Time
 }
 
+// AdminSetupParams contains only the digest of the setup token. The plaintext
+// is accepted at the HTTP boundary and must never reach database storage.
+type AdminSetupParams struct {
+	TokenHash                     []byte
+	Username, Email, PasswordHash string
+	Now                           time.Time
+}
+
+type CreateAdminSetupChallengeParams struct {
+	TokenHash []byte
+	Now       time.Time
+	ExpiresAt time.Time
+}
+
 type RegistrationVerification struct {
 	ID            uuid.UUID
 	ReservationID uuid.UUID
@@ -683,8 +700,15 @@ type RefreshTokenStore interface {
 	RevokeRefreshToken(context.Context, []byte, time.Time) error
 }
 
+type AdminSetupStore interface {
+	AdminSetupEnabled(context.Context, time.Time) (bool, error)
+	CreateAdminSetupChallenge(context.Context, CreateAdminSetupChallengeParams) error
+	CompleteAdminSetup(context.Context, AdminSetupParams) (User, error)
+}
+
 type Store interface {
 	RefreshTokenStore
+	AdminSetupStore
 	Register(context.Context, RegisterParams) (User, Entitlement, error)
 	RequestRegistrationVerification(context.Context, CreateRegistrationVerificationParams) (RegistrationVerification, error)
 	ConfirmRegistrationVerification(context.Context, ConfirmRegistrationVerificationParams) (RegisterParams, error)

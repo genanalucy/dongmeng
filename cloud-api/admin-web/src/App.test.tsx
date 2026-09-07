@@ -5,6 +5,7 @@ import { App } from './App'
 afterEach(() => {
   vi.unstubAllGlobals()
   sessionStorage.clear()
+  localStorage.clear()
 })
 
 function jsonResponse(body: unknown, status = 200): Response {
@@ -91,6 +92,99 @@ describe('App', () => {
     expect(logoutCall?.[1]).toMatchObject({ method: 'POST', body: JSON.stringify({ refresh_token: 'refresh-value' }) })
     expect(((logoutCall?.[1] as RequestInit).headers as Headers).get('Authorization')).toBe('Bearer access-value')
     expect(sessionStorage.getItem('cloud-api.admin.access-token')).toBeNull()
+  })
+
+  it('opens an enabled offline admin setup form without persisting its token', async () => {
+    const fetchMock = vi.fn<(url: string, init?: RequestInit) => Promise<Response>>((url: string) => {
+      if (url.endsWith('/admin/setup/status')) return Promise.resolve(jsonResponse({ enabled: true }))
+      if (url.endsWith('/admin/setup')) return Promise.resolve(jsonResponse({ status: 'configured' }, 201))
+      return Promise.reject(new Error(`unexpected request ${url}`))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(<App />)
+    fireEvent.click(screen.getByRole('button', { name: '初次设置/重新设置管理员' }))
+
+    expect(await screen.findByRole('heading', { name: '初次设置/重新设置管理员' })).toBeInTheDocument()
+    expect(screen.getByLabelText('Setup token')).toBeInTheDocument()
+    fireEvent.change(screen.getByLabelText('Setup token'), { target: { value: 'setup-token.example.test' } })
+    fireEvent.change(screen.getByLabelText('管理员用户名'), { target: { value: 'replacement_admin' } })
+    fireEvent.change(screen.getByLabelText('管理员邮箱'), { target: { value: 'replacement@example.test' } })
+    fireEvent.change(screen.getByLabelText('密码'), { target: { value: 'fixture-password' } })
+    fireEvent.change(screen.getByLabelText('确认密码'), { target: { value: 'fixture-password' } })
+    fireEvent.click(screen.getByRole('button', { name: '安全替换现有管理员' }))
+
+    expect(await screen.findByRole('heading', { name: '管理员登录' })).toBeInTheDocument()
+    expect(screen.getByRole('alert')).toHaveTextContent('新管理员已设置完成，请使用新账号登录。')
+    const setupCall = fetchMock.mock.calls.find(([url]) => String(url).endsWith('/admin/setup'))
+    expect(setupCall?.[1]).toMatchObject({ body: JSON.stringify({ setup_token: 'setup-token.example.test', username: 'replacement_admin', email: 'replacement@example.test', password: 'fixture-password' }) })
+    expect(sessionStorage.getItem('cloud-api.admin.access-token')).toBeNull()
+    expect(sessionStorage.getItem('cloud-api.admin.refresh-token')).toBeNull()
+    expect(localStorage.getItem('cloud-api.admin.access-token')).toBeNull()
+    expect(localStorage.getItem('cloud-api.admin.refresh-token')).toBeNull()
+  })
+
+  it('blocks mismatched setup passwords in the browser without submitting secrets', async () => {
+    const fetchMock = vi.fn((url: string) => {
+      if (url.endsWith('/admin/setup/status')) return Promise.resolve(jsonResponse({ enabled: true }))
+      return Promise.reject(new Error(`unexpected request ${url}`))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(<App />)
+    fireEvent.click(screen.getByRole('button', { name: '初次设置/重新设置管理员' }))
+    await screen.findByLabelText('Setup token')
+    fireEvent.change(screen.getByLabelText('Setup token'), { target: { value: 'setup-token.example.test' } })
+    fireEvent.change(screen.getByLabelText('管理员用户名'), { target: { value: 'replacement_admin' } })
+    fireEvent.change(screen.getByLabelText('管理员邮箱'), { target: { value: 'replacement@example.test' } })
+    fireEvent.change(screen.getByLabelText('密码'), { target: { value: 'fixture-password' } })
+    fireEvent.change(screen.getByLabelText('确认密码'), { target: { value: 'different-password' } })
+    fireEvent.click(screen.getByRole('button', { name: '安全替换现有管理员' }))
+
+    expect(screen.getByRole('alert')).toHaveTextContent('两次输入的密码不一致。')
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith('/admin/setup'))).toHaveLength(0)
+  })
+
+  it('does not render the setup form when the offline setup status is disabled', async () => {
+    vi.stubGlobal('fetch', vi.fn((url: string) => {
+      if (url.endsWith('/admin/setup/status')) return Promise.resolve(jsonResponse({ enabled: false }))
+      return Promise.reject(new Error(`unexpected request ${url}`))
+    }))
+
+    render(<App />)
+    fireEvent.click(screen.getByRole('button', { name: '初次设置/重新设置管理员' }))
+
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('当前没有可用的设置令牌。'))
+    expect(screen.queryByLabelText('Setup token')).not.toBeInTheDocument()
+  })
+
+  it('reports a connection failure without claiming the setup token is unavailable', async () => {
+    vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new TypeError('network unavailable'))))
+
+    render(<App />)
+    fireEvent.click(screen.getByRole('button', { name: '初次设置/重新设置管理员' }))
+
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('连接 Cloud API 失败，请检查网络与服务地址。'))
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('Setup token')).not.toBeInTheDocument()
+  })
+
+  it('maps login authentication, network, and server failures to safe messages', async () => {
+    const cases: ReadonlyArray<{ readonly name: string; readonly response: () => Promise<Response>; readonly message: string }> = [
+      { name: 'authentication', response: () => Promise.resolve(jsonResponse({ error: 'unauthorized' }, 401)), message: '账号或密码错误。' },
+      { name: 'network', response: () => Promise.reject(new TypeError('network unavailable')), message: '连接 Cloud API 失败，请检查网络与服务地址。' },
+      { name: 'server', response: () => Promise.resolve(jsonResponse({ error: 'internal_error', request_id: 'request-example-test' }, 500)), message: '服务暂时无法处理登录请求（请求 ID：request-example-test）。' },
+    ]
+    for (const testCase of cases) {
+      const { unmount } = render(<App />)
+      vi.stubGlobal('fetch', vi.fn(testCase.response))
+      fireEvent.change(screen.getByLabelText('管理员账号'), { target: { value: 'admin@example.test' } })
+      fireEvent.change(screen.getByLabelText('密码'), { target: { value: 'fixture-password' } })
+      fireEvent.click(screen.getByRole('button', { name: '登录' }))
+      await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent(testCase.message), { timeout: 1000 })
+      unmount()
+      vi.unstubAllGlobals()
+    }
   })
 
   it('submits an email search at offset zero and lets users page through results', async () => {

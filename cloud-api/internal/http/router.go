@@ -119,6 +119,10 @@ func NewRouter(options RouterOptions) http.Handler {
 		})
 	}
 	router.Get("/api/v1/auth/captcha", api.captchaIssue)
+	// These recovery routes stay outside authentication by design. A valid,
+	// unconsumed offline challenge is the sole authorization factor.
+	router.Get("/api/v1/admin/setup/status", api.adminSetupStatus)
+	router.Post("/api/v1/admin/setup", api.adminSetup)
 	router.Post("/api/v1/auth/register", api.register)
 	router.Post("/api/v1/auth/login", api.login)
 	router.Post("/api/v1/auth/refresh", api.refresh)

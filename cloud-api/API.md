@@ -93,6 +93,14 @@ All endpoints below require exactly one `Authorization: Bearer <access JWT>`.
 
 The first administrator is created offline with `bootstrap-admin <username>` and both email and password supplied as separate standard-input lines. It is idempotent only for the same username/email, refuses to create a different administrator once one exists, and accepts only a PostgreSQL URL targeting `127.0.0.1:15432`; no public bootstrap route is exposed.
 
+### 离线管理员安全替换
+
+- `GET /api/v1/admin/setup/status` 为未认证端点，仅返回 `{ "enabled": true|false }`，表示当前是否存在可兑换的 setup challenge；不返回 challenge ID、到期时间或 token。
+- `POST /api/v1/admin/setup` 为未认证恢复端点，JSON body 为 `{ "setup_token", "username", "email", "password" }`。成功返回 `201 { "status": "configured" }`；无效、过期或已使用的 token 返回 `403 setup_unavailable`。该端点不签发 session。
+- 使用服务器本机的 `admin-setup-token` 生成 token。CLI 只读取显式 `CLOUD_API_ADMIN_SETUP_DATABASE_URL`，该 URL 必须使用独立运维数据库角色并指向 `127.0.0.1:15432`；不得复用 Cloud API 运行角色。token 仅有效 **15 分钟**且只能成功兑换一次；数据库只保存 SHA-256 digest，绝不保存明文 token。
+- 成功兑换在一个事务中：停用全部旧管理员、撤销其 refresh token、将旧用户名/邮箱改为不可恢复的 tombstone，从而允许新管理员复用原用户名和邮箱，并追加 `admin.setup.replace` 审计记录。审计 metadata 仅含 challenge 标识，不含邮箱、密码或 token。
+- 把 CLI 输出保存到仅当前用户可读的文件，例如：`umask 077; CLOUD_API_ADMIN_SETUP_DATABASE_URL="$ADMIN_SETUP_DATABASE_URL" admin-setup-token > admin-setup-token.txt`。通过受控本机渠道读取后尽快删除该文件。不要把 token 或 DSN 放进命令行参数、shell history、URL、查询参数、截图或日志；生产应从 root-only 文件或 systemd credential 注入环境变量，token 仅在 HTTPS 请求 body 中提交。
+
 ## Translation JWT / main Agent contract
 
 `POST /api/v1/translation-sessions` returns a short-lived token signed with the distinct session HMAC key:

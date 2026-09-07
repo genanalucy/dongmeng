@@ -82,6 +82,29 @@ describe('CloudApiClient', () => {
     expect(authenticationFailure).toHaveBeenCalledTimes(1)
   })
 
+  it('reads enabled and disabled setup status without credentials', async () => {
+    const fetchMock = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>()
+      .mockResolvedValueOnce(jsonResponse({ enabled: false }))
+      .mockResolvedValueOnce(jsonResponse({ enabled: true }))
+    vi.stubGlobal('fetch', fetchMock)
+    const client = new CloudApiClient('http://api.example.test', 'access-value')
+
+    await expect(client.adminSetupStatus()).resolves.toEqual({ kind: 'success', data: { enabled: false }, requestId: 'request-1' })
+    await expect(client.adminSetupStatus()).resolves.toEqual({ kind: 'success', data: { enabled: true }, requestId: 'request-1' })
+    expect(((fetchMock.mock.calls[0]?.[1] as RequestInit).headers as Headers).get('Authorization')).toBeNull()
+  })
+
+  it('posts setup secrets only in the unauthenticated body', async () => {
+    const fetchMock = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(() => Promise.resolve(jsonResponse({ status: 'configured' }, 201)))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(new CloudApiClient('http://api.example.test', 'access-value').completeAdminSetup('setup-token', 'admin_01', 'admin@example.test', 'password1')).resolves.toMatchObject({ kind: 'success' })
+    const call = fetchMock.mock.calls[0]
+    expect(call?.[0]).toBe('http://api.example.test/api/v1/admin/setup')
+    expect(call?.[1]).toMatchObject({ method: 'POST', body: JSON.stringify({ setup_token: 'setup-token', username: 'admin_01', email: 'admin@example.test', password: 'password1' }) })
+    expect(((call?.[1] as RequestInit).headers as Headers).get('Authorization')).toBeNull()
+  })
+
   it('holds 501 routes in a controlled unavailable state', async () => {
     vi.stubGlobal('fetch', vi.fn(() => Promise.resolve(jsonResponse({ error: 'not_implemented', request_id: 'body-id' }, 501))))
     await expect(new CloudApiClient('http://api.example.test').listAuditLogs()).resolves.toEqual({ kind: 'unavailable', status: 501, error: 'not_implemented', requestId: 'request-1' })

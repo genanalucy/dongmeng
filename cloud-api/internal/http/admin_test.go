@@ -19,34 +19,54 @@ import (
 
 type adminContractStore struct {
 	domain.Store
-	enabled       bool
-	enabledErr    error
-	users         []domain.User
-	auditLogs     []domain.AuditLog
-	entitlements  []domain.Entitlement
-	codeBatches   []domain.CodeBatch
-	usersErr      error
-	auditLogsErr  error
-	userSearch    string
-	userLimit     int
-	userOffset    int
-	auditLimit    int
-	auditOffset   int
-	disabledBatch uuid.UUID
-	phoneUser     domain.User
-	phoneHash     string
-	phoneQuery    string
-	emailQuery    string
-	usernameQuery string
-	emailCalls    int
-	usernameCalls int
-	lookupErr     error
-	register      domain.RegisterParams
-	registerErr   error
-	reservedEmail string
-	storedEmails  []string
-	phoneCalls    int
-	refreshes     []domain.RefreshToken
+	enabled         bool
+	enabledErr      error
+	users           []domain.User
+	auditLogs       []domain.AuditLog
+	entitlements    []domain.Entitlement
+	codeBatches     []domain.CodeBatch
+	usersErr        error
+	auditLogsErr    error
+	userSearch      string
+	userLimit       int
+	userOffset      int
+	auditLimit      int
+	auditOffset     int
+	disabledBatch   uuid.UUID
+	phoneUser       domain.User
+	phoneHash       string
+	phoneQuery      string
+	emailQuery      string
+	usernameQuery   string
+	emailCalls      int
+	usernameCalls   int
+	lookupErr       error
+	register        domain.RegisterParams
+	registerErr     error
+	reservedEmail   string
+	storedEmails    []string
+	phoneCalls      int
+	refreshes       []domain.RefreshToken
+	setupEnabled    bool
+	setupEnabledErr error
+	setupErr        error
+	setupParams     domain.AdminSetupParams
+}
+
+func (s *adminContractStore) AdminSetupEnabled(context.Context, time.Time) (bool, error) {
+	return s.setupEnabled, s.setupEnabledErr
+}
+
+func (s *adminContractStore) CreateAdminSetupChallenge(context.Context, domain.CreateAdminSetupChallengeParams) error {
+	return errors.New("not implemented")
+}
+
+func (s *adminContractStore) CompleteAdminSetup(_ context.Context, params domain.AdminSetupParams) (domain.User, error) {
+	s.setupParams = params
+	if s.setupErr != nil {
+		return domain.User{}, s.setupErr
+	}
+	return domain.User{ID: uuid.New(), Username: params.Username, Email: params.Email, Role: string(domain.RoleAdmin), CreatedAt: params.Now}, nil
 }
 
 func (s *adminContractStore) UserByID(_ context.Context, id uuid.UUID) (domain.User, error) {
@@ -375,5 +395,67 @@ func TestAdminRoutesHideStoreFailures(t *testing.T) {
 		if response.Code != http.StatusInternalServerError || strings.Contains(response.Body.String(), "store failure") {
 			t.Fatalf("%s status or error exposure invalid", endpoint)
 		}
+	}
+}
+
+func TestAdminSetupStatusAndCompletionContract(t *testing.T) {
+	store := &adminContractStore{setupEnabled: false}
+	router, _, _ := newAdminContractRouter(t, store)
+	status := func() *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/setup/status", nil)
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, req)
+		return response
+	}
+	if response := status(); response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"enabled":false`) {
+		t.Fatalf("disabled setup status = %d %s", response.Code, response.Body.String())
+	}
+	store.setupEnabled = true
+	if response := status(); response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"enabled":true`) {
+		t.Fatalf("enabled setup status = %d %s", response.Code, response.Body.String())
+	}
+
+	post := func(body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/setup", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, req)
+		return response
+	}
+	if response := post(`{"setup_token":"bad","username":"admin_01","email":"admin@example.test","password":"password1"}`); response.Code != http.StatusBadRequest {
+		t.Fatalf("invalid setup request = %d", response.Code)
+	}
+
+	plaintext, hash, err := auth.RandomSecret(auth.MinimumSecretBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := `{"setup_token":"` + plaintext + `","username":" Admin_01 ","email":" ADMIN@example.test ","password":"password1"}`
+	store.setupEnabled = false
+	if response := post(request); response.Code != http.StatusForbidden || !strings.Contains(response.Body.String(), "setup_unavailable") {
+		t.Fatalf("setup without redeemable challenge = %d %s", response.Code, response.Body.String())
+	}
+	if len(store.setupParams.TokenHash) != 0 {
+		t.Fatal("setup completion ran without a redeemable challenge")
+	}
+	store.setupEnabledErr = errors.New("probe failure")
+	if response := post(request); response.Code != http.StatusInternalServerError {
+		t.Fatalf("setup availability store failure = %d %s", response.Code, response.Body.String())
+	}
+	store.setupEnabledErr = nil
+	store.setupEnabled = true
+	store.setupErr = domain.ErrSetupUnavailable
+	if response := post(request); response.Code != http.StatusForbidden || !strings.Contains(response.Body.String(), "setup_unavailable") {
+		t.Fatalf("unavailable setup request = %d %s", response.Code, response.Body.String())
+	}
+	store.setupErr = nil
+	if response := post(request); response.Code != http.StatusCreated || !strings.Contains(response.Body.String(), "configured") {
+		t.Fatalf("successful setup request = %d %s", response.Code, response.Body.String())
+	}
+	if !auth.SecretHashEqual(store.setupParams.TokenHash, hash) || string(store.setupParams.TokenHash) == plaintext {
+		t.Fatal("setup plaintext token reached the store")
+	}
+	if store.setupParams.Username != "admin_01" || store.setupParams.Email != "admin@example.test" || store.setupParams.PasswordHash == "password1" {
+		t.Fatalf("setup input was not normalized and hashed: %#v", store.setupParams)
 	}
 }
