@@ -11,14 +11,12 @@ import androidx.activity.viewModels
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.interaction.collectIsDraggedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -73,8 +71,6 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
@@ -109,9 +105,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -150,7 +144,6 @@ import com.verba.interpretation.ui.ChatFollowEvent
 import com.verba.interpretation.ui.ChatFollowPolicy
 import com.verba.interpretation.ui.ChatFollowState
 import com.verba.interpretation.ui.EndpointSettingsAccessPolicy
-import com.verba.interpretation.ui.FaceToFaceMode
 import com.verba.interpretation.ui.FaceToFacePhase
 import com.verba.interpretation.ui.FaceToFaceSide
 import com.verba.interpretation.ui.FaceToFaceState
@@ -702,76 +695,6 @@ private fun FaceToFaceWorkbench(
         )
     }
 }
-
-@Composable
-private fun FaceTalkButton(
-    modifier: Modifier,
-    side: FaceToFaceSide,
-    state: FaceToFaceState,
-    onPress: () -> Unit,
-    onRelease: () -> Unit,
-) {
-    val enabled = when (state.mode) {
-        FaceToFaceMode.MANUAL -> state.phase == FaceToFacePhase.IDLE || (state.phase == FaceToFacePhase.LISTENING && state.activeSide == side)
-        FaceToFaceMode.AUTO -> state.phase == FaceToFacePhase.LISTENING && side == FaceToFaceSide.RIGHT
-    }
-    val active = state.activeSide == side
-    val language = if (side == FaceToFaceSide.LEFT) state.leftLanguage else state.rightLanguage
-    val sideLabel = TranslationLanguage.displayName(language)
-    val identityColor = if (side == FaceToFaceSide.LEFT) MaterialTheme.colorScheme.primary else androidx.compose.ui.graphics.Color(0xFFB4765A)
-    val actionLabel = when {
-        active -> "正在收音"
-        state.mode == FaceToFaceMode.AUTO && side == FaceToFaceSide.LEFT -> "默认自动收音"
-        state.mode == FaceToFaceMode.AUTO -> "按住抢话"
-        enabled -> "按住说话"
-        else -> "当前不可用"
-    }
-    Card(
-        modifier = modifier
-            .heightIn(min = 72.dp)
-            .semantics {
-                role = Role.Button
-                contentDescription = sideLabel
-                stateDescription = actionLabel
-            }
-            .pointerInput(enabled, state.mode) {
-                if (enabled) detectTapGestures(onPress = {
-                    onPress()
-                    try {
-                        awaitRelease()
-                    } finally {
-                        onRelease()
-                    }
-                })
-            },
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = if (active) identityColor.copy(alpha = 0.16f) else MaterialTheme.colorScheme.surface,
-        ),
-        border = androidx.compose.foundation.BorderStroke(1.dp, identityColor.copy(alpha = if (active) 0.55f else 0.28f)),
-    ) {
-        Column(
-            Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 9.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(4.dp),
-        ) {
-            Surface(
-                shape = CircleShape,
-                color = if (active) identityColor else identityColor.copy(alpha = 0.12f),
-            ) {
-                Icon(
-                    Icons.Filled.Mic,
-                    contentDescription = null,
-                    modifier = Modifier.padding(7.dp).size(18.dp),
-                    tint = if (active) MaterialTheme.colorScheme.onPrimary else identityColor,
-                )
-            }
-            Text(TranslationLanguage.displayName(language), style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
-            Text(actionLabel, style = MaterialTheme.typography.labelMedium, color = identityColor)
-        }
-    }
-}
-
 
 @Composable
 private fun AdminTestPage(
@@ -1509,15 +1432,6 @@ private fun TranscriptFeed(
             }
         }
     }
-}
-
-private fun FaceToFaceState.statusLabel(): String = when (phase) {
-    FaceToFacePhase.IDLE -> "准备就绪"
-    FaceToFacePhase.LISTENING -> "收音中"
-    FaceToFacePhase.PAUSED -> "连续翻译已暂停"
-    FaceToFacePhase.PROCESSING -> "正在翻译并播放"
-    FaceToFacePhase.STOPPING -> "正在完成剩余内容"
-    FaceToFacePhase.ERROR -> "需要处理错误"
 }
 
 private inline fun <T> List<T>.transcriptToken(transform: (T) -> Any): Int = fold(1) { result, item -> 31 * result + transform(item).hashCode() }
