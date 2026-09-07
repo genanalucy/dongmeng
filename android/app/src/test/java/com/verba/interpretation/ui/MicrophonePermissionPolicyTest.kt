@@ -7,6 +7,15 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class MicrophonePermissionPolicyTest {
+    @Test fun takeoverRemainsPendingAndConsumesExactlyOnce() {
+        val policy = MicrophonePermissionPolicy()
+        val action = MicrophonePermissionAction.ContinuousTakeover
+
+        assertTrue(policy.request(action))
+        assertEquals(MicrophonePermissionPolicy.Result(action, true), policy.consumeResult(true))
+        assertNull(policy.consumeResult(true))
+    }
+
     @Test fun startAndResumeRemainDistinctAndConsumeOnce() {
         for (action in listOf(MicrophonePermissionAction.ContinuousStart, MicrophonePermissionAction.ContinuousResume)) {
             val policy = MicrophonePermissionPolicy()

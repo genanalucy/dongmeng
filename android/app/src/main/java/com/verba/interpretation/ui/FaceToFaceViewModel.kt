@@ -146,6 +146,7 @@ class FaceToFaceViewModel @JvmOverloads constructor(
             is MicrophonePermissionAction.Manual -> manualPress(action.side)
             MicrophonePermissionAction.ContinuousStart -> startAuto()
             MicrophonePermissionAction.ContinuousResume -> resumeAuto()
+            MicrophonePermissionAction.ContinuousTakeover -> pressRightAuto()
         }
     }
 

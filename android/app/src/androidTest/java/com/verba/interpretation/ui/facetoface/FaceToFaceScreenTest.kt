@@ -127,7 +127,7 @@ class FaceToFaceScreenTest {
 
         compose.onNodeWithText("开始连续翻译").assertIsDisplayed()
         compose.onNodeWithContentDescription("左耳，中文，开始连续收音，译文送至右耳").assertIsDisplayed()
-        compose.onNodeWithContentDescription("右耳，English，按住临时接话，译文送至左耳").assertIsDisplayed()
+        compose.onNodeWithContentDescription("右耳，English，开始右侧临时接话，译文送至左耳").assertIsDisplayed()
     }
 
     @Test

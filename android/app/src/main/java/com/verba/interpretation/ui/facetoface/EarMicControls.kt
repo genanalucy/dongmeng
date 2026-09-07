@@ -225,7 +225,7 @@ internal fun EarMicControls(
                 pointerEnabled = if (manual) state.phase == FaceToFacePhase.IDLE else state.phase == FaceToFacePhase.LISTENING,
                 actionEnabled = if (manual) state.phase == FaceToFacePhase.IDLE || activeSide == FaceToFaceSide.RIGHT else state.phase == FaceToFacePhase.LISTENING,
                 active = activeSide == FaceToFaceSide.RIGHT,
-                stateLabel = if (manual) "按住说话" else "按住临时接话",
+                stateLabel = if (manual) "按住说话" else if (activeSide == FaceToFaceSide.RIGHT) "结束右侧临时接话" else "开始右侧临时接话",
                 onPress = {
                     if (manual) requestMicrophone(MicrophonePermissionAction.Manual(FaceToFaceSide.RIGHT)) else onPressRightAuto()
                 },
@@ -242,7 +242,16 @@ internal fun EarMicControls(
                         if (state.phase == FaceToFacePhase.IDLE) requestMicrophone(MicrophonePermissionAction.Manual(FaceToFaceSide.RIGHT))
                         else { clearMicrophoneRequest(); onManualRelease() }
                     }
-                } else null,
+                } else {
+                    {
+                        if (activeSide == FaceToFaceSide.RIGHT) {
+                            clearMicrophoneRequest()
+                            onReleaseRightAuto()
+                        } else {
+                            requestMicrophone(MicrophonePermissionAction.ContinuousTakeover)
+                        }
+                    }
+                },
                 onLanguage = { onSetLanguages(state.leftLanguage, it) },
             )
         }

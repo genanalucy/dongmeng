@@ -59,6 +59,21 @@ class FaceToFaceViewModelTest {
         dispatcher.scheduler.advanceUntilIdle()
     }
 
+    @Test fun accessibleTakeoverActionStartsAndEndsRightTurn() {
+        start()
+
+        assertTrue(vm.microphonePermissionPolicy.request(MicrophonePermissionAction.ContinuousTakeover))
+        vm.microphonePermissionResult(true)
+        assertEquals(FaceToFacePhase.LISTENING, vm.state.value.phase)
+        assertEquals(FaceToFaceSide.RIGHT, vm.state.value.activeSide)
+
+        vm.releaseRightAuto()
+        assertEquals(FaceToFacePhase.LISTENING, vm.state.value.phase)
+        assertEquals(FaceToFaceSide.LEFT, vm.state.value.activeSide)
+        assertEquals(1, runtime.captureStarts)
+        assertEquals(3, runtime.sockets.size)
+    }
+
     @Test fun leftStartPauseResumeUsesPermissionIntentsAndGrantsExactlyOnce() {
         start()
         vm.microphonePermissionResult(true)

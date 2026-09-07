@@ -5,6 +5,7 @@ sealed interface MicrophonePermissionAction {
     data class Manual(val side: FaceToFaceSide) : MicrophonePermissionAction
     data object ContinuousStart : MicrophonePermissionAction
     data object ContinuousResume : MicrophonePermissionAction
+    data object ContinuousTakeover : MicrophonePermissionAction
 }
 
 /**

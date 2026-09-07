@@ -4,8 +4,10 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTouchInput
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.verba.interpretation.ui.FaceToFaceSide
@@ -63,6 +65,44 @@ class EarMicButtonTest {
         compose.waitForIdle()
 
         assertEquals(listOf("press", "release"), events)
+    }
+
+    @Test
+    fun semanticsExposeStartAndEndActions() {
+        val events = mutableListOf<String>()
+        var active by mutableStateOf(false)
+
+        compose.setContent {
+            MaterialTheme {
+                EarMicButton(
+                    side = FaceToFaceSide.RIGHT,
+                    language = "en",
+                    otherLanguage = "zh",
+                    pointerEnabled = false,
+                    actionEnabled = true,
+                    active = active,
+                    stateLabel = if (active) "结束右侧临时接话" else "开始右侧临时接话",
+                    onPress = {},
+                    onRelease = {},
+                    onCancel = {},
+                    onAccessibleClick = {
+                        events += if (active) "end" else "start"
+                        active = !active
+                    },
+                    onLanguage = {},
+                )
+            }
+        }
+
+        compose.onNodeWithContentDescription("右耳，English，开始右侧临时接话，译文送至左耳")
+            .assertIsDisplayed()
+            .performClick()
+        compose.waitForIdle()
+        compose.onNodeWithContentDescription("右耳，English，结束右侧临时接话，译文送至左耳")
+            .assertIsDisplayed()
+            .performClick()
+
+        assertEquals(listOf("start", "end"), events)
     }
 
     @Test
