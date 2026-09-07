@@ -179,7 +179,7 @@ internal fun EarMicControls(
                     if (manual) requestMicrophone(MicrophonePermissionAction.Manual(FaceToFaceSide.LEFT))
                     else when (state.phase) {
                         FaceToFacePhase.IDLE, FaceToFacePhase.PAUSED -> requestMicrophone(MicrophonePermissionAction.Continuous)
-                        FaceToFacePhase.LISTENING -> onPauseAuto
+                        FaceToFacePhase.LISTENING -> onPauseAuto()
                         else -> Unit
                     }
                 },

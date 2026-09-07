@@ -143,6 +143,7 @@ private fun ConversationLayout(
             activeMic = presentation.activeMic,
             listeningPlaceholder = presentation.timelinePlaceholder,
             phase = state.phase,
+            activeTurnId = state.activeTurnId,
             modifier = Modifier.weight(1f),
         )
         Surface(color = Color(0xFF0E1927), modifier = Modifier.fillMaxWidth()) {
@@ -191,10 +192,13 @@ private fun FaceToFacePanels(
                     },
             ) {
                 ConversationTimeline(
-                    turns = state.turns,
+                    // Each participant reads only their own side. The coordinator's real
+                    // activeTurnId still decides which of those turns is live.
+                    turns = state.turns.filter { it.side == panel.side },
                     activeMic = presentation.activeMic,
                     listeningPlaceholder = presentation.timelinePlaceholder,
                     phase = state.phase,
+                    activeTurnId = state.activeTurnId,
                     contentDescription = "${earLabel(panel.side)}对话记录",
                     modifier = Modifier.heightIn(min = 96.dp, max = 260.dp).fillMaxWidth(),
                 )

@@ -78,7 +78,7 @@ internal fun displayConversationBubbles(
         turn.finished || phase != FaceToFacePhase.ERROR
     }.flatMap { turn ->
         val alignment = faceToFaceTurnAlignment(turn)
-        val live = turn.id == liveTurnId
+        val live = turn.id == liveTurnId && !turn.finished
     if (live) {
         // Keep one stable article for the active turn. Source and translation partials are
         // rendered in the same bilingual bubble rather than as two unrelated rows.

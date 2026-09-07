@@ -33,6 +33,27 @@ class ConversationDisplayBubbleTest {
     }
 
     @Test
+    fun explicitActiveTurnIdWinsOverListOrderAndKeepsLiveBubbleInItsSpeakerRegion() {
+        val left = FaceToFaceTurn(10, FaceToFaceSide.LEFT, "zh", "en", PlaybackRoute.RIGHT, sourcePartial = "left")
+        val right = FaceToFaceTurn(11, FaceToFaceSide.RIGHT, "en", "zh", PlaybackRoute.LEFT, sourcePartial = "right")
+
+        val bubbles = displayConversationBubbles(listOf(left, right), FaceToFacePhase.LISTENING, activeTurnId = 10)
+
+        assertEquals(listOf(true, false), bubbles.map { it.isLive })
+        assertEquals(FaceToFaceSide.LEFT, bubbles[0].side)
+        assertEquals(FaceToFaceTurnAlignment.START, bubbles[0].alignment)
+    }
+
+    @Test
+    fun finishedTurnNeverRendersAsLiveEvenIfCoordinatorStillReportsItsId() {
+        val turn = FaceToFaceTurn(12, FaceToFaceSide.RIGHT, "en", "zh", PlaybackRoute.LEFT, sourcePartial = "done", finished = true)
+
+        val bubble = displayConversationBubbles(listOf(turn), FaceToFacePhase.LISTENING, activeTurnId = 12).single()
+
+        assertEquals(false, bubble.isLive)
+    }
+
+    @Test
     fun onlyNewestUnfinishedTurnIsLiveWhenOlderTurnIsStillDraining() {
         val old = FaceToFaceTurn(
             id = 10,
