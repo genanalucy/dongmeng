@@ -135,7 +135,7 @@ func (p *Postgres) DisableUser(ctx context.Context, admin, user uuid.UUID, now t
 		if err := lockUserSessionArbitration(ctx, t, user); err != nil {
 			return err
 		}
-		tag, err := t.Exec(ctx, `UPDATE users SET disabled_at=COALESCE(disabled_at,$2) WHERE id=$1`, user, now.UTC())
+		tag, err := t.Exec(ctx, `UPDATE users SET disabled_at=$2 WHERE id=$1 AND role<>'admin' AND disabled_at IS NULL`, user, now.UTC())
 		if err != nil {
 			return err
 		}
@@ -153,6 +153,37 @@ func (p *Postgres) DisableUser(ctx context.Context, admin, user uuid.UUID, now t
 		return err
 	})
 }
+func (p *Postgres) ListCodeBatches(ctx context.Context, limit, offset int) ([]domain.CodeBatch, error) {
+	rows, err := p.query(ctx, `SELECT cb.id,cb.name,cb.duration_days,cb.created_by,cb.created_at,cb.disabled_at,count(rc.id)::int,count(rc.redeemed_at)::int,count(rc.id) FILTER (WHERE rc.redeemed_at IS NULL)::int FROM code_batches cb LEFT JOIN redemption_codes rc ON rc.batch_id=cb.id GROUP BY cb.id ORDER BY cb.created_at DESC,cb.id DESC LIMIT $1 OFFSET $2`, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []domain.CodeBatch{}
+	for rows.Next() {
+		var batch domain.CodeBatch
+		if err := rows.Scan(&batch.ID, &batch.Name, &batch.DurationDays, &batch.CreatedBy, &batch.CreatedAt, &batch.DisabledAt, &batch.TotalCodes, &batch.RedeemedCodes, &batch.UnredeemedCodes); err != nil {
+			return nil, storeErr(err)
+		}
+		out = append(out, batch)
+	}
+	return out, rows.Err()
+}
+
+func (p *Postgres) DisableCodeBatch(ctx context.Context, admin, batchID uuid.UUID, now time.Time) error {
+	return p.tx(ctx, func(t pgx.Tx) error {
+		tag, err := t.Exec(ctx, `UPDATE code_batches SET disabled_at=$2 WHERE id=$1 AND disabled_at IS NULL`, batchID, now.UTC())
+		if err != nil {
+			return storeErr(err)
+		}
+		if tag.RowsAffected() == 0 {
+			return domain.ErrNotFound
+		}
+		_, err = t.Exec(ctx, `INSERT INTO audit_logs(admin_id,action,target_type,target_id,metadata) VALUES($1,'code_batch.disable','code_batch',$2,'{}'::jsonb)`, admin, batchID)
+		return storeErr(err)
+	})
+}
+
 func (p *Postgres) CreateCodeBatch(ctx context.Context, x domain.CreateBatchParams) (domain.CodeBatch, error) {
 	var b domain.CodeBatch
 	err := p.tx(ctx, func(t pgx.Tx) error {

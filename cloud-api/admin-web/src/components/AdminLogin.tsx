@@ -31,7 +31,7 @@ export function AdminLogin({ onSubmit, error, loading }: AdminLoginProps): React
         <div><p className="eyebrow">身份验证</p><h2 id="login-form-heading">进入管理控制台</h2></div>
         {error === null ? null : <div className="login-error" id={errorId} role="alert">{error}</div>}
         <form onSubmit={(event) => void submit(event)}>
-          <label htmlFor={accountId}>管理员邮箱</label>
+          <label htmlFor={accountId}>管理员账号</label>
           <input
             aria-describedby={error === null ? undefined : errorId}
             autoComplete="username"

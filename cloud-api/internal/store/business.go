@@ -323,7 +323,7 @@ func (p *Postgres) RedeemCode(ctx context.Context, user uuid.UUID, hash []byte, 
 	err := p.tx(ctx, func(t pgx.Tx) error {
 		var batch uuid.UUID
 		var days int
-		err := t.QueryRow(ctx, `UPDATE redemption_codes SET redeemed_by=$2,redeemed_at=GREATEST($3::timestamptz,created_at) WHERE code_hash=$1 AND redeemed_at IS NULL RETURNING batch_id`, hash, user, now.UTC()).Scan(&batch)
+		err := t.QueryRow(ctx, `UPDATE redemption_codes rc SET redeemed_by=$2,redeemed_at=GREATEST($3::timestamptz,rc.created_at) FROM code_batches cb WHERE rc.code_hash=$1 AND rc.redeemed_at IS NULL AND cb.id=rc.batch_id AND cb.disabled_at IS NULL RETURNING rc.batch_id`, hash, user, now.UTC()).Scan(&batch)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return domain.ErrConflict
 		}
@@ -443,18 +443,19 @@ func (p *Postgres) FeedbackArtifact(ctx context.Context, user, id uuid.UUID) (do
 	return a, storeErr(err)
 }
 func (p *Postgres) ListUsers(ctx context.Context, search string, limit, offset int) ([]domain.User, error) {
-	rows, err := p.query(ctx, `SELECT id,COALESCE(username,''),COALESCE(phone,''),email,role,created_at FROM users WHERE $1='' OR email ILIKE '%' || $1 || '%' ORDER BY created_at DESC,id DESC LIMIT $2 OFFSET $3`, search, limit, offset)
+	rows, err := p.query(ctx, `SELECT id,COALESCE(username,''),COALESCE(phone,''),email,role,created_at,disabled_at FROM users WHERE $1='' OR email ILIKE '%' || $1 || '%' OR username ILIKE '%' || $1 || '%' OR id::text=$1 ORDER BY created_at DESC,id DESC LIMIT $2 OFFSET $3`, search, limit, offset)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	out := []domain.User{}
 	for rows.Next() {
-		u, e := scanUser(rows)
-		if e != nil {
-			return nil, e
+		var user domain.User
+		if err := rows.Scan(&user.ID, &user.Username, &user.Phone, &user.Email, &user.Role, &user.CreatedAt, &user.DisabledAt); err != nil {
+			return nil, storeErr(err)
 		}
-		out = append(out, u)
+		user.Email = publicEmail(user.Email)
+		out = append(out, user)
 	}
 	return out, rows.Err()
 }
@@ -471,6 +472,23 @@ func (p *Postgres) ListTranslationSessions(ctx context.Context, user uuid.UUID, 
 			return nil, storeErr(err)
 		}
 		out = append(out, v)
+	}
+	return out, rows.Err()
+}
+
+func (p *Postgres) ListEntitlements(ctx context.Context, user uuid.UUID, limit, offset int) ([]domain.Entitlement, error) {
+	rows, err := p.query(ctx, `SELECT id,user_id,kind,starts_at,expires_at,revoked_at FROM entitlements WHERE user_id=$1 ORDER BY starts_at DESC,id DESC LIMIT $2 OFFSET $3`, user, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []domain.Entitlement{}
+	for rows.Next() {
+		var entitlement domain.Entitlement
+		if err := rows.Scan(&entitlement.ID, &entitlement.UserID, &entitlement.Kind, &entitlement.StartsAt, &entitlement.ExpiresAt, &entitlement.RevokedAt); err != nil {
+			return nil, storeErr(err)
+		}
+		out = append(out, entitlement)
 	}
 	return out, rows.Err()
 }

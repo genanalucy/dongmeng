@@ -81,11 +81,17 @@ All endpoints below require exactly one `Authorization: Bearer <access JWT>`.
 ### 其他管理员端点
 
 - `POST /api/v1/admin/users/{userID}/disable`
+- `GET /api/v1/admin/users/{userID}/entitlements?limit=&offset=`
 - `GET /api/v1/admin/users/{userID}/translation-sessions?limit=&offset=`
+- `POST /api/v1/admin/users/{userID}/translation-sessions/{sessionID}/revoke`
 - `GET /api/v1/admin/users/{userID}/usage-records?limit=&offset=`
 - `POST /api/v1/admin/users/{userID}/entitlements` — grant a stacked 365-day entitlement.
 - `POST /api/v1/admin/users/{userID}/entitlements/{entitlementID}/revoke`
+- `GET /api/v1/admin/code-batches?limit=&offset=` — returns batch counts and disabled status, never plaintext codes.
 - `POST /api/v1/admin/code-batches` — `{ "name": "…", "count": 1..1000 }`; response includes plaintext codes once only.
+- `POST /api/v1/admin/code-batches/{batchID}/disable` — disables every still-unredeemed code in the batch; redeemed entitlements are unaffected.
+
+The first administrator is created offline with `bootstrap-admin <username>` and both email and password supplied as separate standard-input lines. It is idempotent only for the same username/email, refuses to create a different administrator once one exists, and accepts only a PostgreSQL URL targeting `127.0.0.1:15432`; no public bootstrap route is exposed.
 
 ## Translation JWT / main Agent contract
 

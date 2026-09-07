@@ -31,7 +31,7 @@ describe('CloudApiClient', () => {
     })
     const call = fetchMock.mock.calls[0]
     expect(call?.[0]).toBe('http://api.example.test/api/v1/auth/login')
-    expect(call?.[1]).toMatchObject({ method: 'POST', body: JSON.stringify({ email: 'admin@example.com', password: 'password-value' }) })
+    expect(call?.[1]).toMatchObject({ method: 'POST', body: JSON.stringify({ identifier: 'admin@example.com', password: 'password-value' }) })
   })
 
   it('sends the authenticated access credential and refresh token body when logging out', async () => {

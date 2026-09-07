@@ -19,8 +19,8 @@ type listUsersRows struct {
 func (r *listUsersRows) Close()     {}
 func (r *listUsersRows) Next() bool { return r.index < len(r.values) }
 func (r *listUsersRows) Scan(dest ...any) error {
-	if len(dest) != 6 {
-		return errors.New("expected six scan destinations")
+	if len(dest) != 7 {
+		return errors.New("expected seven scan destinations")
 	}
 	row := r.values[r.index]
 	r.index++
@@ -35,6 +35,8 @@ func (r *listUsersRows) Scan(dest ...any) error {
 			*target = row[i].(string)
 		case *time.Time:
 			*target = row[i].(time.Time)
+		case **time.Time:
+			*target = row[i].(*time.Time)
 		default:
 			return errors.New("unexpected scan destination")
 		}
@@ -43,19 +45,19 @@ func (r *listUsersRows) Scan(dest ...any) error {
 }
 func (r *listUsersRows) Err() error { return nil }
 
-func TestListUsersExecutesSixColumnQueryAndHidesReservedEmail(t *testing.T) {
+func TestListUsersExecutesSevenColumnQueryAndHidesReservedEmail(t *testing.T) {
 	legacyID, phoneID := uuid.New(), uuid.New()
 	createdAt := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
 	var query string
 	store := &Postgres{query: func(_ context.Context, sql string, _ ...any) (rows, error) {
 		query = strings.Join(strings.Fields(sql), " ")
-		const expectedProjection = "SELECT id,COALESCE(username,''),COALESCE(phone,''),email,role,created_at FROM users"
+		const expectedProjection = "SELECT id,COALESCE(username,''),COALESCE(phone,''),email,role,created_at,disabled_at FROM users"
 		if !strings.HasPrefix(query, expectedProjection) {
 			return nil, errors.New("ListUsers SELECT projection does not match scan contract")
 		}
 		return &listUsersRows{values: [][]any{
-			{legacyID, "", "", "legacy@example.test", "user", createdAt},
-			{phoneID, "alice_01", "+8613800138000", "phone-internal@reserved.invalid", "user", createdAt},
+			{legacyID, "", "", "legacy@example.test", "user", createdAt, (*time.Time)(nil)},
+			{phoneID, "alice_01", "+8613800138000", "phone-internal@reserved.invalid", "user", createdAt, &createdAt},
 		}}, nil
 	}}
 
@@ -64,11 +66,11 @@ func TestListUsersExecutesSixColumnQueryAndHidesReservedEmail(t *testing.T) {
 	if err != nil || len(users) != 2 {
 		t.Fatalf("ListUsers() = %v, %v", users, err)
 	}
-	const expectedProjection = "SELECT id,COALESCE(username,''),COALESCE(phone,''),email,role,created_at FROM users"
+	const expectedProjection = "SELECT id,COALESCE(username,''),COALESCE(phone,''),email,role,created_at,disabled_at FROM users"
 	if !strings.HasPrefix(query, expectedProjection) {
 		t.Fatal("ListUsers query projection changed")
 	}
-	if users[0].Email != "legacy@example.test" || users[1].Email != "" || users[1].Phone != "+8613800138000" {
+	if users[0].Email != "legacy@example.test" || users[0].DisabledAt != nil || users[1].Email != "" || users[1].Phone != "+8613800138000" || users[1].DisabledAt == nil {
 		t.Fatal("ListUsers did not preserve the expected public values")
 	}
 }

@@ -35,6 +35,7 @@ type businessStore interface {
 	DisableUser(context.Context, uuid.UUID, uuid.UUID, time.Time) error
 	GrantEntitlementByAdmin(context.Context, uuid.UUID, uuid.UUID, time.Time) (domain.Entitlement, error)
 	RevokeEntitlementByAdmin(context.Context, uuid.UUID, uuid.UUID, uuid.UUID, time.Time) error
+	RevokeTranslationSessionByAdmin(context.Context, uuid.UUID, uuid.UUID, uuid.UUID, time.Time) error
 }
 type authService interface {
 	Register(context.Context, string, string, string, string, time.Time) (auth.RegistrationResult, error)
@@ -975,19 +976,33 @@ func page(r *http.Request) (int, int) {
 }
 
 type adminUserResponse struct {
-	ID        uuid.UUID `json:"id"`
-	Username  string    `json:"username,omitempty"`
-	Email     string    `json:"email,omitempty"`
-	Role      string    `json:"role"`
-	CreatedAt time.Time `json:"created_at"`
+	ID         uuid.UUID  `json:"id"`
+	Username   string     `json:"username,omitempty"`
+	Email      string     `json:"email,omitempty"`
+	Role       string     `json:"role"`
+	CreatedAt  time.Time  `json:"created_at"`
+	DisabledAt *time.Time `json:"disabled_at,omitempty"`
 }
 
 func adminUser(user domain.User) adminUserResponse {
-	email := user.Email
-	if strings.HasPrefix(email, "phone-") && strings.HasSuffix(email, "@reserved.invalid") {
-		email = ""
+	email := maskAdminEmail(user.Email)
+	return adminUserResponse{ID: user.ID, Username: user.Username, Email: email, Role: user.Role, CreatedAt: user.CreatedAt, DisabledAt: user.DisabledAt}
+}
+
+func maskAdminEmail(email string) string {
+	if email == "" || strings.HasPrefix(email, "phone-") && strings.HasSuffix(email, "@reserved.invalid") {
+		return ""
 	}
-	return adminUserResponse{ID: user.ID, Username: user.Username, Email: email, Role: user.Role, CreatedAt: user.CreatedAt}
+	parts := strings.SplitN(email, "@", 2)
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		return ""
+	}
+	local := []rune(parts[0])
+	visible := string(local[:1])
+	if len(local) > 2 {
+		visible += string(local[len(local)-1:])
+	}
+	return visible + "***@" + parts[1]
 }
 
 func (a api) users(w http.ResponseWriter, r *http.Request) {
@@ -1008,6 +1023,24 @@ func (a api) users(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, 200, map[string]any{"users": users})
 }
+
+type adminTranslationSessionResponse struct {
+	ID                uuid.UUID  `json:"id"`
+	InstallID         string     `json:"install_id"`
+	ExpiresAt         time.Time  `json:"expires_at"`
+	CreatedAt         time.Time  `json:"created_at"`
+	EndedAt           *time.Time `json:"ended_at,omitempty"`
+	RevokedAt         *time.Time `json:"revoked_at,omitempty"`
+	TerminationReason string     `json:"termination_reason,omitempty"`
+}
+
+func maskedInstallID(value string) string {
+	if len(value) <= 8 {
+		return "********"
+	}
+	return value[:4] + "…" + value[len(value)-4:]
+}
+
 func (a api) sessionsAdmin(w http.ResponseWriter, r *http.Request) {
 	user, ok := pathUUID(r, "userID")
 	if !ok {
@@ -1020,7 +1053,15 @@ func (a api) sessionsAdmin(w http.ResponseWriter, r *http.Request) {
 		domainError(w, r, e)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"translation_sessions": v})
+	response := make([]adminTranslationSessionResponse, len(v))
+	for i, session := range v {
+		response[i] = adminTranslationSessionResponse{
+			ID: session.ID, InstallID: maskedInstallID(session.InstallID), ExpiresAt: session.ExpiresAt,
+			CreatedAt: session.CreatedAt, EndedAt: session.EndedAt, RevokedAt: session.RevokedAt,
+			TerminationReason: session.TerminationReason,
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"translation_sessions": response})
 }
 func (a api) usageAdmin(w http.ResponseWriter, r *http.Request) {
 	user, ok := pathUUID(r, "userID")

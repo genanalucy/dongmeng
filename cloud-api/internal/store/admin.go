@@ -2,11 +2,53 @@ package store
 
 import (
 	"context"
+	"errors"
+	"time"
+
 	"github.com/dngmeng/cloud-api/internal/domain"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"time"
 )
+
+// BootstrapAdmin creates the first administrator without opening a public bootstrap route.
+// The transaction-wide advisory lock makes concurrent bootstrap attempts fail closed.
+func (p *Postgres) BootstrapAdmin(ctx context.Context, username, email, passwordHash string, now time.Time) (domain.User, error) {
+	var user domain.User
+	err := p.tx(ctx, func(t pgx.Tx) error {
+		if _, err := t.Exec(ctx, `SELECT pg_advisory_xact_lock(1684957579)`); err != nil {
+			return err
+		}
+		err := t.QueryRow(ctx, `SELECT id,COALESCE(username,''),'',email,role,created_at FROM users WHERE role='admin' ORDER BY created_at,id LIMIT 1`).Scan(&user.ID, &user.Username, &user.Phone, &user.Email, &user.Role, &user.CreatedAt)
+		if err == nil {
+			if user.Username == username && user.Email == email {
+				return nil
+			}
+			return domain.ErrConflict
+		}
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return err
+		}
+		return t.QueryRow(ctx, `INSERT INTO users(email,username,password_hash,role,created_at) VALUES($1,$2,$3,'admin',$4) RETURNING id,username,'',email,role,created_at`, email, username, passwordHash, now.UTC()).Scan(&user.ID, &user.Username, &user.Phone, &user.Email, &user.Role, &user.CreatedAt)
+	})
+	return user, storeErr(err)
+}
+
+func (p *Postgres) RevokeTranslationSessionByAdmin(ctx context.Context, admin, user, sessionID uuid.UUID, now time.Time) error {
+	return p.tx(ctx, func(t pgx.Tx) error {
+		if err := lockUserSessionArbitration(ctx, t, user); err != nil {
+			return err
+		}
+		tag, err := t.Exec(ctx, `UPDATE translation_sessions SET revoked_at=$3,termination_reason=$4 WHERE id=$1 AND user_id=$2 AND ended_at IS NULL AND revoked_at IS NULL`, sessionID, user, now.UTC(), string(domain.TerminationRevoked))
+		if err != nil {
+			return storeErr(err)
+		}
+		if tag.RowsAffected() == 0 {
+			return domain.ErrNotFound
+		}
+		_, err = t.Exec(ctx, `INSERT INTO audit_logs(admin_id,action,target_type,target_id,metadata) VALUES($1,'translation_session.revoke','translation_session',$2,jsonb_build_object('user_id',$3::uuid))`, admin, sessionID, user)
+		return storeErr(err)
+	})
+}
 
 func (p *Postgres) GrantEntitlementByAdmin(ctx context.Context, admin, user uuid.UUID, now time.Time) (domain.Entitlement, error) {
 	var e domain.Entitlement

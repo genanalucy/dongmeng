@@ -54,6 +54,20 @@ func TestHealthReadyAndPublicConfig(t *testing.T) {
 	}
 }
 
+func TestMaskedInstallIDNeverReturnsCompleteIdentifier(t *testing.T) {
+	for _, test := range []struct {
+		input, expected string
+	}{
+		{input: "installation-identifier-123456", expected: "inst…3456"},
+		{input: "short", expected: "********"},
+	} {
+		actual := maskedInstallID(test.input)
+		if actual != test.expected || strings.Contains(actual, test.input) {
+			t.Fatalf("maskedInstallID(%q) = %q", test.input, actual)
+		}
+	}
+}
+
 func TestDomainErrorDistinguishesMissingEntitlementFromGenericForbidden(t *testing.T) {
 	tests := []struct {
 		name, errorCode string

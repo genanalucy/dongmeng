@@ -28,6 +28,25 @@ func (a api) disableUser(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
+func (a api) revokeTranslationSessionAdmin(w http.ResponseWriter, r *http.Request) {
+	userID, ok := pathUUID(r, "userID")
+	if !ok {
+		inputError(w, r)
+		return
+	}
+	sessionID, ok := pathUUID(r, "sessionID")
+	if !ok {
+		inputError(w, r)
+		return
+	}
+	principal, _ := current(r)
+	if err := a.store.RevokeTranslationSessionByAdmin(r.Context(), principal.id, userID, sessionID, a.now()); err != nil {
+		domainError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (a api) grantEntitlement(w http.ResponseWriter, r *http.Request) {
 	id, ok := pathUUID(r, "userID")
 	if !ok {
@@ -60,6 +79,45 @@ func (a api) revokeEntitlement(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
+func (a api) entitlementsAdmin(w http.ResponseWriter, r *http.Request) {
+	userID, ok := pathUUID(r, "userID")
+	if !ok {
+		inputError(w, r)
+		return
+	}
+	limit, offset := page(r)
+	entitlements, err := a.store.ListEntitlements(r.Context(), userID, limit, offset)
+	if err != nil {
+		domainError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"entitlements": entitlements})
+}
+
+func (a api) codeBatches(w http.ResponseWriter, r *http.Request) {
+	limit, offset := page(r)
+	batches, err := a.store.ListCodeBatches(r.Context(), limit, offset)
+	if err != nil {
+		domainError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"code_batches": batches})
+}
+
+func (a api) disableCodeBatch(w http.ResponseWriter, r *http.Request) {
+	batchID, ok := pathUUID(r, "batchID")
+	if !ok {
+		inputError(w, r)
+		return
+	}
+	principal, _ := current(r)
+	if err := a.store.DisableCodeBatch(r.Context(), principal.id, batchID, a.now()); err != nil {
+		domainError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (a api) codeBatch(w http.ResponseWriter, r *http.Request) {
 	var x struct {
 		Name  string `json:"name"`
@@ -91,6 +149,8 @@ func (a api) codeBatch(w http.ResponseWriter, r *http.Request) {
 		domainError(w, r, e)
 		return
 	}
+	v.TotalCodes = len(codes)
+	v.UnredeemedCodes = len(codes)
 	writeJSON(w, http.StatusCreated, map[string]any{"batch": v, "codes": codes})
 }
 

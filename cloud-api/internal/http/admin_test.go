@@ -23,6 +23,8 @@ type adminContractStore struct {
 	enabledErr    error
 	users         []domain.User
 	auditLogs     []domain.AuditLog
+	entitlements  []domain.Entitlement
+	codeBatches   []domain.CodeBatch
 	usersErr      error
 	auditLogsErr  error
 	userSearch    string
@@ -30,6 +32,7 @@ type adminContractStore struct {
 	userOffset    int
 	auditLimit    int
 	auditOffset   int
+	disabledBatch uuid.UUID
 	phoneUser     domain.User
 	phoneHash     string
 	phoneQuery    string
@@ -118,6 +121,19 @@ func (s *adminContractStore) ListAuditLogs(_ context.Context, limit, offset int)
 	return s.auditLogs, s.auditLogsErr
 }
 
+func (s *adminContractStore) ListEntitlements(context.Context, uuid.UUID, int, int) ([]domain.Entitlement, error) {
+	return s.entitlements, nil
+}
+
+func (s *adminContractStore) ListCodeBatches(context.Context, int, int) ([]domain.CodeBatch, error) {
+	return s.codeBatches, nil
+}
+
+func (s *adminContractStore) DisableCodeBatch(_ context.Context, _ uuid.UUID, batchID uuid.UUID, _ time.Time) error {
+	s.disabledBatch = batchID
+	return nil
+}
+
 func (s *adminContractStore) CreateSession(context.Context, domain.TranslationSession, time.Time) error {
 	return errors.New("not implemented")
 }
@@ -131,6 +147,10 @@ func (s *adminContractStore) GrantEntitlementByAdmin(context.Context, uuid.UUID,
 }
 
 func (s *adminContractStore) RevokeEntitlementByAdmin(context.Context, uuid.UUID, uuid.UUID, uuid.UUID, time.Time) error {
+	return errors.New("not implemented")
+}
+
+func (s *adminContractStore) RevokeTranslationSessionByAdmin(context.Context, uuid.UUID, uuid.UUID, uuid.UUID, time.Time) error {
 	return errors.New("not implemented")
 }
 
@@ -263,7 +283,7 @@ func TestAdminRoutesExposeDocumentedEnvelopesAndSafeAuditMetadata(t *testing.T) 
 		Email string    `json:"email"`
 		Role  string    `json:"role"`
 	}
-	if err := json.Unmarshal(userEnvelope["users"], &decodedUsers); err != nil || len(decodedUsers) != 1 || decodedUsers[0].ID != targetID || decodedUsers[0].Email != "person@example.test" || decodedUsers[0].Role != string(domain.RoleUser) {
+	if err := json.Unmarshal(userEnvelope["users"], &decodedUsers); err != nil || len(decodedUsers) != 1 || decodedUsers[0].ID != targetID || decodedUsers[0].Email != "pn***@example.test" || decodedUsers[0].Role != string(domain.RoleUser) || strings.Contains(users.Body.String(), "person@example.test") {
 		t.Fatal("users item contract failed")
 	}
 
@@ -284,6 +304,36 @@ func TestAdminRoutesExposeDocumentedEnvelopesAndSafeAuditMetadata(t *testing.T) 
 	}
 	if err := json.Unmarshal(auditEnvelope["audit_logs"], &decodedAudit); err != nil || len(decodedAudit) != 1 || decodedAudit[0].ID == "" || len(decodedAudit[0].Metadata) != 0 {
 		t.Fatalf("audit item safe contract failed")
+	}
+}
+
+func TestAdminOperationalRoutesExposeEntitlementsAndCodeBatches(t *testing.T) {
+	adminID, userID, batchID := uuid.New(), uuid.New(), uuid.New()
+	now := time.Date(2026, 9, 7, 12, 0, 0, 0, time.UTC)
+	store := &adminContractStore{
+		enabled:      true,
+		entitlements: []domain.Entitlement{{ID: uuid.New(), UserID: userID, Kind: string(domain.EntitlementPackage), StartsAt: now, ExpiresAt: now.Add(domain.RedemptionDuration)}},
+		codeBatches:  []domain.CodeBatch{{ID: batchID, Name: "internal", DurationDays: 365, CreatedBy: adminID, CreatedAt: now, TotalCodes: 1, UnredeemedCodes: 1}},
+	}
+	router, issuer, tokenTime := newAdminContractRouter(t, store)
+	token := adminAccessToken(t, issuer, adminID, domain.RoleAdmin, tokenTime)
+
+	entitlements := adminRequest(router, "/api/v1/admin/users/"+userID.String()+"/entitlements", token)
+	if entitlements.Code != http.StatusOK || !strings.Contains(entitlements.Body.String(), `"entitlements"`) || !strings.Contains(entitlements.Body.String(), `"kind":"package"`) {
+		t.Fatalf("entitlements response = %d %s", entitlements.Code, entitlements.Body.String())
+	}
+	batches := adminRequest(router, "/api/v1/admin/code-batches", token)
+	if batches.Code != http.StatusOK || !strings.Contains(batches.Body.String(), `"code_batches"`) || !strings.Contains(batches.Body.String(), `"unredeemed_codes":1`) {
+		t.Fatalf("batches response = %d %s", batches.Code, batches.Body.String())
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/code-batches/"+batchID.String()+"/disable", nil)
+	req.RemoteAddr = "127.0.0.1:12345"
+	req.Header.Set("Authorization", "Bearer "+token)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, req)
+	if response.Code != http.StatusNoContent || store.disabledBatch != batchID {
+		t.Fatalf("disable response = %d, batch = %s", response.Code, store.disabledBatch)
 	}
 }
 
@@ -310,7 +360,7 @@ func TestAdminUsersHidePhoneAndReservedEmailForLegacyAndPhoneRecords(t *testing.
 		t.Fatal("admin response has an invalid user envelope")
 	}
 	legacy, phone := envelope.Users[0], envelope.Users[1]
-	if string(legacy["email"]) != "\"legacy@example.test\"" || legacy["phone"] != nil || phone["email"] != nil || phone["phone"] != nil || string(phone["username"]) != "\"alice_01\"" {
+	if string(legacy["email"]) != "\"ly***@example.test\"" || legacy["phone"] != nil || phone["email"] != nil || phone["phone"] != nil || string(phone["username"]) != "\"alice_01\"" || strings.Contains(body, "legacy@example.test") {
 		t.Fatal("admin user DTO did not preserve legacy email or hide phone identities")
 	}
 }

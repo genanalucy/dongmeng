@@ -151,12 +151,16 @@ func NewRouter(options RouterOptions) http.Handler {
 		r.Group(func(ad chi.Router) {
 			ad.Use(api.admin)
 			ad.Get("/api/v1/admin/users", api.users)
+			ad.Get("/api/v1/admin/users/{userID}/entitlements", api.entitlementsAdmin)
 			ad.Get("/api/v1/admin/users/{userID}/translation-sessions", api.sessionsAdmin)
+			ad.Post("/api/v1/admin/users/{userID}/translation-sessions/{sessionID}/revoke", api.revokeTranslationSessionAdmin)
 			ad.Get("/api/v1/admin/users/{userID}/usage-records", api.usageAdmin)
 			ad.Post("/api/v1/admin/users/{userID}/disable", api.disableUser)
 			ad.Post("/api/v1/admin/users/{userID}/entitlements", api.grantEntitlement)
 			ad.Post("/api/v1/admin/users/{userID}/entitlements/{entitlementID}/revoke", api.revokeEntitlement)
+			ad.Get("/api/v1/admin/code-batches", api.codeBatches)
 			ad.Post("/api/v1/admin/code-batches", api.codeBatch)
+			ad.Post("/api/v1/admin/code-batches/{batchID}/disable", api.disableCodeBatch)
 			ad.Get("/api/v1/admin/audit-logs", api.auditLogs)
 			if options.Config.HistoryEnabled && options.HistoryCipher != nil {
 				ad.Get("/api/v1/admin/users/{userID}/history", api.adminHistory)

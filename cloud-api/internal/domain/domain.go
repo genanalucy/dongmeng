@@ -328,12 +328,13 @@ func ParseCreateBatchInput(name string, count int) (CreateBatchInput, error) {
 }
 
 type User struct {
-	ID        uuid.UUID `json:"id"`
-	Username  string    `json:"username,omitempty"`
-	Phone     string    `json:"-"`
-	Role      string    `json:"role"`
-	CreatedAt time.Time `json:"created_at"`
-	Email     string    `json:"email,omitempty"`
+	ID         uuid.UUID  `json:"id"`
+	Username   string     `json:"username,omitempty"`
+	Phone      string     `json:"-"`
+	Role       string     `json:"role"`
+	CreatedAt  time.Time  `json:"created_at"`
+	Email      string     `json:"email,omitempty"`
+	DisabledAt *time.Time `json:"disabled_at,omitempty"`
 }
 
 type Device struct {
@@ -351,11 +352,12 @@ const (
 )
 
 type Entitlement struct {
-	ID        uuid.UUID `json:"id"`
-	UserID    uuid.UUID `json:"user_id"`
-	Kind      string    `json:"kind"`
-	StartsAt  time.Time `json:"starts_at"`
-	ExpiresAt time.Time `json:"expires_at"`
+	ID        uuid.UUID  `json:"id"`
+	UserID    uuid.UUID  `json:"user_id"`
+	Kind      string     `json:"kind"`
+	StartsAt  time.Time  `json:"starts_at"`
+	ExpiresAt time.Time  `json:"expires_at"`
+	RevokedAt *time.Time `json:"revoked_at,omitempty"`
 }
 
 func TrialPeriod(startsAt time.Time) (time.Time, time.Time, error) {
@@ -564,11 +566,15 @@ type AuditLog struct {
 }
 
 type CodeBatch struct {
-	ID           uuid.UUID `json:"id"`
-	Name         string    `json:"name"`
-	DurationDays int       `json:"duration_days"`
-	CreatedBy    uuid.UUID `json:"created_by"`
-	CreatedAt    time.Time `json:"created_at"`
+	ID              uuid.UUID  `json:"id"`
+	Name            string     `json:"name"`
+	DurationDays    int        `json:"duration_days"`
+	CreatedBy       uuid.UUID  `json:"created_by"`
+	CreatedAt       time.Time  `json:"created_at"`
+	DisabledAt      *time.Time `json:"disabled_at,omitempty"`
+	TotalCodes      int        `json:"total_codes"`
+	RedeemedCodes   int        `json:"redeemed_codes"`
+	UnredeemedCodes int        `json:"unredeemed_codes"`
 }
 
 type RegisterParams struct {
@@ -713,6 +719,9 @@ type Store interface {
 	UserByID(context.Context, uuid.UUID) (User, error)
 	ActiveEntitlement(context.Context, uuid.UUID, time.Time) (Entitlement, error)
 	CreateCodeBatch(context.Context, CreateBatchParams) (CodeBatch, error)
+	ListCodeBatches(context.Context, int, int) ([]CodeBatch, error)
+	DisableCodeBatch(context.Context, uuid.UUID, uuid.UUID, time.Time) error
+	ListEntitlements(context.Context, uuid.UUID, int, int) ([]Entitlement, error)
 	RedeemCode(context.Context, uuid.UUID, []byte, time.Time) (Entitlement, error)
 	CreateTranslationSession(context.Context, TranslationSession) error
 	CreateUsageRecord(context.Context, CreateUsageParams) error

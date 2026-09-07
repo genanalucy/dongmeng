@@ -1,0 +1,29 @@
+47-129-170-16.sslip.io {
+	encode zstd gzip
+
+	handle /healthz {
+		header Content-Type application/json
+		respond "{\"status\":\"edge-ready\"}" 200
+	}
+
+	handle /ws/translate {
+		reverse_proxy 127.0.0.1:18765
+	}
+
+	handle /api/health {
+		reverse_proxy 127.0.0.1:18765
+	}
+
+	handle /api/* {
+		reverse_proxy 127.0.0.1:8080
+	}
+
+	handle_path /admin/* {
+		root * /opt/dngmeng/admin-web
+		try_files {path} /index.html
+		file_server
+	}
+
+	redir /admin /admin/ 308
+	respond 404
+}

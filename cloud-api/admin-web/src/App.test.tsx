@@ -29,13 +29,13 @@ describe('App', () => {
     render(<App />)
 
     expect(screen.getByRole('heading', { name: '管理员登录' })).toBeInTheDocument()
-    expect(screen.getByLabelText('管理员邮箱')).toBeInTheDocument()
+    expect(screen.getByLabelText('管理员账号')).toBeInTheDocument()
     expect(screen.getByLabelText('密码')).toHaveAttribute('type', 'password')
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
   it('logs in, verifies the administrator role, and stores credentials only in session storage', async () => {
-    const fetchMock = vi.fn((url: string) => {
+    const fetchMock = vi.fn<(url: string, init?: RequestInit) => Promise<Response>>((url: string) => {
       if (url.endsWith('/auth/login')) return Promise.resolve(jsonResponse({ access_token: 'access-value', refresh_token: 'refresh-value', token_type: 'Bearer', expires_in: 900 }))
       if (url.endsWith('/users/me')) return Promise.resolve(adminUser())
       return Promise.resolve(platformResponse(url))
@@ -43,7 +43,7 @@ describe('App', () => {
     vi.stubGlobal('fetch', fetchMock)
 
     render(<App />)
-    fireEvent.change(screen.getByLabelText('管理员邮箱'), { target: { value: 'admin@example.com' } })
+    fireEvent.change(screen.getByLabelText('管理员账号'), { target: { value: 'admin@example.com' } })
     fireEvent.change(screen.getByLabelText('密码'), { target: { value: 'test-credential' } })
     fireEvent.click(screen.getByRole('button', { name: '登录' }))
 
@@ -52,6 +52,8 @@ describe('App', () => {
     expect(sessionStorage.getItem('cloud-api.admin.refresh-token')).toBe('refresh-value')
     expect(localStorage.getItem('cloud-api.admin.access-token')).toBeNull()
     expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith('/users/me'))).toBe(true)
+    const loginCall = fetchMock.mock.calls.find(([url]) => String(url).endsWith('/auth/login'))
+    expect(loginCall?.[1]).toMatchObject({ body: JSON.stringify({ identifier: 'admin@example.com', password: 'test-credential' }) })
   })
 
   it('clears the session and rejects a non-administrator after identity verification', async () => {
@@ -109,10 +111,32 @@ describe('App', () => {
     await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/admin/users?limit=50&offset=50'))).toBe(true))
     fireEvent.click(screen.getByRole('button', { name: '上一页' }))
     await waitFor(() => expect(fetchMock.mock.calls.filter(([url]) => String(url).includes('/admin/users?limit=50&offset=0'))).toHaveLength(2))
-    fireEvent.change(screen.getByLabelText('按邮箱搜索用户'), { target: { value: 'admin+test@example.com' } })
+    fireEvent.change(screen.getByLabelText('搜索用户'), { target: { value: 'admin+test@example.com' } })
     fireEvent.click(screen.getByRole('button', { name: '搜索' }))
 
     await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/admin/users?q=admin%2Btest%40example.com&limit=50&offset=0'))).toBe(true))
+  })
+
+  it('shows newly created redemption codes once and lets the administrator clear them', async () => {
+    sessionStorage.setItem('cloud-api.admin.access-token', 'access-value')
+    sessionStorage.setItem('cloud-api.admin.refresh-token', 'refresh-value')
+    vi.stubGlobal('confirm', vi.fn(() => true))
+    const fetchMock = vi.fn<(url: string, init?: RequestInit) => Promise<Response>>((url: string, init?: RequestInit) => {
+      if (url.endsWith('/users/me')) return Promise.resolve(adminUser())
+      if (url.includes('/admin/code-batches') && init?.method === 'POST') return Promise.resolve(jsonResponse({ batch: { id: 'batch-1', name: '内部测试', duration_days: 365, created_at: '2026-09-07T00:00:00Z', total_codes: 1, redeemed_codes: 0, unredeemed_codes: 1 }, codes: ['AAAAAA-BBBBBB-CCCCCC-DDDDDD'] }, 201))
+      if (url.includes('/admin/code-batches')) return Promise.resolve(jsonResponse({ code_batches: [] }))
+      return Promise.resolve(platformResponse(url))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: '兑换码' }))
+    fireEvent.click(await screen.findByRole('button', { name: '创建一年兑换码' }))
+
+    expect(await screen.findByText('AAAAAA-BBBBBB-CCCCCC-DDDDDD')).toBeInTheDocument()
+    expect(screen.getByText('请立即保存：关闭或刷新后无法再次查看')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '我已安全保存' }))
+    expect(screen.queryByText('AAAAAA-BBBBBB-CCCCCC-DDDDDD')).not.toBeInTheDocument()
   })
 
   it('pages audit results and recovers from an empty next page', async () => {
