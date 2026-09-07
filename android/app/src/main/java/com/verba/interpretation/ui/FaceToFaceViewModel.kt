@@ -12,11 +12,7 @@ import com.verba.interpretation.cloud.SharedPreferencesInstallationIdStore
 import com.verba.interpretation.cloud.TranslationSessionCoordinator
 import com.verba.interpretation.cloud.TranslationSessionCoordinator.OpenHandle
 import com.verba.interpretation.cloud.TranslationSessionGrant
-import com.verba.interpretation.audio.MicrophoneCapture
-import com.verba.interpretation.audio.TtsPlayer
 import com.verba.interpretation.protocol.AgentEvent
-import com.verba.interpretation.protocol.AgentSocket
-import com.verba.interpretation.protocol.EndpointSettings
 import com.verba.interpretation.history.LocalHistoryRepository
 import com.verba.interpretation.history.LocalHistorySaveController
 import com.verba.interpretation.history.LocalHistoryTurnOwnership
@@ -31,25 +27,30 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
 
-class FaceToFaceViewModel(application: Application) : AndroidViewModel(application) {
-    private val coordinator = FaceToFaceCoordinator<AgentSocket>()
+class FaceToFaceViewModel @JvmOverloads constructor(
+    application: Application,
+    private val runtime: FaceToFaceRuntime = AndroidFaceToFaceRuntime(application),
+    cloudSessionCoordinator: TranslationSessionCoordinator? = null,
+    historySaver: LocalHistoryTurnSaver? = null,
+    private val playbackExecutor: java.util.concurrent.ExecutorService = Executors.newSingleThreadExecutor { task ->
+        Thread(task, "verba-face-tts").apply { isDaemon = true }
+    },
+) : AndroidViewModel(application) {
+    internal val microphonePermissionPolicy = MicrophonePermissionPolicy()
+    private val coordinator = FaceToFaceCoordinator<FaceToFaceSocket>()
     private val mutableState = MutableStateFlow(coordinator.state())
     val state: StateFlow<FaceToFaceState> = mutableState.asStateFlow()
-    private val microphone = MicrophoneCapture(application)
-    private val endpointSettings = EndpointSettings(application)
-    private val player = TtsPlayer()
-    private val cloudSessions = TranslationSessionCoordinator(
+    private val cloudSessions = cloudSessionCoordinator ?: TranslationSessionCoordinator(
         CloudApi(CloudEndpointSettings(application), KeystoreTokenStore(application), SharedPreferencesInstallationIdStore(application)),
         viewModelScope,
     )
     private val mutableCloudSessionCloseFailure = MutableStateFlow<CloudSessionFailureCode?>(null)
     val cloudSessionCloseFailure: StateFlow<CloudSessionFailureCode?> = mutableCloudSessionCloseFailure.asStateFlow()
-    private val playbackExecutor = Executors.newSingleThreadExecutor { task ->
-        Thread(task, "verba-face-tts").apply { isDaemon = true }
-    }
     private val actionLock = Any()
-    private val history = LocalHistoryRepository.create(application)
-    private val localHistory = LocalHistorySaveController(LocalHistoryTurnSaver { history.recordCompletedTurn(it) }, viewModelScope)
+    private val localHistory = LocalHistorySaveController(
+        historySaver ?: LocalHistoryRepository.create(application).let { history -> LocalHistoryTurnSaver { history.recordCompletedTurn(it) } },
+        viewModelScope,
+    )
     private val localTurnOwnership = mutableMapOf<Long, LocalHistoryTurnOwnership>()
     private val playbackGeneration = AtomicLong()
     private var timerJob: Job? = null
@@ -76,6 +77,7 @@ class FaceToFaceViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     fun setView(view: FaceToFaceView) = synchronized(actionLock) {
+        invalidatePendingGrantOpen()
         val transition = coordinator.setView(view)
         if (transition.accepted) applyTransition(transition)
     }
@@ -123,6 +125,7 @@ class FaceToFaceViewModel(application: Application) : AndroidViewModel(applicati
     ) { created -> applyTransition(coordinator.cancelAutoTakeover(created.turnId, created.socket)) }
 
     fun pauseAuto() = synchronized(actionLock) {
+        invalidatePendingGrantOpen()
         applyTransition(coordinator.pauseAuto())
     }
 
@@ -136,6 +139,19 @@ class FaceToFaceViewModel(application: Application) : AndroidViewModel(applicati
         invalidatePendingGrantOpen()
         applyTransition(coordinator.stopAuto())
         closeCloudSessionIfDrained()
+    }
+
+    fun runMicrophoneAction(action: MicrophonePermissionAction) {
+        when (action) {
+            is MicrophonePermissionAction.Manual -> manualPress(action.side)
+            MicrophonePermissionAction.ContinuousStart -> startAuto()
+            MicrophonePermissionAction.ContinuousResume -> resumeAuto()
+        }
+    }
+
+    fun microphonePermissionResult(granted: Boolean) {
+        val result = microphonePermissionPolicy.consumeResult(granted) ?: return
+        if (result.granted) runMicrophoneAction(result.action) else microphonePermissionDenied()
     }
 
     fun microphonePermissionDenied() = fail("未授予麦克风权限。")
@@ -153,7 +169,7 @@ class FaceToFaceViewModel(application: Application) : AndroidViewModel(applicati
         localHistory.endConversation()
         localTurnOwnership.clear()
         endCloudSession()
-        player.stop()
+        runtime.stopPlayback()
     }
 
     private fun switchAuto(side: FaceToFaceSide) = startWithCloudGrant(
@@ -165,13 +181,14 @@ class FaceToFaceViewModel(application: Application) : AndroidViewModel(applicati
         },
     ) { created -> applyTransition(coordinator.switchAuto(created.turnId, side, created.socket)) }
 
-    private data class CreatedSession(val turnId: Long, val side: FaceToFaceSide, val socket: AgentSocket)
+    private data class CreatedSession(val turnId: Long, val side: FaceToFaceSide, val socket: FaceToFaceSocket)
 
     private fun startWithCloudGrant(
         side: FaceToFaceSide,
         canStart: () -> Boolean,
         onCreated: (CreatedSession) -> Unit,
     ) = synchronized(actionLock) {
+        if (!canStart()) return
         val existing = cloudGrant
         if (existing != null) {
             if (canStart()) createAndStart(side, existing, onCreated)
@@ -181,8 +198,12 @@ class FaceToFaceViewModel(application: Application) : AndroidViewModel(applicati
         val generation = operationGeneration
         pendingGrantOpen = cloudSessions.open(
             onGranted = { grant -> synchronized(actionLock) {
+                if (generation != operationGeneration) {
+                    cloudSessions.end(grant.sessionId)
+                    return@synchronized
+                }
                 pendingGrantOpen = null
-                if (generation != operationGeneration || !canStart()) {
+                if (!canStart()) {
                     cloudSessions.end(grant.sessionId)
                     return@synchronized
                 }
@@ -190,8 +211,10 @@ class FaceToFaceViewModel(application: Application) : AndroidViewModel(applicati
                 createAndStart(side, grant, onCreated)
             } },
             onFailure = { message -> synchronized(actionLock) {
-                pendingGrantOpen = null
-                if (generation == operationGeneration) fail(message)
+                if (generation == operationGeneration) {
+                    pendingGrantOpen = null
+                    fail(message)
+                }
             } },
         )
     }
@@ -211,8 +234,7 @@ class FaceToFaceViewModel(application: Application) : AndroidViewModel(applicati
             localHistory.startConversation(userId, "face_to_face")
             localTurnOwnership.clear()
         }
-        val socket = AgentSocket(
-            endpointSettings = endpointSettings,
+        val socket = runtime.createSocket(
             onEvent = { event -> synchronized(actionLock) { handleEvent(turnId, event) } },
             onTts = { pcm -> synchronized(actionLock) { queuePlayback(coordinator.offerTts(turnId, pcm)) } },
             onFailure = { message -> synchronized(actionLock) { handleSessionFailure(turnId, message) } },
@@ -229,14 +251,14 @@ class FaceToFaceViewModel(application: Application) : AndroidViewModel(applicati
         return false
     }
 
-    private fun applyTransition(transition: FaceToFaceCoordinator.Transition<AgentSocket>) {
+    private fun applyTransition(transition: FaceToFaceCoordinator.Transition<FaceToFaceSocket>) {
         if (transition.cancelTimer) {
             timerJob?.cancel()
             timerJob = null
         }
         transition.cancelSessions.forEach { it.cancel() }
         transition.finishSessions.forEach { it.finish() }
-        if (transition.stopCapture) microphone.stop()
+        if (transition.stopCapture) runtime.stopCapture()
         if (transition.startCapture) startCapture()
         transition.timer?.let(::scheduleTimer)
         if (transition.closeCloudSession) endCloudSession()
@@ -244,7 +266,7 @@ class FaceToFaceViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     private fun startCapture() {
-        when (val result = microphone.start(
+        when (val result = runtime.startCapture(
             onPacket = { packet ->
                 if (!coordinator.sendToActive { it.sendAudio(packet) }) fail("音频包无法发送，连接尚未就绪或已断开。")
             },
@@ -324,17 +346,20 @@ class FaceToFaceViewModel(application: Application) : AndroidViewModel(applicati
             while (work != null && playbackGeneration.get() == generation) {
                 val current = work ?: break
                 val result = when (current) {
-                    is FaceToFaceCoordinator.PlaybackWork.Chunk -> player.play(current.pcm, current.route)
-                    is FaceToFaceCoordinator.PlaybackWork.Drain -> player.awaitDrained()
-                }
-                if (result.isFailure) {
-                    fail(result.exceptionOrNull()?.message ?: "TTS 播放失败。")
-                    return@execute
+                    is FaceToFaceCoordinator.PlaybackWork.Chunk -> runtime.play(current.pcm, current.route)
+                    is FaceToFaceCoordinator.PlaybackWork.Drain -> runtime.awaitDrained()
                 }
                 val drained = current is FaceToFaceCoordinator.PlaybackWork.Drain
-                work = coordinator.playbackWorkFinished(current.turnId, drained)
-                closeCloudSessionIfDrained()
-                publishState()
+                synchronized(actionLock) {
+                    if (playbackGeneration.get() != generation) return@execute
+                    if (result.isFailure) {
+                        fail(result.exceptionOrNull()?.message ?: "TTS 播放失败。")
+                        return@execute
+                    }
+                    work = coordinator.playbackWorkFinished(current.turnId, drained)
+                    closeCloudSessionIfDrained()
+                    publishState()
+                }
             }
         }
     }
@@ -346,7 +371,7 @@ class FaceToFaceViewModel(application: Application) : AndroidViewModel(applicati
         playbackGeneration.incrementAndGet()
         applyTransition(transition)
         endCloudSession()
-        player.stop()
+        runtime.stopPlayback()
     }
 
     private fun fail(message: String) = synchronized(actionLock) {
@@ -357,7 +382,7 @@ class FaceToFaceViewModel(application: Application) : AndroidViewModel(applicati
         localHistory.endConversation()
         localTurnOwnership.clear()
         endCloudSession()
-        player.stop()
+        runtime.stopPlayback()
     }
 
     private fun closeCloudSessionIfDrained() {
@@ -365,6 +390,7 @@ class FaceToFaceViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     private fun invalidatePendingGrantOpen() {
+        microphonePermissionPolicy.clear()
         operationGeneration += 1
         pendingGrantOpen?.cancel()
         pendingGrantOpen = null

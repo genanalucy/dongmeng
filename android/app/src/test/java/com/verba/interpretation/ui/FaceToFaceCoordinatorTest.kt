@@ -10,6 +10,36 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class FaceToFaceCoordinatorTest {
+    @Test fun rejectedRestoreIsAtomicAndReturnsNewSessionForCancellation() {
+        val coordinator = FaceToFaceCoordinator<String>()
+        coordinator.setMode(FaceToFaceMode.AUTO)
+        coordinator.startAuto(1, "left")
+        coordinator.updateSubtitle(1, SubtitleKind.SOURCE_FINAL, "left")
+        coordinator.switchAuto(2, FaceToFaceSide.RIGHT, "right")
+        val before = coordinator.state()
+        val rejected = coordinator.cancelAutoTakeover(1, "new-left")
+        assertFalse(rejected.accepted)
+        assertEquals(listOf("new-left"), rejected.cancelSessions)
+        assertEquals(before, coordinator.state())
+        assertTrue(coordinator.containsTurn(2))
+        assertTrue(coordinator.sendToActive { it == "right" })
+    }
+
+    @Test fun stoppingEmptyRestoredLeftWaitsForOlderRightPlaybackBeforeCloudClose() {
+        val coordinator = FaceToFaceCoordinator<String>()
+        coordinator.setMode(FaceToFaceMode.AUTO)
+        coordinator.startAuto(1, "left")
+        coordinator.switchAuto(2, FaceToFaceSide.RIGHT, "right")
+        coordinator.updateSubtitle(2, SubtitleKind.SOURCE_FINAL, "right")
+        coordinator.sessionFinished(2)
+        coordinator.cancelAutoTakeover(3, "restored")
+        val stop = coordinator.stopAuto()
+        assertFalse(stop.closeCloudSession)
+        assertFalse(coordinator.canCloseCloudSession())
+        coordinator.playbackWorkFinished(2, drained = true)
+        assertTrue(coordinator.canCloseCloudSession())
+    }
+
     @Test fun manualPttLocksBothSidesUntilFinishedAndPlaybackDrains() {
         val coordinator = FaceToFaceCoordinator<String>()
         val press = coordinator.manualPress(1, FaceToFaceSide.LEFT, "left")
@@ -138,6 +168,76 @@ class FaceToFaceCoordinatorTest {
         assertFalse(coordinator.cancelAutoTakeover(4, "stale").accepted)
         assertTrue(coordinator.containsTurn(3))
         assertEquals(1, coordinator.state().turns.count { !it.finished })
+    }
+
+    @Test fun finishedAutoTurnIsNotFinishedAgainWhenTakeoverRestoresOrStops() {
+        val coordinator = FaceToFaceCoordinator<String>()
+        coordinator.setMode(FaceToFaceMode.AUTO)
+        coordinator.startAuto(1, "left")
+        coordinator.updateSubtitle(1, SubtitleKind.SOURCE_PARTIAL, "left")
+        coordinator.switchAuto(2, FaceToFaceSide.RIGHT, "right")
+        coordinator.updateSubtitle(2, SubtitleKind.SOURCE_PARTIAL, "right")
+        coordinator.sessionFinished(2)
+
+        val restore = coordinator.switchAuto(3, FaceToFaceSide.LEFT, "left-restored")
+
+        assertTrue(restore.accepted)
+        // The right socket already emitted Finished; switching back must not finish it again.
+        assertTrue(restore.finishSessions.isEmpty())
+    }
+
+    @Test fun lateCancelAfterFinishedRightEntryDrainedRestoresLeftOnceAndPreservesHistory() {
+        val coordinator = FaceToFaceCoordinator<String>()
+        coordinator.setMode(FaceToFaceMode.AUTO)
+        coordinator.startAuto(1, "left")
+        coordinator.updateSubtitle(1, SubtitleKind.SOURCE_PARTIAL, "left")
+        coordinator.switchAuto(2, FaceToFaceSide.RIGHT, "right")
+        coordinator.updateSubtitle(2, SubtitleKind.SOURCE_FINAL, "right")
+        coordinator.updateSubtitle(2, SubtitleKind.TRANSLATION_FINAL, "droite")
+        coordinator.sessionFinished(2)
+
+        val leftDrain = coordinator.sessionFinished(1) as FaceToFaceCoordinator.PlaybackWork.Drain
+        val rightDrain = coordinator.playbackWorkFinished(leftDrain.turnId, drained = true)
+        assertTrue(rightDrain is FaceToFaceCoordinator.PlaybackWork.Drain)
+        assertNull(coordinator.playbackWorkFinished(requireNotNull(rightDrain).turnId, drained = true))
+        assertFalse(coordinator.containsTurn(2))
+        assertEquals(FaceToFaceSide.RIGHT, coordinator.state().activeSide)
+        assertEquals(2L, coordinator.state().activeTurnId)
+
+        val restore = coordinator.cancelAutoTakeover(3, "left-restored")
+
+        assertTrue(restore.accepted)
+        assertTrue(restore.finishSessions.isEmpty())
+        assertTrue(restore.cancelSessions.isEmpty())
+        assertEquals(FaceToFaceSide.LEFT, coordinator.state().activeSide)
+        assertEquals(3L, coordinator.state().activeTurnId)
+        assertEquals(listOf(1L, 2L, 3L), coordinator.state().turns.map { it.id })
+        assertTrue(coordinator.state().turns.first { it.id == 2L }.finished)
+        assertEquals(1, coordinator.state().turns.count { !it.finished })
+
+        val stale = coordinator.cancelAutoTakeover(4, "stale")
+        assertFalse(stale.accepted)
+        assertEquals(listOf("stale"), stale.cancelSessions)
+        assertEquals(3L, coordinator.state().activeTurnId)
+        assertTrue(coordinator.containsTurn(3))
+    }
+
+    @Test fun finishedActiveTurnIsNotFinishedAgainWhenPausingOrStopping() {
+        val paused = FaceToFaceCoordinator<String>()
+        paused.setMode(FaceToFaceMode.AUTO)
+        paused.startAuto(1, "left")
+        paused.updateSubtitle(1, SubtitleKind.SOURCE_PARTIAL, "left")
+        paused.sessionFinished(1)
+
+        assertTrue(paused.pauseAuto().finishSessions.isEmpty())
+
+        val stopped = FaceToFaceCoordinator<String>()
+        stopped.setMode(FaceToFaceMode.AUTO)
+        stopped.startAuto(1, "left")
+        stopped.updateSubtitle(1, SubtitleKind.SOURCE_PARTIAL, "left")
+        stopped.sessionFinished(1)
+
+        assertTrue(stopped.stopAuto().finishSessions.isEmpty())
     }
 
     @Test fun pauseThenResumeAutoStopsCaptureAndRestartsDefaultLanguage() {

@@ -47,6 +47,9 @@ internal fun faceToFacePresentation(state: FaceToFaceState): FaceToFacePresentat
     },
 )
 
+internal fun faceToFacePanelTurns(state: FaceToFaceState, side: FaceToFaceSide): List<FaceToFaceTurn> =
+    state.turns.filter { it.side == side }
+
 internal fun faceToFaceTurnAlignment(turn: FaceToFaceTurn): FaceToFaceTurnAlignment =
     if (turn.side == FaceToFaceSide.LEFT) FaceToFaceTurnAlignment.START else FaceToFaceTurnAlignment.END
 

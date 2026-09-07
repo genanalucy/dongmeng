@@ -3,7 +3,8 @@ package com.verba.interpretation.ui
 /** The user intent that must survive the runtime permission dialog. */
 sealed interface MicrophonePermissionAction {
     data class Manual(val side: FaceToFaceSide) : MicrophonePermissionAction
-    data object Continuous : MicrophonePermissionAction
+    data object ContinuousStart : MicrophonePermissionAction
+    data object ContinuousResume : MicrophonePermissionAction
 }
 
 /**
@@ -14,14 +15,17 @@ internal class MicrophonePermissionPolicy {
     data class Result(val action: MicrophonePermissionAction, val granted: Boolean)
 
     private var pending: MicrophonePermissionAction? = null
+    private var requestInFlight = false
 
     fun request(action: MicrophonePermissionAction): Boolean {
-        if (pending != null) return false
+        if (requestInFlight) return false
+        requestInFlight = true
         pending = action
         return true
     }
 
     fun consumeResult(granted: Boolean): Result? {
+        requestInFlight = false
         val action = pending ?: return null
         pending = null
         return Result(action, granted)

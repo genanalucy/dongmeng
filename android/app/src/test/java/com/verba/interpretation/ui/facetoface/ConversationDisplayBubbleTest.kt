@@ -8,6 +8,29 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class ConversationDisplayBubbleTest {
+    @Test fun productionPanelPolicyKeepsOnlyActiveSpeakerLiveAcrossTakeoverAndCancel() {
+        val coordinator = com.verba.interpretation.ui.FaceToFaceCoordinator<String>()
+        coordinator.setMode(com.verba.interpretation.ui.FaceToFaceMode.AUTO)
+        coordinator.startAuto(1, "left")
+        coordinator.updateSubtitle(1, com.verba.interpretation.ui.SubtitleKind.SOURCE_FINAL, "left")
+        coordinator.switchAuto(2, FaceToFaceSide.RIGHT, "right")
+        coordinator.updateSubtitle(2, com.verba.interpretation.ui.SubtitleKind.SOURCE_FINAL, "right")
+        fun liveSides(): List<FaceToFaceSide> {
+            val state = coordinator.state()
+            return FaceToFaceSide.entries.flatMap { side ->
+                displayConversationBubbles(faceToFacePanelTurns(state, side), state.phase, state.activeTurnId)
+            }.filter { it.isLive }.map { it.side }
+        }
+        assertEquals(listOf(FaceToFaceSide.RIGHT), liveSides())
+        coordinator.sessionFinished(2)
+        assertEquals(emptyList<FaceToFaceSide>(), liveSides())
+        coordinator.cancelAutoTakeover(3, "restored")
+        coordinator.updateSubtitle(3, com.verba.interpretation.ui.SubtitleKind.SOURCE_PARTIAL, "restored")
+        assertEquals(listOf(FaceToFaceSide.LEFT), liveSides())
+        assertEquals(listOf(2L), faceToFacePanelTurns(coordinator.state(), FaceToFaceSide.RIGHT).map { it.id })
+        assertEquals(PlaybackRoute.LEFT, faceToFacePanelTurns(coordinator.state(), FaceToFaceSide.RIGHT).single().route)
+    }
+
     @Test
     fun unfinishedTurnIsOneLiveBilingualBubbleAndFinishesInPlace() {
         val turn = FaceToFaceTurn(
@@ -30,6 +53,27 @@ class ConversationDisplayBubbleTest {
         val finished = displayConversationBubbles(listOf(turn.copy(finished = true)))
         assertEquals("9:0", finished.first().key)
         assertEquals(false, finished.first().isLive)
+    }
+
+    @Test
+    fun explicitActiveTurnIdWinsOverListOrderAndKeepsLiveBubbleInItsSpeakerRegion() {
+        val left = FaceToFaceTurn(10, FaceToFaceSide.LEFT, "zh", "en", PlaybackRoute.RIGHT, sourcePartial = "left")
+        val right = FaceToFaceTurn(11, FaceToFaceSide.RIGHT, "en", "zh", PlaybackRoute.LEFT, sourcePartial = "right")
+
+        val bubbles = displayConversationBubbles(listOf(left, right), FaceToFacePhase.LISTENING, activeTurnId = 10)
+
+        assertEquals(listOf(true, false), bubbles.map { it.isLive })
+        assertEquals(FaceToFaceSide.LEFT, bubbles[0].side)
+        assertEquals(FaceToFaceTurnAlignment.START, bubbles[0].alignment)
+    }
+
+    @Test
+    fun finishedTurnNeverRendersAsLiveEvenIfCoordinatorStillReportsItsId() {
+        val turn = FaceToFaceTurn(12, FaceToFaceSide.RIGHT, "en", "zh", PlaybackRoute.LEFT, sourcePartial = "done", finished = true)
+
+        val bubble = displayConversationBubbles(listOf(turn), FaceToFacePhase.LISTENING, activeTurnId = 12).single()
+
+        assertEquals(false, bubble.isLive)
     }
 
     @Test

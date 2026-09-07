@@ -64,6 +64,26 @@ internal fun continuousActions(state: FaceToFaceState): List<FaceToFaceAction> =
         FaceToFacePhase.PROCESSING, FaceToFacePhase.STOPPING, FaceToFacePhase.ERROR -> emptyList()
     }
 
+internal fun continuousLeftAction(phase: FaceToFacePhase): FaceToFaceAction? = when (phase) {
+    FaceToFacePhase.IDLE -> FaceToFaceAction.START_CONTINUOUS
+    FaceToFacePhase.LISTENING -> FaceToFaceAction.PAUSE_CONTINUOUS
+    FaceToFacePhase.PAUSED -> FaceToFaceAction.RESUME_CONTINUOUS
+    else -> null
+}
+
+internal fun runContinuousLeftAction(
+    phase: FaceToFacePhase,
+    requestMicrophone: (MicrophonePermissionAction) -> Unit,
+    pause: () -> Unit,
+) {
+    when (continuousLeftAction(phase)) {
+        FaceToFaceAction.START_CONTINUOUS -> requestMicrophone(MicrophonePermissionAction.ContinuousStart)
+        FaceToFaceAction.RESUME_CONTINUOUS -> requestMicrophone(MicrophonePermissionAction.ContinuousResume)
+        FaceToFaceAction.PAUSE_CONTINUOUS -> pause()
+        else -> Unit
+    }
+}
+
 internal class MicPressGate(
     onPress: () -> Unit,
     onRelease: () -> Unit,
@@ -175,7 +195,7 @@ internal fun EarMicControls(
                 language = state.leftLanguage,
                 otherLanguage = state.rightLanguage,
                 pointerEnabled = if (manual) state.phase == FaceToFacePhase.IDLE else state.phase in setOf(FaceToFacePhase.IDLE, FaceToFacePhase.LISTENING, FaceToFacePhase.PAUSED),
-                actionEnabled = if (manual) state.phase == FaceToFacePhase.IDLE || activeSide == FaceToFaceSide.LEFT else true,
+                actionEnabled = if (manual) state.phase == FaceToFacePhase.IDLE || activeSide == FaceToFaceSide.LEFT else continuousLeftAction(state.phase) != null,
                 active = activeSide == FaceToFaceSide.LEFT,
                 stateLabel = if (manual) "按住说话" else when (state.phase) {
                     FaceToFacePhase.IDLE -> "开始连续收音"
@@ -184,18 +204,17 @@ internal fun EarMicControls(
                 },
                 onPress = {
                     if (manual) requestMicrophone(MicrophonePermissionAction.Manual(FaceToFaceSide.LEFT))
-                    else when (state.phase) {
-                        FaceToFacePhase.IDLE, FaceToFacePhase.PAUSED -> requestMicrophone(MicrophonePermissionAction.Continuous)
-                        FaceToFacePhase.LISTENING -> onPauseAuto
-                        else -> Unit
-                    }
+                    else runContinuousLeftAction(state.phase, requestMicrophone) { clearMicrophoneRequest(); onPauseAuto() }
                 },
                 onRelease = leftRelease,
                 onCancel = leftCancel,
                 onAccessibleClick = if (manual) {
-                    { if (state.phase == FaceToFacePhase.IDLE) requestMicrophone(MicrophonePermissionAction.Manual(FaceToFaceSide.LEFT)) else onManualRelease() }
+                    {
+                        if (state.phase == FaceToFacePhase.IDLE) requestMicrophone(MicrophonePermissionAction.Manual(FaceToFaceSide.LEFT))
+                        else { clearMicrophoneRequest(); onManualRelease() }
+                    }
                 } else {
-                    { if (state.phase == FaceToFacePhase.IDLE || state.phase == FaceToFacePhase.PAUSED) requestMicrophone(MicrophonePermissionAction.Continuous) else onPauseAuto() }
+                    { runContinuousLeftAction(state.phase, requestMicrophone) { clearMicrophoneRequest(); onPauseAuto() } }
                 },
                 onLanguage = { onSetLanguages(it, state.rightLanguage) },
             )
@@ -219,12 +238,22 @@ internal fun EarMicControls(
                     if (manual) onManualCancel() else onCancelRightAuto()
                 },
                 onAccessibleClick = if (manual) {
-                    { if (state.phase == FaceToFacePhase.IDLE) requestMicrophone(MicrophonePermissionAction.Manual(FaceToFaceSide.RIGHT)) else onManualRelease() }
+                    {
+                        if (state.phase == FaceToFacePhase.IDLE) requestMicrophone(MicrophonePermissionAction.Manual(FaceToFaceSide.RIGHT))
+                        else { clearMicrophoneRequest(); onManualRelease() }
+                    }
                 } else null,
                 onLanguage = { onSetLanguages(state.leftLanguage, it) },
             )
         }
-        if (showAutoControls) AutoControls(state, requestMicrophone, onStartAuto, onPauseAuto, onResumeAuto, onStopAuto)
+        if (showAutoControls) AutoControls(
+            state,
+            requestMicrophone,
+            onStartAuto,
+            { clearMicrophoneRequest(); onPauseAuto() },
+            onResumeAuto,
+            onStopAuto,
+        )
     }
 }
 
@@ -336,9 +365,9 @@ private fun AutoControls(
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         actions.forEach { action ->
             when (action) {
-                FaceToFaceAction.START_CONTINUOUS -> ActionButton("开始连续翻译", Icons.Filled.Mic, { requestMicrophone(MicrophonePermissionAction.Continuous) }, true)
+                FaceToFaceAction.START_CONTINUOUS -> ActionButton("开始连续翻译", Icons.Filled.Mic, { requestMicrophone(MicrophonePermissionAction.ContinuousStart) }, true)
                 FaceToFaceAction.PAUSE_CONTINUOUS -> ActionButton("暂停连续翻译", Icons.Filled.Pause, onPause, true)
-                FaceToFaceAction.RESUME_CONTINUOUS -> ActionButton("恢复连续翻译", Icons.Filled.PlayArrow, onResume, true)
+                FaceToFaceAction.RESUME_CONTINUOUS -> ActionButton("恢复连续翻译", Icons.Filled.PlayArrow, { requestMicrophone(MicrophonePermissionAction.ContinuousResume) }, true)
                 FaceToFaceAction.END_CONTINUOUS -> ActionButton("结束连续翻译", Icons.Filled.Stop, onStop, false)
             }
         }
