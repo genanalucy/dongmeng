@@ -245,13 +245,19 @@ class FaceToFaceCoordinator<S> {
     fun cancelAutoTakeover(turnId: Long, session: S): Transition<S> {
         if (current.mode != FaceToFaceMode.AUTO || current.phase != FaceToFacePhase.LISTENING ||
             !current.captureActive || current.activeSide != FaceToFaceSide.RIGHT
-        ) return Transition(accepted = false)
-        val previousId = activeTurnId ?: return Transition(accepted = false)
-        val previousEntry = entries[previousId] ?: return Transition(accepted = false)
-        val previousTurn = current.turns.firstOrNull { it.id == previousId } ?: return Transition(accepted = false)
+        ) return Transition(accepted = false, cancelSessions = listOf(session))
+        // Validate before mutating either the transcript or the playback queue.
+        if (current.turns.any { it.id == turnId }) return Transition(accepted = false, cancelSessions = listOf(session))
+        val previousId = activeTurnId ?: return Transition(accepted = false, cancelSessions = listOf(session))
+        val previousTurn = current.turns.firstOrNull { it.id == previousId }
+            ?: return Transition(accepted = false, cancelSessions = listOf(session))
+        val previousEntry = entries[previousId]
         // A terminal Finished event belongs to playback drain; never cancel that socket here.
-        val preserveFinished = previousEntry.sessionFinished || previousTurn.finished
+        // The entry may already have drained and been removed while activeTurnId/side still
+        // points at RIGHT. The finished turn in the transcript is the durable terminal marker.
+        val preserveFinished = previousEntry?.sessionFinished == true || previousTurn.finished
         if (!preserveFinished) {
+            if (previousEntry == null) return Transition(accepted = false, cancelSessions = listOf(session))
             entries.remove(previousId)
             current = current.copy(turns = current.turns.filterNot { it.id == previousId })
         }
@@ -260,7 +266,7 @@ class FaceToFaceCoordinator<S> {
         current = current.copy(activeSide = FaceToFaceSide.LEFT, captureLevel = 0f)
         return Transition(
             accepted = true,
-            cancelSessions = if (preserveFinished) emptyList() else listOf(previousEntry.session),
+            cancelSessions = if (preserveFinished) emptyList() else listOfNotNull(previousEntry?.session),
             cancelTimer = true,
         )
     }
@@ -325,14 +331,18 @@ class FaceToFaceCoordinator<S> {
             cancelSessions = if (discard) listOfNotNull(entry?.session) else emptyList(),
             stopCapture = true,
             cancelTimer = true,
-            closeCloudSession = discard,
+            closeCloudSession = entries.isEmpty() && !playbackInProgress,
         )
     }
 
     @Synchronized
     fun sendToActive(send: (S) -> Boolean): Boolean {
-        val session = activeTurnId?.let { entries[it]?.session } ?: return false
-        return send(session)
+        if (!current.captureActive) return true
+        val entry = activeTurnId?.let { entries[it] }
+        // Finished can precede the pointer release/cancel. Drop packets until the new turn
+        // is installed instead of treating a normally closed socket as a capture failure.
+        if (entry?.sessionFinished == true || current.turns.any { it.id == activeTurnId && it.finished }) return true
+        return entry?.let { send(it.session) } ?: false
     }
 
     /** True only when a requested automatic stop has reached terminal turn and playback drain. */

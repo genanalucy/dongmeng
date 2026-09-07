@@ -45,7 +45,7 @@ import com.verba.interpretation.ui.TranslationLanguage
 private val conversationCanvas = Color(0xFF07111F)
 
 private fun faceStatusLabel(state: FaceToFaceState): String = when (state.phase) {
-    FaceToFacePhase.IDLE -> "按住对应麦克风开始"
+    FaceToFacePhase.IDLE -> if (state.mode == FaceToFaceMode.AUTO) "点击左侧开始连续收音" else "按住对应麦克风开始"
     FaceToFacePhase.LISTENING -> "${state.activeSide?.let(::earLabel) ?: "麦克风"}正在收音"
     FaceToFacePhase.PAUSED -> "连续翻译已暂停"
     FaceToFacePhase.PROCESSING -> "正在翻译，暂不可操作"
@@ -97,9 +97,9 @@ internal fun FaceToFaceScreen(
             FaceToFaceOverflowMenu(
                 state = state,
                 onSelectMode = viewModel::setMode,
-                onStartAuto = { requestMicrophone(MicrophonePermissionAction.Continuous) },
+                onStartAuto = { requestMicrophone(MicrophonePermissionAction.ContinuousStart) },
                 onPauseAuto = viewModel::pauseAuto,
-                onResumeAuto = viewModel::resumeAuto,
+                onResumeAuto = { requestMicrophone(MicrophonePermissionAction.ContinuousResume) },
                 onStopAuto = viewModel::stopAuto,
             )
         }
@@ -194,7 +194,7 @@ private fun FaceToFacePanels(
                 ConversationTimeline(
                     // Each participant reads only their own side. The coordinator's real
                     // activeTurnId still decides which of those turns is live.
-                    turns = state.turns.filter { it.side == panel.side },
+                    turns = faceToFacePanelTurns(state, panel.side),
                     activeMic = presentation.activeMic,
                     listeningPlaceholder = presentation.timelinePlaceholder,
                     phase = state.phase,

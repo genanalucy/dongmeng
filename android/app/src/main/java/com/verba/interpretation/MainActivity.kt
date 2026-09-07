@@ -739,7 +739,7 @@ private fun FaceToFaceWorkbench(
     faceViewModel: FaceToFaceViewModel = viewModel(),
 ) {
     val state by faceViewModel.state.collectAsStateWithLifecycle()
-    val permissionPolicy = remember { MicrophonePermissionPolicy() }
+    val permissionPolicy = faceViewModel.microphonePermissionPolicy
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner, faceViewModel, permissionPolicy) {
         val observer = LifecycleEventObserver { _, event ->
@@ -756,23 +756,15 @@ private fun FaceToFaceWorkbench(
         }
     }
     val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        when (val result = permissionPolicy.consumeResult(granted)) {
-            null -> Unit
-            else -> when (val action = result.action) {
-                is MicrophonePermissionAction.Manual -> if (result.granted) faceViewModel.manualPress(action.side) else faceViewModel.microphonePermissionDenied()
-                MicrophonePermissionAction.Continuous -> if (result.granted) faceViewModel.startAuto() else faceViewModel.microphonePermissionDenied()
-            }
-        }
+        faceViewModel.microphonePermissionResult(granted)
     }
     val hasPermission = {
         faceViewModel.getApplication<android.app.Application>().checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
     }
     val requestOrRun: ((MicrophonePermissionAction) -> Unit) = { action ->
         if (hasPermission()) {
-            when (action) {
-                is MicrophonePermissionAction.Manual -> faceViewModel.manualPress(action.side)
-                MicrophonePermissionAction.Continuous -> faceViewModel.startAuto()
-            }
+            permissionPolicy.clear()
+            faceViewModel.runMicrophoneAction(action)
         } else if (permissionPolicy.request(action)) {
             permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
         }

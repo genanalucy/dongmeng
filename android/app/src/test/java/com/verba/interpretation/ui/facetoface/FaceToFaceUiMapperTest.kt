@@ -373,7 +373,7 @@ class FaceToFaceUiMapperTest {
     }
 
     @Test
-    fun autoRightPressAndReleaseUseRightLanguageAndClearActiveMic() {
+    fun autoRightListeningUsesRightLanguageAndPauseClearsActiveMic() {
         val listening = FaceToFaceState(
             mode = FaceToFaceMode.AUTO,
             phase = FaceToFacePhase.LISTENING,

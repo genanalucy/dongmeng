@@ -7,6 +7,25 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class MicrophonePermissionPolicyTest {
+    @Test fun startAndResumeRemainDistinctAndConsumeOnce() {
+        for (action in listOf(MicrophonePermissionAction.ContinuousStart, MicrophonePermissionAction.ContinuousResume)) {
+            val policy = MicrophonePermissionPolicy()
+            assertTrue(policy.request(action))
+            assertEquals(MicrophonePermissionPolicy.Result(action, true), policy.consumeResult(true))
+            assertNull(policy.consumeResult(true))
+        }
+    }
+
+    @Test fun clearBlocksReplacementUntilOldDialogResultArrives() {
+        val policy = MicrophonePermissionPolicy()
+        policy.request(MicrophonePermissionAction.ContinuousStart)
+        policy.clear()
+        assertFalse(policy.request(MicrophonePermissionAction.ContinuousResume))
+        assertNull(policy.consumeResult(true))
+        assertTrue(policy.request(MicrophonePermissionAction.ContinuousResume))
+        assertEquals(MicrophonePermissionAction.ContinuousResume, policy.consumeResult(true)?.action)
+    }
+
     @Test
     fun grantedManualRequestPreservesSideAndConsumesExactlyOnce() {
         val policy = MicrophonePermissionPolicy()
@@ -32,7 +51,7 @@ class MicrophonePermissionPolicyTest {
     fun conflictingRequestAndClearCannotResurrectContinuousOrManualAction() {
         val policy = MicrophonePermissionPolicy()
 
-        assertTrue(policy.request(MicrophonePermissionAction.Continuous))
+        assertTrue(policy.request(MicrophonePermissionAction.ContinuousStart))
         assertFalse(policy.request(MicrophonePermissionAction.Manual(FaceToFaceSide.LEFT)))
         policy.clear()
 

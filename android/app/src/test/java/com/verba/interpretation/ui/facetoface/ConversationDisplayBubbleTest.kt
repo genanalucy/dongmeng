@@ -8,6 +8,29 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class ConversationDisplayBubbleTest {
+    @Test fun productionPanelPolicyKeepsOnlyActiveSpeakerLiveAcrossTakeoverAndCancel() {
+        val coordinator = com.verba.interpretation.ui.FaceToFaceCoordinator<String>()
+        coordinator.setMode(com.verba.interpretation.ui.FaceToFaceMode.AUTO)
+        coordinator.startAuto(1, "left")
+        coordinator.updateSubtitle(1, com.verba.interpretation.ui.SubtitleKind.SOURCE_FINAL, "left")
+        coordinator.switchAuto(2, FaceToFaceSide.RIGHT, "right")
+        coordinator.updateSubtitle(2, com.verba.interpretation.ui.SubtitleKind.SOURCE_FINAL, "right")
+        fun liveSides(): List<FaceToFaceSide> {
+            val state = coordinator.state()
+            return FaceToFaceSide.entries.flatMap { side ->
+                displayConversationBubbles(faceToFacePanelTurns(state, side), state.phase, state.activeTurnId)
+            }.filter { it.isLive }.map { it.side }
+        }
+        assertEquals(listOf(FaceToFaceSide.RIGHT), liveSides())
+        coordinator.sessionFinished(2)
+        assertEquals(emptyList<FaceToFaceSide>(), liveSides())
+        coordinator.cancelAutoTakeover(3, "restored")
+        coordinator.updateSubtitle(3, com.verba.interpretation.ui.SubtitleKind.SOURCE_PARTIAL, "restored")
+        assertEquals(listOf(FaceToFaceSide.LEFT), liveSides())
+        assertEquals(listOf(2L), faceToFacePanelTurns(coordinator.state(), FaceToFaceSide.RIGHT).map { it.id })
+        assertEquals(PlaybackRoute.LEFT, faceToFacePanelTurns(coordinator.state(), FaceToFaceSide.RIGHT).single().route)
+    }
+
     @Test
     fun unfinishedTurnIsOneLiveBilingualBubbleAndFinishesInPlace() {
         val turn = FaceToFaceTurn(
