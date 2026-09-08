@@ -71,6 +71,8 @@ class ConversationDisplayBubbleTest {
 
         val finished = displayConversationBubbles(listOf(turn.copy(finished = true)))
         assertEquals("9:0", finished.first().key)
+        assertEquals("hello", finished.first().sourceText)
+        assertEquals("你好", finished.first().translationText)
         assertEquals(false, finished.first().isLive)
     }
 
@@ -143,7 +145,28 @@ class ConversationDisplayBubbleTest {
     }
 
     @Test
-    fun pairsOnlyMatchingFinalEventIndexesRatherThanAggregatedSentenceIndexes() {
+    fun releasedTurnKeepsAllFinalSourceAndTranslationInOneBilingualBubble() {
+        val turn = FaceToFaceTurn(
+            id = 42,
+            side = FaceToFaceSide.LEFT,
+            sourceLanguage = "zh",
+            targetLanguage = "en",
+            route = PlaybackRoute.RIGHT,
+            sourceFinals = listOf("第一段原文。", "第二段原文。"),
+            translationFinals = listOf("First translated segment.", "Second translated segment."),
+            finished = true,
+        )
+
+        val bubbles = displayConversationBubbles(listOf(turn))
+
+        assertEquals(1, bubbles.size)
+        assertEquals("42:0", bubbles.single().key)
+        assertEquals("第一段原文。 第二段原文。", bubbles.single().sourceText)
+        assertEquals("First translated segment. Second translated segment.", bubbles.single().translationText)
+    }
+
+    @Test
+    fun conversationViewAggregatesFinalEventBoundariesIntoOneExchange() {
         val turn = FaceToFaceTurn(
             id = 42,
             side = FaceToFaceSide.LEFT,
@@ -156,8 +179,7 @@ class ConversationDisplayBubbleTest {
 
         assertEquals(
             listOf(
-                ConversationDisplayBubble("42:0", "我叫程卫东。", "Bro, watch your mouth.", FaceToFaceSide.LEFT, "zh", "en", FaceToFaceTurnAlignment.START),
-                ConversationDisplayBubble("42:1", "啊！你打听打听去，这片谁不认识我姓陈的？", "Who are you?", FaceToFaceSide.LEFT, "zh", "en", FaceToFaceTurnAlignment.START),
+                ConversationDisplayBubble("42:0", "我叫程卫东。 啊！你打听打听去，这片谁不认识我姓陈的？", "Bro, watch your mouth. Who are you?", FaceToFaceSide.LEFT, "zh", "en", FaceToFaceTurnAlignment.START),
             ),
             displayConversationBubbles(listOf(turn)),
         )
@@ -178,8 +200,9 @@ class ConversationDisplayBubbleTest {
 
         val bubbles = displayConversationBubbles(listOf(turn))
 
-        assertEquals(listOf("45:0", "45:1", "45:source-partial"), bubbles.map { it.key })
-        assertEquals(3, bubbles.distinctBy { it.key }.size)
+        assertEquals(listOf("45:0"), bubbles.map { it.key })
+        assertEquals("第一句 第二句 第三句", bubbles.single().sourceText)
+        assertEquals("first second", bubbles.single().translationText)
     }
 
     @Test
@@ -197,8 +220,7 @@ class ConversationDisplayBubbleTest {
 
         assertEquals(
             listOf(
-                ConversationDisplayBubble("43:0", "已经翻译。", "Already translated.", FaceToFaceSide.LEFT, "zh", "en", FaceToFaceTurnAlignment.START),
-                ConversationDisplayBubble("43:source-partial", "正在识别", null, FaceToFaceSide.LEFT, "zh", "en", FaceToFaceTurnAlignment.START),
+                ConversationDisplayBubble("43:0", "已经翻译。 正在识别", "Already translated.", FaceToFaceSide.LEFT, "zh", "en", FaceToFaceTurnAlignment.START),
             ),
             displayConversationBubbles(listOf(turn)),
         )
@@ -220,9 +242,9 @@ class ConversationDisplayBubbleTest {
             ),
         )
 
-        assertEquals(longTranslation, bubbles.joinToString("") { it.translationText.orEmpty() })
-        assertEquals(listOf(null, null), bubbles.map { it.sourceText })
-        assertEquals(listOf("44:0:0", "44:0:1"), bubbles.map { it.key })
+        assertEquals(longTranslation, bubbles.single().translationText)
+        assertEquals(null, bubbles.single().sourceText)
+        assertEquals(listOf("44:0"), bubbles.map { it.key })
     }
 
     @Test

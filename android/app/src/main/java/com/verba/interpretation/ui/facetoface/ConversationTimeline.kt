@@ -112,24 +112,21 @@ internal fun displayConversationBubbles(
             ),
         )
     } else {
-        val hasFinalRows = turn.sourceFinals.isNotEmpty() || turn.translationFinals.isNotEmpty()
-        EventBoundaryDisplay.rows(
-            sourceFinals = turn.sourceFinals,
-            sourcePartial = turn.sourcePartial,
-            translationFinals = turn.translationFinals,
-            translationPartial = turn.translationPartial,
-        ).map { row ->
+        // The conversation view presents one exchange as one bilingual article. Server subtitle
+        // event boundaries are not guaranteed to align one-to-one, so splitting finals by list
+        // index after release can incorrectly separate an already paired live bubble.
+        listOf(
             ConversationDisplayBubble(
-                key = conversationBubbleKey(turn.id, row.key, hasFinalRows),
-                sourceText = row.sourceText,
-                translationText = row.translationText,
+                key = conversationBubbleKey(turn.id, "0"),
+                sourceText = turn.sourceText.takeIf(String::isNotBlank),
+                translationText = turn.translatedText.takeIf(String::isNotBlank),
                 side = turn.side,
                 sourceLanguage = turn.sourceLanguage,
                 targetLanguage = turn.targetLanguage,
                 alignment = alignment,
-            )
-        }
-        }
+            ),
+        )
+    }
     }
 }
 
