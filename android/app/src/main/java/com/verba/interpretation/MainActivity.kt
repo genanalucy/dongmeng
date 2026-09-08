@@ -16,7 +16,6 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.collectIsDraggedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -53,31 +52,21 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.outlined.ChevronRight
 import androidx.compose.material.icons.outlined.CloudQueue
-import androidx.compose.material.icons.outlined.DataUsage
-import androidx.compose.material.icons.outlined.Devices
 import androidx.compose.material.icons.outlined.GraphicEq
 import androidx.compose.material.icons.outlined.Groups
-import androidx.compose.material.icons.outlined.Headphones
-import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.Language
 import androidx.compose.material.icons.outlined.PersonOutline
 import androidx.compose.material.icons.outlined.Science
-import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Shield
 import androidx.compose.material.icons.outlined.SwapHoriz
-import androidx.compose.material.icons.outlined.Translate
-import androidx.compose.material.icons.outlined.WorkspacePremium
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.ListItem
-import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -133,8 +122,11 @@ import com.verba.interpretation.protocol.EndpointSettings
 import com.verba.interpretation.ui.AccountSecondaryDestination
 import com.verba.interpretation.ui.AccountUiState
 import com.verba.interpretation.ui.facetoface.FaceToFaceScreen
+import com.verba.interpretation.ui.account.AccountEntitlementScreen
 import com.verba.interpretation.ui.account.AccountIdentitySettingsScreen
+import com.verba.interpretation.ui.account.AccountRedemptionScreen
 import com.verba.interpretation.ui.account.AccountScreen
+import com.verba.interpretation.ui.account.AccountSecurityScreen
 import com.verba.interpretation.ui.account.AccountUsageScreen
 import com.verba.interpretation.ui.account.AuthenticationForm
 import com.verba.interpretation.ui.interpretation.InterpretationScreen
@@ -251,32 +243,70 @@ private fun InterpretationApp(
                 },
             )
             ProductScreen.HISTORY -> HistoryPage(Modifier.padding(padding), historyViewModel, historyTargetSessionId)
-            ProductScreen.PROFILE -> ProfilePage(
+            ProductScreen.PROFILE -> AccountPage(
                 modifier = Modifier.padding(padding),
-                onAccount = { stack = stack.push(ProductScreen.ACCOUNT) },
-                showTestSettings = EndpointSettingsAccessPolicy.adminTestSettingsVisible(navigationMode, BuildConfig.DEBUG),
-                onEndpointSettings = { stack = stack.push(ProductScreen.ENDPOINT_SETTINGS) },
-            )
-            ProductScreen.ACCOUNT -> AccountPage(
-                modifier = Modifier.padding(padding),
-                onBack = { stack = stack.pop() },
-                onUsage = { stack = stack.push(ProductScreen.ACCOUNT_USAGE) },
+                onBack = { },
+                onUsage = { stack = stack.push(ProductScreen.ACCOUNT_ENTITLEMENT) },
                 onHistory = {
                     historyTargetSessionId = null
                     stack = stack.push(ProductNavigationPolicy.accountSecondaryScreen(AccountSecondaryDestination.HISTORY))
                 },
                 onSettings = { stack = stack.push(ProductScreen.ACCOUNT_SETTINGS) },
                 onServiceSettings = { stack = stack.push(ProductNavigationPolicy.accountSecondaryScreen(AccountSecondaryDestination.SERVICE_SETTINGS)) },
+                onSecurity = { stack = stack.push(ProductScreen.ACCOUNT_SECURITY) },
+                onRedeemNavigate = { stack = stack.push(ProductScreen.ACCOUNT_REDEMPTION) },
+                onRetry = { accountViewModel.loadEntitlementDetails() },
                 accountViewModel = accountViewModel,
                 showServiceSettings = EndpointSettingsAccessPolicy.endpointEditingEnabled(BuildConfig.DEBUG),
+                showBack = false,
+            )
+            ProductScreen.ACCOUNT -> AccountPage(
+                modifier = Modifier.padding(padding),
+                onBack = { stack = stack.pop() },
+                onUsage = { stack = stack.push(ProductScreen.ACCOUNT_ENTITLEMENT) },
+                onHistory = {
+                    historyTargetSessionId = null
+                    stack = stack.push(ProductNavigationPolicy.accountSecondaryScreen(AccountSecondaryDestination.HISTORY))
+                },
+                onSettings = { stack = stack.push(ProductScreen.ACCOUNT_SETTINGS) },
+                onServiceSettings = { stack = stack.push(ProductNavigationPolicy.accountSecondaryScreen(AccountSecondaryDestination.SERVICE_SETTINGS)) },
+                onSecurity = { stack = stack.push(ProductScreen.ACCOUNT_SECURITY) },
+                onRedeemNavigate = { stack = stack.push(ProductScreen.ACCOUNT_REDEMPTION) },
+                onRetry = { accountViewModel.loadEntitlementDetails() },
+                accountViewModel = accountViewModel,
+                showServiceSettings = EndpointSettingsAccessPolicy.endpointEditingEnabled(BuildConfig.DEBUG),
+                showBack = true,
+            )
+            ProductScreen.ACCOUNT_ENTITLEMENT -> AccountEntitlementPage(
+                modifier = Modifier.padding(padding),
+                onBack = { stack = stack.pop() },
+                onRedeemNavigate = { stack = stack.push(ProductScreen.ACCOUNT_REDEMPTION) },
+                accountViewModel = accountViewModel,
+            )
+            ProductScreen.ACCOUNT_REDEMPTION -> AccountRedemptionPage(
+                modifier = Modifier.padding(padding),
+                onBack = { stack = stack.pop() },
+                accountViewModel = accountViewModel,
+            )
+            ProductScreen.ACCOUNT_SECURITY -> AccountSecurityPage(
+                modifier = Modifier.padding(padding),
+                onBack = { stack = stack.pop() },
+                accountViewModel = accountViewModel,
             )
             ProductScreen.ACCOUNT_USAGE -> AccountUsagePage(Modifier.padding(padding), { stack = stack.pop() }, accountViewModel)
-            ProductScreen.ACCOUNT_SETTINGS -> AccountSettingsPage(Modifier.padding(padding), { stack = stack.pop() }, accountViewModel)
+            ProductScreen.ACCOUNT_SETTINGS -> AccountSettingsPage(
+                modifier = Modifier.padding(padding),
+                onBack = { stack = stack.pop() },
+                accountViewModel = accountViewModel,
+                onServiceSettings = { stack = stack.push(ProductNavigationPolicy.accountSecondaryScreen(AccountSecondaryDestination.SERVICE_SETTINGS)) },
+            )
             ProductScreen.ADMIN_TEST -> AdminTestPage(
                 modifier = Modifier.padding(padding),
                 accountState = accountState,
                 onPreviewUserExperience = { accountViewModel.setPreviewingUserExperience(true) },
                 onAccount = { stack = stack.push(ProductScreen.ACCOUNT) },
+                showEndpointSettings = EndpointSettingsAccessPolicy.adminTestSettingsVisible(navigationMode, BuildConfig.DEBUG),
+                onEndpointSettings = { stack = stack.push(ProductScreen.ENDPOINT_SETTINGS) },
             )
             ProductScreen.ENDPOINT_SETTINGS -> EndpointSettingsPage(
                 modifier = Modifier.padding(padding),
@@ -717,6 +747,8 @@ private fun AdminTestPage(
     accountState: AccountUiState,
     onPreviewUserExperience: () -> Unit,
     onAccount: () -> Unit,
+    showEndpointSettings: Boolean,
+    onEndpointSettings: () -> Unit,
 ) {
     LazyColumn(
         modifier = modifier.fillMaxSize(),
@@ -751,6 +783,11 @@ private fun AdminTestPage(
         item {
             OutlinedButton(onClick = onAccount, modifier = Modifier.fillMaxWidth()) { Text("账户与权益") }
         }
+        if (showEndpointSettings) {
+            item {
+                OutlinedButton(onClick = onEndpointSettings, modifier = Modifier.fillMaxWidth()) { Text("测试服务地址") }
+            }
+        }
     }
 }
 
@@ -770,7 +807,65 @@ private fun AccountUsagePage(modifier: Modifier, onBack: () -> Unit, accountView
 }
 
 @Composable
-private fun AccountSettingsPage(modifier: Modifier, onBack: () -> Unit, accountViewModel: AccountViewModel) {
+private fun AccountEntitlementPage(
+    modifier: Modifier,
+    onBack: () -> Unit,
+    onRedeemNavigate: () -> Unit,
+    accountViewModel: AccountViewModel,
+) {
+    val state by accountViewModel.state.collectAsStateWithLifecycle()
+    LaunchedEffect(Unit) { accountViewModel.loadEntitlementDetails() }
+    AccountEntitlementScreen(
+        state = state,
+        onBack = onBack,
+        onRedeemNavigate = onRedeemNavigate,
+        onRetry = accountViewModel::loadEntitlementDetails,
+        modifier = modifier,
+    )
+}
+
+@Composable
+private fun AccountRedemptionPage(
+    modifier: Modifier,
+    onBack: () -> Unit,
+    accountViewModel: AccountViewModel,
+) {
+    val state by accountViewModel.state.collectAsStateWithLifecycle()
+    AccountRedemptionScreen(
+        state = state,
+        onBack = onBack,
+        onCodeChange = accountViewModel::updateRedeemCode,
+        onRedeem = accountViewModel::redeem,
+        modifier = modifier,
+    )
+}
+
+@Composable
+private fun AccountSecurityPage(
+    modifier: Modifier,
+    onBack: () -> Unit,
+    accountViewModel: AccountViewModel,
+) {
+    val state by accountViewModel.state.collectAsStateWithLifecycle()
+    val securityState by accountViewModel.securityState.collectAsStateWithLifecycle()
+    LaunchedEffect(Unit) { accountViewModel.loadSecurity() }
+    AccountSecurityScreen(
+        state = securityState,
+        username = state.identityProfile?.username ?: state.overview?.username ?: state.user?.username,
+        onBack = onBack,
+        onRefresh = accountViewModel::loadSecurity,
+        onLogout = accountViewModel::logout,
+        modifier = modifier,
+    )
+}
+
+@Composable
+private fun AccountSettingsPage(
+    modifier: Modifier,
+    onBack: () -> Unit,
+    accountViewModel: AccountViewModel,
+    onServiceSettings: () -> Unit = {},
+) {
     val state by accountViewModel.state.collectAsStateWithLifecycle()
     LaunchedEffect(Unit) { accountViewModel.loadIdentityProfile() }
     val identityProfile = state.identityProfile
@@ -782,6 +877,9 @@ private fun AccountSettingsPage(modifier: Modifier, onBack: () -> Unit, accountV
         onDeleteAccount = accountViewModel::deleteAccount,
         isAdmin = state.isAdmin,
         modifier = modifier,
+        identityProfile = identityProfile,
+        showServiceSettings = EndpointSettingsAccessPolicy.endpointEditingEnabled(BuildConfig.DEBUG),
+        onServiceSettings = onServiceSettings,
     )
 }
 
@@ -794,12 +892,18 @@ private fun AccountPage(
     onHistory: () -> Unit,
     onSettings: () -> Unit,
     onServiceSettings: () -> Unit,
+    onSecurity: () -> Unit,
+    onRedeemNavigate: () -> Unit,
+    onRetry: () -> Unit,
     accountViewModel: AccountViewModel,
+    showBack: Boolean = true,
     showServiceSettings: Boolean = true,
 ) {
     val state by accountViewModel.state.collectAsStateWithLifecycle()
     val latestLoginIdentifier by accountViewModel.latestLoginIdentifier.collectAsStateWithLifecycle()
     if (state.signedIn) {
+        // 兑换不再在首页直接提交：onRedeemNavigate 进入独立兑换页；
+        // 退出登录已移至账户与安全页，这里仅保留原参数兼容。
         AccountScreen(
             state = state,
             onBack = onBack,
@@ -807,11 +911,13 @@ private fun AccountPage(
             onHistory = onHistory,
             onSettings = onSettings,
             onServiceSettings = onServiceSettings,
-            onRedeemCodeChange = accountViewModel::updateRedeemCode,
-            onRedeem = accountViewModel::redeem,
             onLogout = accountViewModel::logout,
             modifier = modifier,
             showServiceSettings = showServiceSettings,
+            onSecurity = onSecurity,
+            onRetry = onRetry,
+            onRedeemNavigate = onRedeemNavigate,
+            showBack = showBack,
         )
         return
     }
@@ -866,145 +972,6 @@ private fun AccountPage(
             }
         }
     }
-}
-
-@Composable
-private fun ProfilePage(
-    modifier: Modifier,
-    onAccount: () -> Unit,
-    showTestSettings: Boolean,
-    onEndpointSettings: () -> Unit,
-) {
-    var notice by remember { mutableStateOf<String?>(null) }
-    LazyColumn(
-        modifier = modifier.fillMaxSize(),
-        contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp),
-    ) {
-        item {
-            Surface(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(26.dp),
-                color = MaterialTheme.colorScheme.primaryContainer,
-            ) {
-                Row(
-                    Modifier.padding(20.dp),
-                    horizontalArrangement = Arrangement.spacedBy(16.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Surface(shape = CircleShape, color = MaterialTheme.colorScheme.primary) {
-                        Icon(Icons.Outlined.PersonOutline, contentDescription = null, modifier = Modifier.padding(15.dp).size(30.dp), tint = MaterialTheme.colorScheme.onPrimary)
-                    }
-                    Column(Modifier.weight(1f)) {
-                        Text("Cloud 账户", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-                        Text("登录后查看试用与权益", color = MaterialTheme.colorScheme.onPrimaryContainer)
-                    }
-                    Text("本机", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
-                }
-            }
-        }
-        item {
-            Text(
-                "账户与服务",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.SemiBold,
-                modifier = Modifier.semantics { heading() },
-            )
-        }
-        item {
-            ProfileEntryGroup {
-                ProfileEntry(
-                    icon = Icons.Outlined.WorkspacePremium,
-                    title = "账户与权益",
-                    supporting = "注册、登录、试用状态与兑换码",
-                    onClick = onAccount,
-                )
-                HorizontalDivider(Modifier.padding(start = 60.dp), color = MaterialTheme.colorScheme.outlineVariant)
-                ProfileEntry(
-                    icon = Icons.Outlined.DataUsage,
-                    title = "用量",
-                    supporting = "登录后查看真实用量",
-                    onClick = { notice = "暂无真实用量数据，不展示模拟数值。" },
-                )
-                HorizontalDivider(Modifier.padding(start = 60.dp), color = MaterialTheme.colorScheme.outlineVariant)
-                ProfileEntry(
-                    icon = Icons.Outlined.Devices,
-                    title = "设备",
-                    supporting = "当前 Android 设备",
-                    onClick = { notice = "设备管理尚未接入。" },
-                )
-            }
-        }
-        item {
-            Text(
-                if (showTestSettings) "测试设置" else "设置",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.SemiBold,
-                modifier = Modifier.semantics { heading() },
-            )
-        }
-        item {
-            ProfileEntryGroup {
-                ProfileEntry(
-                    icon = Icons.Outlined.Settings,
-                    title = "偏好设置",
-                    supporting = "语言、播放与显示",
-                    onClick = { notice = "请在同传工作台选择语言与播放位置。" },
-                )
-                if (showTestSettings) {
-                    HorizontalDivider(Modifier.padding(start = 60.dp), color = MaterialTheme.colorScheme.outlineVariant)
-                    ProfileEntry(
-                        icon = Icons.Outlined.Science,
-                        title = "测试服务地址",
-                        supporting = "Agent HTTP、WebSocket 与 Cloud API",
-                        onClick = onEndpointSettings,
-                    )
-                }
-            }
-        }
-        notice?.let { message ->
-            item {
-                Surface(shape = RoundedCornerShape(14.dp), color = MaterialTheme.colorScheme.surfaceVariant) {
-                    Text(message, style = MaterialTheme.typography.bodySmall, modifier = Modifier.fillMaxWidth().padding(14.dp))
-                }
-            }
-        }
-        item {
-            Text(
-                "账户令牌仅以 Android Keystore 加密后保存在本机。",
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
-            )
-        }
-    }
-}
-
-@Composable
-private fun ProfileEntryGroup(content: @Composable ColumnScope.() -> Unit) {
-    Surface(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(20.dp),
-        color = MaterialTheme.colorScheme.surface,
-        tonalElevation = 1.dp,
-    ) {
-        Column(content = content)
-    }
-}
-
-@Composable
-private fun ProfileEntry(icon: ImageVector, title: String, supporting: String, onClick: () -> Unit) {
-    ListItem(
-        headlineContent = { Text(title, fontWeight = FontWeight.Medium) },
-        supportingContent = { Text(supporting) },
-        leadingContent = { Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
-        trailingContent = { Icon(Icons.Outlined.ChevronRight, contentDescription = null, tint = MaterialTheme.colorScheme.outline) },
-        colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.surface),
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .semantics { contentDescription = "$title。$supporting" },
-    )
 }
 
 @OptIn(ExperimentalMaterial3Api::class)

@@ -192,6 +192,53 @@ class ProductNavigationPolicyTest {
     }
 
     @Test
+    fun accountRedesignSecondaryScreensKeepProfileSelectedWithoutBottomBar() {
+        listOf(
+            ProductScreen.ACCOUNT_ENTITLEMENT,
+            ProductScreen.ACCOUNT_REDEMPTION,
+            ProductScreen.ACCOUNT_SECURITY,
+        ).forEach { screen ->
+            assertEquals(ProductDestination.PROFILE, ProductNavigationPolicy.selectedDestination(screen))
+            val shell = ProductNavigationPolicy.shellFor(ProductNavigationMode.USER, screen)
+            assertFalse(shell.showBottomBar)
+            assertTrue(shell.destinations.isEmpty())
+        }
+    }
+
+    @Test
+    fun profileRedesignSecondaryRoutesReturnToProfileOnBack() {
+        val stack = ProductNavigationStack.initial(ProductNavigationMode.USER)
+            .selectPrimary(ProductDestination.PROFILE)
+
+        listOf(
+            ProductScreen.HISTORY,
+            ProductScreen.ACCOUNT_ENTITLEMENT,
+            ProductScreen.ACCOUNT,
+            ProductScreen.ACCOUNT_SECURITY,
+            ProductScreen.ACCOUNT_SETTINGS,
+        ).forEach { screen ->
+            assertEquals(ProductScreen.PROFILE, stack.push(screen).pop().current)
+        }
+    }
+
+    @Test
+    fun redemptionPushedFromEntitlementOrProfilePopsBackToItsParent() {
+        val fromProfile = ProductNavigationStack.initial(ProductNavigationMode.USER)
+            .selectPrimary(ProductDestination.PROFILE)
+            .push(ProductScreen.ACCOUNT_REDEMPTION)
+
+        assertEquals(ProductScreen.PROFILE, fromProfile.pop().current)
+
+        val fromEntitlement = ProductNavigationStack.initial(ProductNavigationMode.USER)
+            .selectPrimary(ProductDestination.PROFILE)
+            .push(ProductScreen.ACCOUNT_ENTITLEMENT)
+            .push(ProductScreen.ACCOUNT_REDEMPTION)
+
+        assertEquals(ProductScreen.ACCOUNT_ENTITLEMENT, fromEntitlement.pop().current)
+        assertEquals(ProductScreen.PROFILE, fromEntitlement.pop().pop().current)
+    }
+
+    @Test
     fun endpointSettingsKeepsProfileAsSelectedPrimaryDestination() {
         assertEquals(ProductDestination.PROFILE, ProductNavigationPolicy.selectedDestination(ProductScreen.ENDPOINT_SETTINGS))
         assertEquals(ProductDestination.ADMIN_TEST, ProductNavigationPolicy.selectedDestination(ProductScreen.ADMIN_TEST))

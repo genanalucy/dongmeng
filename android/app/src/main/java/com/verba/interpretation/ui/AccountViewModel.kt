@@ -32,6 +32,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.Locale
@@ -99,6 +100,38 @@ private fun RedeemUiState.withOverviewRefreshFailureMessage(): RedeemUiState = w
     else -> this
 }
 
+/** 安全页展示的单条关联设备摘要；设备标识一律缩略，不向界面暴露完整标识。 */
+data class SecurityDeviceSummary(
+    val installIdMasked: String,
+    val lastSeenAt: String,
+    val isCurrentDevice: Boolean,
+)
+
+/**
+ * 安全页状态。与 [AccountUiState] 相互独立：devices 为 null 表示尚未成功加载；
+ * 加载失败或会话过期都会回到 null（message 非空使失败可被识别），不把陈旧列表当作最新。
+ */
+data class AccountSecurityUiState(
+    val loading: Boolean = false,
+    val message: String? = null,
+    val devices: List<SecurityDeviceSummary>? = null,
+)
+
+/** 设备/会话标识缩略策略：仅当中长标识才保留短前缀供人眼区分；短标识整体掩码，不泄露原文。 */
+internal object DeviceIdentityMaskPolicy {
+    fun mask(identifier: String): String {
+        val trimmed = identifier.trim()
+        if (trimmed.isEmpty()) return UnknownLabel
+        // 长度不足两倍前缀时，展示前缀几乎等于泄露全文，直接整体掩码。
+        if (trimmed.length <= PrefixLength * 2) return MaskSuffix
+        return trimmed.take(PrefixLength) + MaskSuffix
+    }
+
+    private const val PrefixLength = 8
+    private const val MaskSuffix = "…"
+    private const val UnknownLabel = "未知"
+}
+
 data class AccountUiState(
     val loading: Boolean = false,
     val user: CloudUser? = null,
@@ -156,6 +189,11 @@ class AccountViewModel(
     /** 最近登录标识：仅用于登录表单预填，退出登录后保留。 */
     val latestLoginIdentifier: StateFlow<String> = mutableLatestLoginIdentifier.asStateFlow()
 
+    private val mutableSecurityState = MutableStateFlow(AccountSecurityUiState())
+
+    /** 安全页独立状态流，不进入共享账户状态机。 */
+    val securityState: StateFlow<AccountSecurityUiState> = mutableSecurityState.asStateFlow()
+
     init { refresh() }
 
     fun refresh() {
@@ -164,6 +202,66 @@ class AccountViewModel(
     }
 
     fun refreshOverview() = runOverviewRequest { api.accountOverview() }
+
+    /**
+     * 权益页加载与重试：同一加载周期内先取概览再取用量明细。
+     * 任一步失败都会清空本次目标字段（overview/usage 回到 null，message 非空），
+     * 界面据此识别失败并重试；不把上一次的旧数据当作最新展示。
+     */
+    fun loadEntitlementDetails() {
+        viewModelScope.launch {
+            mutableState.value = mutableState.value.copy(loading = true, message = null)
+            try {
+                val overview = withContext(ioDispatcher) { api.accountOverview() }
+                mutableState.value = mutableState.value.copy(overview = overview)
+                val usage = withContext(ioDispatcher) { api.usage(UsagePageSize, 0) }
+                mutableState.value = mutableState.value.copy(loading = false, usage = usage)
+            } catch (error: Exception) {
+                // 失败即回到未加载态：清除旧值，避免陈旧数据被当作最新（sessionExpired 由 handleRequestFailure 重置整态）。
+                mutableState.value = mutableState.value.copy(overview = null, usage = null)
+                handleRequestFailure(error)
+            }
+        }
+    }
+
+    /**
+     * 安全页数据：GET /users/me/devices 关联设备列表。
+     * 后端在签发翻译会话时按 install_id 登记或刷新设备记录，因此列表是
+     * 「在本账户下使用过云翻译的设备」，不是完整登录会话列表；后端没有单设备远程下线 API。
+     * 加载失败或会话过期都清空旧列表，不把陈旧数据当作最新。
+     */
+    fun loadSecurity() {
+        viewModelScope.launch {
+            mutableSecurityState.value = mutableSecurityState.value.copy(loading = true, message = null)
+            try {
+                val (currentInstallId, devices) = withContext(ioDispatcher) {
+                    installationIdStore.get() to api.devices()
+                }
+                mutableSecurityState.value = AccountSecurityUiState(
+                    loading = false,
+                    devices = devices.map { device ->
+                        SecurityDeviceSummary(
+                            installIdMasked = DeviceIdentityMaskPolicy.mask(device.installId),
+                            lastSeenAt = device.lastSeenAt,
+                            isCurrentDevice = device.installId == currentInstallId,
+                        )
+                    },
+                )
+            } catch (error: Exception) {
+                if (error is CloudApiException && error.sessionExpired) {
+                    // 会话过期：整体复位，避免上一账号的设备列表残留到下一次登录。
+                    mutableState.value = AccountUiState(message = SessionExpiredMessage)
+                    mutableSecurityState.value = AccountSecurityUiState()
+                    return@launch
+                }
+                // 普通失败同样清空旧列表：失败后不展示陈旧设备当作最新。
+                mutableSecurityState.value = AccountSecurityUiState(
+                    loading = false,
+                    message = "安全信息暂时无法更新，请稍后重试。",
+                )
+            }
+        }
+    }
 
     fun loadIdentityProfile() {
         viewModelScope.launch {
@@ -300,7 +398,13 @@ class AccountViewModel(
                     api.logout()
                 }
                 mutableState.value = AccountUiState(message = "已退出登录。")
+                // 安全退出：清空关联设备列表，避免残留到下一个账户。
+                mutableSecurityState.value = AccountSecurityUiState()
             } catch (error: Exception) {
+                if (error is CloudApiException && error.sessionExpired) {
+                    // 令牌已被服务端拒绝且清除：设备列表同样不得残留。
+                    mutableSecurityState.value = AccountSecurityUiState()
+                }
                 handleRequestFailure(error)
             }
         }
@@ -330,6 +434,8 @@ class AccountViewModel(
                 }
                 mutableLatestLoginIdentifier.value = ""
                 mutableState.value = AccountUiState(message = "账户已删除，本机登录信息已清除。")
+                // 账户已不复存在：关联设备列表同步复位，不残留。
+                mutableSecurityState.value = AccountSecurityUiState()
             } catch (error: Exception) {
                 handleRequestFailure(error)
             }
@@ -376,7 +482,13 @@ class AccountViewModel(
                     entitlement = overview.entitlement ?: mutableState.value.entitlement,
                     overview = overview,
                 )
-            } catch (_: Exception) {
+            } catch (error: Exception) {
+                if (error is CancellationException) throw error
+                if (error is CloudApiException && error.sessionExpired) {
+                    mutableState.value = AccountUiState(message = SessionExpiredMessage)
+                    mutableSecurityState.value = AccountSecurityUiState()
+                    return@launch
+                }
                 mutableState.value = mutableState.value.copy(
                     loading = false,
                     redeem = mutableState.value.redeem.withOverviewRefreshFailureMessage(),
@@ -425,6 +537,7 @@ class AccountViewModel(
         }
         if (error is CloudApiException && error.statusCode == 401 && error.sessionExpired) {
             mutableState.value = AccountUiState(message = SessionExpiredMessage)
+            mutableSecurityState.value = AccountSecurityUiState()
             return
         }
         val code = state.redeem.code
@@ -435,6 +548,7 @@ class AccountViewModel(
     private fun handleRequestFailure(error: Exception) {
         if (error is CloudApiException && error.sessionExpired) {
             mutableState.value = AccountUiState(message = SessionExpiredMessage)
+            mutableSecurityState.value = AccountSecurityUiState()
             return
         }
         mutableState.value = mutableState.value.copy(loading = false, message = SafeRequestError)

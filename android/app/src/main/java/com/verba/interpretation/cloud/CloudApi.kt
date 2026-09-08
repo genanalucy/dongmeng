@@ -85,6 +85,18 @@ data class LoginRequest(val identifier: String, val password: String) {
 data class TranslationSessionGrant(val sessionId: String, val userId: String, val installId: String, val token: String)
 data class TranslationSession(val sessionId: String, val installId: String, val expiresAt: String)
 
+/**
+ * GET /api/v1/users/me/devices 的设备记录。后端在签发翻译会话时按 install_id
+ * 登记或刷新该记录（upsert），因此它是「关联过云翻译的设备」清单，
+ * 不是完整的登录会话列表；last_seen_at 为最近一次签发翻译会话的时间。
+ */
+data class CloudDevice(
+    val id: String,
+    val installId: String,
+    val lastSeenAt: String,
+    val createdAt: String,
+)
+
 class CloudApiException(message: String, val statusCode: Int? = null, val sessionExpired: Boolean = false) : IOException(message)
 
 /** Synchronous transport; invoke from Dispatchers.IO. Token values are deliberately never logged. */
@@ -116,6 +128,15 @@ interface AccountApi {
     fun accountIdentityProfile(): AccountIdentityProfile
     fun usage(limit: Int, offset: Int): UsagePage
     fun updateIdentity(request: IdentityUpdateRequest)
+
+    /** 真实能力：列出账户名下仍登记的云端翻译会话授权；安全页不以此冒充设备登录列表。 */
+    fun translationSessions(): List<TranslationSession>
+
+    /**
+     * 真实能力：GET /users/me/devices 关联设备记录（install_id + 最近活跃时间）。
+     * 默认实现显式失败，避免未接入的实现被当作「无关联设备」展示；CloudApi 提供真实实现。
+     */
+    fun devices(): List<CloudDevice> = throw CloudApiException("当前账户服务未接入设备列表。")
     fun storeTokens(tokens: AuthTokens) = Unit
 }
 
@@ -318,11 +339,26 @@ class CloudApi private constructor(
         return TranslationSessionGrant(json.requiredString("session_id"), json.requiredString("user_id"), json.requiredString("install_id"), json.requiredString("token"))
     }
 
-    fun translationSessions(): List<TranslationSession> {
+    override fun translationSessions(): List<TranslationSession> {
         val sessions = authorized("translation-sessions").optJSONArray("translation_sessions") ?: return emptyList()
         return List(sessions.length()) { index ->
             val session = sessions.getJSONObject(index)
             TranslationSession(session.requiredString("id"), session.requiredString("install_id"), session.requiredString("expires_at"))
+        }
+    }
+
+    /** GET /users/me/devices：严格解析设备记录契约，字段缺失即视为服务响应无效。 */
+    override fun devices(): List<CloudDevice> {
+        val values = authorized("users/me/devices").optJSONArray("devices")
+            ?: throw CloudApiException("服务响应缺少 devices。")
+        return List(values.length()) { index ->
+            val device = values.getJSONObject(index)
+            CloudDevice(
+                id = device.requiredString("id"),
+                installId = device.requiredString("install_id"),
+                lastSeenAt = device.requiredString("last_seen_at"),
+                createdAt = device.requiredString("created_at"),
+            )
         }
     }
 

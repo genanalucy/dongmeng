@@ -1,11 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
 <resources xmlns:tools="http://schemas.android.com/tools">
-    <!-- Compose owns the dark translation canvas; system bars continue the same surface. -->
+    <!-- Light system: the status bar matches BrandLightColors.background with
+         dark status icons (windowLightStatusBar is API 23+, in range at minSdk
+         26). The navigation bar falls back to the translation-shell background
+         #07111F: windowLightNavigationBar exists only from API 27 (the platform
+         ignores the unknown item on API 26) and API 26 always draws white nav
+         icons, which would be unreadable on the light bar that values-v27
+         restores from API 27. windowLightNavigationBar=false pairs with the
+         dark fallback bar and keeps tools:targetApi for that same floor.
+         Styles never merge items across resource qualifiers, so every values
+         variant must repeat the full item set. -->
     <style name="Theme.Interpretation" parent="android:style/Theme.Material.NoActionBar">
         <item name="android:fontFamily">sans</item>
         <item name="android:windowActionModeOverlay">true</item>
-        <item name="android:statusBarColor">#07111F</item>
+        <item name="android:statusBarColor">#F5F7FA</item>
         <item name="android:navigationBarColor">#07111F</item>
-        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightStatusBar">true</item>
         <item name="android:windowLightNavigationBar" tools:targetApi="27">false</item>
     </style>
 </resources>

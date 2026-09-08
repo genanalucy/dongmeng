@@ -20,6 +20,7 @@ import com.verba.interpretation.cloud.SlideCaptchaTile
 import com.verba.interpretation.cloud.TokenStore
 import com.verba.interpretation.cloud.UsagePage
 import com.verba.interpretation.cloud.UsageSummary
+import com.verba.interpretation.cloud.TranslationSession
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.StandardTestDispatcher
@@ -110,5 +111,6 @@ private class RecordingAccountApi(private val registerError: Exception? = null) 
     override fun accountIdentityProfile() = AccountIdentityProfile("alice_01", "alice@example.test", null)
     override fun usage(limit: Int, offset: Int) = UsagePage(emptyList(), 0)
     override fun updateIdentity(request: IdentityUpdateRequest) = Unit
+    override fun translationSessions(): List<TranslationSession> = emptyList()
     override fun storeTokens(tokens: AuthTokens) { calls += "storeTokens" }
 }

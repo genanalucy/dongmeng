@@ -206,11 +206,11 @@ fun InterpretationScreen(
                 }
                 model.errorMessage?.let { error ->
                     item {
-                        Card(colors = CardDefaults.cardColors(containerColor = VerbaColors.ErrorSurface)) {
+                        Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)) {
                             Text(
                                 text = error,
                                 modifier = Modifier.padding(16.dp),
-                                color = VerbaColors.Danger,
+                                color = MaterialTheme.colorScheme.onErrorContainer,
                             )
                         }
                     }
@@ -268,11 +268,11 @@ private fun CompactHeader(
         Row(Modifier.height(TranslationVisualTokens.TopBarHeight), verticalAlignment = Alignment.CenterVertically) {
             Box(Modifier.size(48.dp), contentAlignment = Alignment.Center) {
                 IconButton(onClick = onExit, modifier = Modifier.semantics { contentDescription = "退出实时同传" }) {
-                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null, tint = VerbaColors.Ink)
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null, tint = MaterialTheme.colorScheme.onBackground)
                 }
             }
             Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
-                Text("实时同传", fontSize = 19.sp, lineHeight = 26.sp, fontWeight = FontWeight.SemiBold, color = VerbaColors.Ink)
+                Text("实时同传", fontSize = 19.sp, lineHeight = 26.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onBackground)
             }
             Box(Modifier.size(48.dp), contentAlignment = Alignment.Center) {
                 if (sessionActive && phase in setOf(SessionPhase.RUNNING, SessionPhase.PAUSED)) LiveMarker(microphoneRunning)
@@ -283,9 +283,9 @@ private fun CompactHeader(
             horizontalArrangement = Arrangement.Center,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text(languages.firstOrNull().orEmpty(), fontSize = 13.sp, lineHeight = 18.sp, color = VerbaColors.Muted)
-            Text(" → ", fontSize = 13.sp, lineHeight = 18.sp, color = VerbaColors.Muted)
-            Text(languages.getOrNull(1).orEmpty(), fontSize = 13.sp, lineHeight = 18.sp, color = VerbaColors.Translation)
+            Text(languages.firstOrNull().orEmpty(), fontSize = 13.sp, lineHeight = 18.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(" → ", fontSize = 13.sp, lineHeight = 18.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(languages.getOrNull(1).orEmpty(), fontSize = 13.sp, lineHeight = 18.sp, color = MaterialTheme.colorScheme.primary)
         }
     }
 }
@@ -308,13 +308,13 @@ private fun LanguageChip(text: String, modifier: Modifier = Modifier) {
     Surface(
         modifier = modifier,
         shape = RoundedCornerShape(18.dp),
-        color = VerbaColors.Canvas,
+        color = MaterialTheme.colorScheme.background,
     ) {
         Text(
             text = text,
             modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
             style = MaterialTheme.typography.labelSmall,
-            color = VerbaColors.Muted,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
@@ -326,7 +326,7 @@ private fun InterpretationEmptyState(phase: SessionPhase, statusLabel: String) {
     Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(20.dp),
-        color = VerbaColors.Canvas,
+        color = MaterialTheme.colorScheme.background,
     ) {
         Column(
             modifier = Modifier.fillMaxWidth().padding(24.dp),
@@ -351,15 +351,15 @@ private fun InterpretationBubble(bubble: InterpretationDisplayBubble) {
             ).joinToString(" ")
         },
         shape = RoundedCornerShape(22.dp),
-        color = VerbaColors.History,
-        border = BorderStroke(1.dp, VerbaColors.ShellStroke),
+        color = MaterialTheme.colorScheme.surfaceContainer,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
     ) {
         Column(modifier = Modifier.padding(horizontal = 15.dp, vertical = 16.dp)) {
             if (bubble.sourceText != null) {
                 Text(
                     text = bubble.sourceText,
                     style = MaterialTheme.typography.bodyLarge.copy(fontSize = 19.sp, lineHeight = 26.sp, fontWeight = FontWeight.Medium),
-                    color = VerbaColors.Ink,
+                    color = MaterialTheme.colorScheme.onSurface,
                 )
             } else {
                 Text(
@@ -370,17 +370,17 @@ private fun InterpretationBubble(bubble: InterpretationDisplayBubble) {
                         fontWeight = FontWeight.Medium,
                     ),
                     minLines = 1,
-                    color = VerbaColors.Ink,
+                    color = MaterialTheme.colorScheme.onSurface,
                 )
             }
             Spacer(Modifier.height(12.dp))
-            Spacer(Modifier.fillMaxWidth().height(1.dp).background(VerbaColors.Divider))
+            Spacer(Modifier.fillMaxWidth().height(1.dp).background(MaterialTheme.colorScheme.outlineVariant))
             Spacer(Modifier.height(12.dp))
             bubble.translationText?.let { translation ->
                 Text(
                     text = translation,
                     style = MaterialTheme.typography.titleLarge.copy(fontSize = 22.sp, lineHeight = 29.sp, fontWeight = FontWeight.Medium),
-                    color = VerbaColors.Translation,
+                    color = MaterialTheme.colorScheme.primary,
                     modifier = Modifier.heightIn(min = TranslationVisualTokens.TranslationMinHeight),
                 )
             } ?: Spacer(Modifier.height(TranslationVisualTokens.TranslationMinHeight))
@@ -400,7 +400,8 @@ private fun PinnedControls(
     val finishAction = actions.firstOrNull { it == InterpretationAction.FINISH }
     val visiblePrimary = primaryAction?.takeIf { it in actions }
     Surface(
-        modifier = Modifier.fillMaxWidth().height(76.dp),        color = VerbaColors.Canvas,
+        modifier = Modifier.fillMaxWidth().height(76.dp),
+        color = MaterialTheme.colorScheme.background,
         tonalElevation = 0.dp,
     ) {
         Row(
@@ -410,7 +411,7 @@ private fun PinnedControls(
         ) {
             if (visiblePrimary != null) ActionButton(visiblePrimary, onClick = { onAction(visiblePrimary) })
             if (visiblePrimary == null && statusLabel.isNotBlank()) {
-                Text(statusLabel, color = VerbaColors.Muted, fontSize = 13.sp, lineHeight = 18.sp)
+                Text(statusLabel, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp, lineHeight = 18.sp)
             }
             if (finishAction != null) {
                 if (visiblePrimary != null) Spacer(Modifier.width(12.dp))
@@ -423,8 +424,8 @@ private fun PinnedControls(
                             contentDescription = if (phase == SessionPhase.STARTING) "取消连接" else "结束同传"
                         },
                     colors = ButtonDefaults.outlinedButtonColors(
-                        containerColor = VerbaColors.TopControl,
-                        contentColor = VerbaColors.Ink,
+                        containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                        contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
                     ),
                     contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
                 ) {
@@ -494,6 +495,9 @@ private fun ActionButton(action: InterpretationAction, onClick: () -> Unit) {
             }
         },
         shape = RoundedCornerShape(24.dp),
+        // LeftMic/Canvas is the left-ear identity accent pair (see VerbaColors: tokens are
+        // intentionally theme-stable). There is no colorScheme role for it, and the dark
+        // canvas ink keeps >= 7:1 contrast on the accent in both themes.
         colors = ButtonDefaults.buttonColors(containerColor = VerbaColors.LeftMic, contentColor = VerbaColors.Canvas),
         contentPadding = ButtonDefaults.ContentPadding,
     ) {

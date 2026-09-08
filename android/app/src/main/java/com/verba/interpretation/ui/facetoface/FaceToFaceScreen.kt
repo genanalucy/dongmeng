@@ -15,6 +15,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -42,7 +43,6 @@ import com.verba.interpretation.ui.FaceToFaceViewModel
 import com.verba.interpretation.ui.MicrophonePermissionAction
 import com.verba.interpretation.ui.design.ConversationTimelineVisualSpec
 import com.verba.interpretation.ui.design.TranslationVisualTokens
-import com.verba.interpretation.ui.design.VerbaColors
 
 private fun recoveryLabel(presentation: FaceToFacePresentation): String? = presentation.recoveryMessage
 
@@ -55,7 +55,7 @@ internal fun FaceToFaceScreen(
     modifier: Modifier = Modifier,
 ) {
     val presentation = faceToFacePresentation(state)
-    Column(modifier.fillMaxSize().background(VerbaColors.Canvas)) {
+    Column(modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
         TranslationTopBar(
             title = if (state.view == FaceToFaceView.FACE_TO_FACE) "面对面" else "对话",
             state = state,
@@ -72,11 +72,11 @@ internal fun FaceToFaceScreen(
 
         recoveryLabel(presentation)?.let { message ->
             Surface(
-                color = VerbaColors.ErrorSurface,
+                color = MaterialTheme.colorScheme.errorContainer,
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp),
             ) {
                 Row(Modifier.padding(horizontal = 14.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text(message, color = VerbaColors.Danger, modifier = Modifier.weight(1f))
+                    Text(message, color = MaterialTheme.colorScheme.onErrorContainer, modifier = Modifier.weight(1f))
                     Button(
                         onClick = { clearMicrophoneRequest(); viewModel.cancel() },
                         modifier = Modifier.semantics { contentDescription = FACE_TO_FACE_RECOVERY_ACTION_LABEL },
@@ -139,11 +139,11 @@ private fun TranslationTopBar(
                     contentDescription = if (state.view == FaceToFaceView.CONVERSATION) "切换到面对面布局" else "切换到对话布局"
                 },
             shape = androidx.compose.foundation.shape.RoundedCornerShape(22.dp),
-            color = VerbaColors.TopControl,
-            border = androidx.compose.foundation.BorderStroke(1.dp, VerbaColors.ShellStroke),
-        ) { Box(contentAlignment = Alignment.Center) { Text("视图", color = VerbaColors.Ink, fontSize = 16.sp) } }
+            color = MaterialTheme.colorScheme.secondaryContainer,
+            border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+        ) { Box(contentAlignment = Alignment.Center) { Text("视图", color = MaterialTheme.colorScheme.onSecondaryContainer, fontSize = 16.sp) } }
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Text(title, color = VerbaColors.Ink, fontSize = 19.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.semantics { heading() }, textAlign = TextAlign.Center)
+            Text(title, color = MaterialTheme.colorScheme.onBackground, fontSize = 19.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.semantics { heading() }, textAlign = TextAlign.Center)
         }
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.CenterEnd) {
             FaceToFaceOverflowMenu(
@@ -160,12 +160,14 @@ private fun TranslationTopBar(
 
 @Composable
 private fun HorizontalMoreIcon() {
+    // Canvas draw lambdas are not composable, so resolve the dot color first.
+    val dotColor = MaterialTheme.colorScheme.onSecondaryContainer
     Canvas(Modifier.size(22.dp)) {
         val radius = 2.dp.toPx()
         val y = size.height / 2f
-        drawCircle(VerbaColors.Ink, radius, androidx.compose.ui.geometry.Offset(size.width * 0.2f, y))
-        drawCircle(VerbaColors.Ink, radius, androidx.compose.ui.geometry.Offset(size.width * 0.5f, y))
-        drawCircle(VerbaColors.Ink, radius, androidx.compose.ui.geometry.Offset(size.width * 0.8f, y))
+        drawCircle(dotColor, radius, androidx.compose.ui.geometry.Offset(size.width * 0.2f, y))
+        drawCircle(dotColor, radius, androidx.compose.ui.geometry.Offset(size.width * 0.5f, y))
+        drawCircle(dotColor, radius, androidx.compose.ui.geometry.Offset(size.width * 0.8f, y))
     }
 }
 
@@ -228,7 +230,7 @@ private fun FaceToFacePanels(
             viewModel = viewModel,
             modifier = Modifier.weight(1f),
         )
-        Box(Modifier.fillMaxWidth().padding(horizontal = 49.dp).height(1.dp).background(VerbaColors.ShellStroke))
+        Box(Modifier.fillMaxWidth().padding(horizontal = 49.dp).height(1.dp).background(MaterialTheme.colorScheme.outline))
         FaceReadingHalf(
             state = state,
             presentation = presentation,

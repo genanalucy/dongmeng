@@ -17,6 +17,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.HeadsetMic
 import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -32,7 +33,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.verba.interpretation.ui.ProductDestination
 import com.verba.interpretation.ui.design.FaceToFaceConversationIcon
-import com.verba.interpretation.ui.design.VerbaColors
 import com.verba.interpretation.ui.design.TranslationVisualTokens
 
 @Composable
@@ -41,6 +41,15 @@ fun ProductBottomBar(
     selected: ProductDestination,
     onSelect: (ProductDestination) -> Unit,
 ) {
+    // Semantic color mapping; in dark mode these resolve to the exact legacy
+    // VerbaColors values (Navigation -> surfaceContainerLowest, Raised ->
+    // primaryContainer, Translation -> primary, Muted -> onSurfaceVariant,
+    // ShellStroke -> outline), while light mode follows BrandLightColors.
+    val barContainer = MaterialTheme.colorScheme.surfaceContainerLowest
+    val selectedContainer = MaterialTheme.colorScheme.primaryContainer
+    val selectedContent = MaterialTheme.colorScheme.primary
+    val unselectedContent = MaterialTheme.colorScheme.onSurfaceVariant
+    val shellStroke = MaterialTheme.colorScheme.outline
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -52,8 +61,8 @@ fun ProductBottomBar(
                 bottom = TranslationVisualTokens.NavigationBottomMargin,
             )
             .height(TranslationVisualTokens.NavigationHeight)
-            .background(VerbaColors.Navigation, RoundedCornerShape(30.dp))
-            .border(1.dp, VerbaColors.ShellStroke, RoundedCornerShape(30.dp))
+            .background(barContainer, RoundedCornerShape(30.dp))
+            .border(1.dp, shellStroke, RoundedCornerShape(30.dp))
             .padding(4.dp)
             .semantics { selectableGroup() },
         horizontalArrangement = Arrangement.spacedBy(3.dp),
@@ -66,7 +75,7 @@ fun ProductBottomBar(
                     .weight(1f)
                     .height(50.dp)
                     .background(
-                        if (isSelected) VerbaColors.Raised else VerbaColors.Navigation,
+                        if (isSelected) selectedContainer else barContainer,
                         RoundedCornerShape(25.dp),
                     )
                     .semantics {
@@ -88,11 +97,11 @@ fun ProductBottomBar(
                         imageVector = icon.image,
                         contentDescription = null,
                         modifier = Modifier.size(22.dp),
-                        tint = if (isSelected) VerbaColors.Translation else VerbaColors.Muted,
+                        tint = if (isSelected) selectedContent else unselectedContent,
                     )
                     Text(
                         destination.visualLabel(),
-                        color = if (isSelected) VerbaColors.Translation else VerbaColors.Muted,
+                        color = if (isSelected) selectedContent else unselectedContent,
                         fontSize = 10.sp,
                         lineHeight = 14.sp,
                         fontWeight = FontWeight.Medium,

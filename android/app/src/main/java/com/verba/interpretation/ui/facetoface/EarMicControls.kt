@@ -34,7 +34,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.semantics.Role
@@ -299,7 +298,7 @@ private fun LanguagePairRow(
 ) {
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
         LanguageEntry(FaceToFaceSide.LEFT, state.leftLanguage, state.rightLanguage, enabled) { onSetLanguages(it, state.rightLanguage) }
-        Text("↔", color = Color(0xFF66778A), style = MaterialTheme.typography.labelSmall)
+        Text("↔", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelSmall)
         LanguageEntry(FaceToFaceSide.RIGHT, state.rightLanguage, state.leftLanguage, enabled) { onSetLanguages(state.leftLanguage, it) }
     }
 }
@@ -328,12 +327,12 @@ private fun LanguageEntry(side: FaceToFaceSide, language: String, otherLanguage:
         ) {
             Text(
                 TranslationLanguage.displayName(language),
-                color = VerbaColors.Muted,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
                 fontSize = 13.sp,
                 lineHeight = 18.sp,
                 fontWeight = FontWeight.Medium,
             )
-            Icon(Icons.Filled.KeyboardArrowDown, contentDescription = null, tint = VerbaColors.Muted, modifier = Modifier.size(16.dp))
+            Icon(Icons.Filled.KeyboardArrowDown, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(16.dp))
         }
     }
     androidx.compose.material3.DropdownMenu(expanded = expanded && enabled, onDismissRequest = { expanded = false }) {
@@ -370,6 +369,8 @@ internal fun EarMicButton(
     val gate = remember(side) { MicPressGate(currentOnPress, currentOnRelease, currentOnCancel) }
     gate.updateCallbacks(currentOnPress, currentOnRelease, currentOnCancel)
     val color = if (side == FaceToFaceSide.LEFT) VerbaColors.LeftMic else VerbaColors.RightMic
+    // LeftMic/RightMic are the ear-identity accents (theme-stable per VerbaColors docs);
+    // the dark canvas ink painted on them keeps >= 7:1 contrast in both themes.
     val target = targetEarLabel(side)
     val motionEnabled = android.animation.ValueAnimator.areAnimatorsEnabled()
     val transition = rememberInfiniteTransition(label = "${side.name.lowercase()}MicBreathing")

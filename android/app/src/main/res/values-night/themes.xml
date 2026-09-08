@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <!-- Dark system: keeps the translation-shell background (#07111F) under the
+         system bars with light icons. windowLightNavigationBar carries
+         tools:targetApi because this folder also resolves on API 26, where the
+         platform ignores the unknown item. Styles never merge items across
+         resource qualifiers, so every values variant must repeat the full item
+         set. -->
+    <style name="Theme.Interpretation" parent="android:style/Theme.Material.NoActionBar">
+        <item name="android:fontFamily">sans</item>
+        <item name="android:windowActionModeOverlay">true</item>
+        <item name="android:statusBarColor">#07111F</item>
+        <item name="android:navigationBarColor">#07111F</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar" tools:targetApi="27">false</item>
+    </style>
+</resources>

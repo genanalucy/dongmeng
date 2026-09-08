@@ -14,6 +14,7 @@ import com.verba.interpretation.cloud.InstallationIdStore
 import com.verba.interpretation.cloud.SlideCaptchaChallenge
 import com.verba.interpretation.cloud.SlideCaptchaImage
 import com.verba.interpretation.cloud.SlideCaptchaTile
+import com.verba.interpretation.cloud.TranslationSession
 import com.verba.interpretation.cloud.UsagePage
 import com.verba.interpretation.cloud.UsageSummary
 import com.verba.interpretation.ui.account.AccountDeletionPolicy
@@ -83,6 +84,20 @@ class AccountViewModelAccountCenterTest {
         )
     }
 
+    @Test fun redeemOverviewSessionExpirySignsOutInsteadOfLeavingAPseudoSession() {
+        val api = AccountCenterApi().apply {
+            overviewFailure = CloudApiException("expired", 401, sessionExpired = true)
+        }
+        val viewModel = AccountViewModel(Application(), api, dispatcher)
+        viewModel.updateRedeemCode("AAAAAA-BBBBBB-CCCCCC-DDDDDD")
+
+        viewModel.redeem()
+        dispatcher.scheduler.advanceUntilIdle()
+
+        assertEquals(null, viewModel.state.value.user)
+        assertEquals("登录已过期，请重新登录。", viewModel.state.value.message)
+    }
+
     @Test fun redeemRejectsInvalidFormatWithoutRequest() {
         val api = AccountCenterApi()
         val viewModel = AccountViewModel(Application(), api, dispatcher)
@@ -110,6 +125,53 @@ class AccountViewModelAccountCenterTest {
         dispatcher.scheduler.advanceUntilIdle()
 
         assertEquals(expectedMessage, (viewModel.state.value.redeem as RedeemUiState.Error).message)
+    }
+
+    @Test fun entitlementDetailsFailureStaysUnloadedAndIdentifiableForRetry() {
+        val api = AccountCenterApi().apply { overviewFailure = java.io.IOException("offline") }
+        val viewModel = AccountViewModel(Application(), api, dispatcher)
+
+        viewModel.loadEntitlementDetails()
+        dispatcher.scheduler.advanceUntilIdle()
+
+        // 失败时保持未加载（null）而非零值伪装，message 非空使界面可识别并展示重试。
+        assertEquals(null, viewModel.state.value.overview)
+        assertEquals(null, viewModel.state.value.usage)
+        assertTrue(viewModel.state.value.message != null)
+        assertFalse(viewModel.state.value.loading)
+    }
+
+    @Test fun entitlementDetailsSuccessCarriesRealEmptyUsageNotFallbackZeros() {
+        val api = AccountCenterApi()
+        val viewModel = AccountViewModel(Application(), api, dispatcher)
+
+        viewModel.loadEntitlementDetails()
+        dispatcher.scheduler.advanceUntilIdle()
+
+        // 真实空：overview 与 usage 均已加载（非 null），数值来自服务端。
+        assertEquals("alice_01", viewModel.state.value.overview?.username)
+        assertEquals(0, viewModel.state.value.usage?.total)
+        assertEquals(null, viewModel.state.value.message)
+        assertFalse(viewModel.state.value.loading)
+    }
+
+    @Test fun entitlementDetailsRetryFailureClearsStaleOverviewInsteadOfShowingIt() {
+        val api = AccountCenterApi()
+        val viewModel = AccountViewModel(Application(), api, dispatcher)
+        viewModel.loadEntitlementDetails()
+        dispatcher.scheduler.advanceUntilIdle()
+        assertEquals("alice_01", viewModel.state.value.overview?.username)
+        assertEquals(0, viewModel.state.value.usage?.total)
+
+        api.overviewFailure = java.io.IOException("offline")
+        viewModel.loadEntitlementDetails()
+        dispatcher.scheduler.advanceUntilIdle()
+
+        // 重试失败：旧概览被清空，不把陈旧数据当作最新；失败可被识别并再次重试。
+        assertEquals(null, viewModel.state.value.overview)
+        assertEquals(null, viewModel.state.value.usage)
+        assertTrue(viewModel.state.value.message != null)
+        assertFalse(viewModel.state.value.loading)
     }
 
     @Test fun selfDeletionRequiresExactDisplayedUsernameAndClearsLocalState() {
@@ -159,4 +221,5 @@ private class AccountCenterApi : AccountApi {
     }
     override fun usage(limit: Int, offset: Int) = UsagePage(emptyList(), 0)
     override fun updateIdentity(request: IdentityUpdateRequest) = Unit
+    override fun translationSessions(): List<TranslationSession> = emptyList()
 }

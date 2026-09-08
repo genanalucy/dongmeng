@@ -55,7 +55,6 @@ import com.verba.interpretation.ui.FaceToFaceTurn
 import com.verba.interpretation.ui.TranslationLanguage
 import com.verba.interpretation.ui.design.ConversationTimelineVisualSpec
 import com.verba.interpretation.ui.design.TranslationVisualTokens
-import com.verba.interpretation.ui.design.VerbaColors
 import com.verba.interpretation.ui.display.EventBoundaryDisplay
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
@@ -244,7 +243,7 @@ internal fun ConversationTimeline(
                 item(key = "conversation-error") {
                     Text(
                         "当前会话已停止，请从下方重新开始。",
-                        color = VerbaColors.Danger,
+                        color = MaterialTheme.colorScheme.error,
                         modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 18.dp),
                     )
                 }
@@ -271,6 +270,12 @@ private fun ConversationBubble(
     visualSpec: ConversationTimelineVisualSpec,
 ) {
     val isRight = bubble.alignment == FaceToFaceTurnAlignment.END
+    val isLive = bubble.isLive
+    // Static bubbles read MaterialTheme.colorScheme (BrandDarkColors keeps the exact legacy
+    // pixels in dark mode); live bubbles keep the theme-stable ear-identity colors below.
+    val colorScheme = MaterialTheme.colorScheme
+    val sourceColor = if (isLive) ConversationColors.liveInk else colorScheme.onSurface
+    val translationColor = if (isLive) ConversationColors.liveTranslation else colorScheme.primary
     val sourceLanguage = TranslationLanguage.displayName(bubble.sourceLanguage)
     val targetLanguage = TranslationLanguage.displayName(bubble.targetLanguage)
     val targetEar = targetEarLabel(bubble.side)
@@ -304,14 +309,14 @@ private fun ConversationBubble(
                 bottomStart = if (isRight) TranslationVisualTokens.BubbleRadius else TranslationVisualTokens.BubbleTailRadius,
                 bottomEnd = if (isRight) TranslationVisualTokens.BubbleTailRadius else TranslationVisualTokens.BubbleRadius,
             ),
-            color = if (bubble.isLive) {
+            color = if (isLive) {
                 if (isRight) ConversationColors.rightLive else ConversationColors.leftLive
-            } else ConversationColors.history,
+            } else colorScheme.surfaceContainer,
             border = BorderStroke(
                 1.dp,
-                if (bubble.isLive) {
+                if (isLive) {
                     if (isRight) ConversationColors.rightAccent else ConversationColors.leftAccent
-                } else ConversationColors.historyBorder,
+                } else colorScheme.outline,
             ),
         ) {
             Column(Modifier.padding(horizontal = visualSpec.bubbleHorizontalPadding, vertical = visualSpec.bubbleVerticalPadding)) {
@@ -332,18 +337,18 @@ private fun ConversationBubble(
                             lineHeight = visualSpec.sourceLineHeight,
                             fontWeight = FontWeight.Medium,
                         ),
-                        color = ConversationColors.ink,
+                        color = sourceColor,
                         cursor = bubble.isLive && bubble.livePhase == FaceToFacePhase.LISTENING,
                     )
                 } else {
                     EmptyLiveLine(
                         height = sourceLineHeight,
-                        color = ConversationColors.ink,
+                        color = sourceColor,
                         cursor = bubble.isLive && bubble.livePhase == FaceToFacePhase.LISTENING,
                     )
                 }
                 Spacer(Modifier.height(12.dp))
-                Spacer(Modifier.fillMaxWidth().height(1.dp).background(ConversationColors.divider))
+                Spacer(Modifier.fillMaxWidth().height(1.dp).background(if (isLive) ConversationColors.liveDivider else colorScheme.outlineVariant))
                 Spacer(Modifier.height(12.dp))
                 bubble.translationText?.let { translation ->
                     LiveText(
@@ -353,13 +358,13 @@ private fun ConversationBubble(
                             lineHeight = visualSpec.translationLineHeight,
                             fontWeight = FontWeight.Medium,
                         ),
-                        color = ConversationColors.translation,
+                        color = translationColor,
                         cursor = bubble.isLive && bubble.livePhase == FaceToFacePhase.PROCESSING,
                         modifier = Modifier.heightIn(min = 42.dp),
                     )
                 } ?: EmptyLiveLine(
                     height = 42.dp,
-                    color = ConversationColors.translation,
+                    color = translationColor,
                     cursor = bubble.isLive && bubble.livePhase == FaceToFacePhase.PROCESSING,
                 )
             }
@@ -423,15 +428,18 @@ private fun EmptyLiveLine(height: androidx.compose.ui.unit.Dp, color: Color, cur
     })
 }
 
+/**
+ * Ear-identity colors for the live (still-streaming) turn bubble. The left/right live
+ * surfaces and accents have no MaterialTheme.colorScheme role; they are the brand's
+ * active-capture highlight and are intentionally theme-stable (see VerbaColors), with
+ * light content kept alongside them so the pairs stay readable in dark and light mode.
+ */
 private object ConversationColors {
-    val history = androidx.compose.ui.graphics.Color(0xFF202630)
-    val historyBorder = androidx.compose.ui.graphics.Color(0xFF37414E)
     val leftLive = androidx.compose.ui.graphics.Color(0xFF182533)
     val rightLive = androidx.compose.ui.graphics.Color(0xFF28272A)
     val leftAccent = androidx.compose.ui.graphics.Color(0xFF91B5D5)
     val rightAccent = androidx.compose.ui.graphics.Color(0xFFE0BC83)
-    val ink = androidx.compose.ui.graphics.Color(0xFFF5F5F2)
-    val muted = androidx.compose.ui.graphics.Color(0xFFABB5C3)
-    val translation = androidx.compose.ui.graphics.Color(0xFFFFC46B)
-    val divider = androidx.compose.ui.graphics.Color(0xFF48515E)
+    val liveInk = androidx.compose.ui.graphics.Color(0xFFF5F5F2)
+    val liveTranslation = androidx.compose.ui.graphics.Color(0xFFFFC46B)
+    val liveDivider = androidx.compose.ui.graphics.Color(0xFF48515E)
 }

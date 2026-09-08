@@ -4,23 +4,25 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.text.KeyboardActions
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.outlined.ChevronRight
 import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.ManageAccounts
-import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.outlined.Security
 import androidx.compose.material.icons.outlined.WorkspacePremium
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Divider
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -28,33 +30,38 @@ import androidx.compose.material3.ListItem
 import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.liveRegion
-import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import com.verba.interpretation.brand.BrandConfig
 import com.verba.interpretation.cloud.AccountOverview
 import com.verba.interpretation.cloud.CloudEntitlement
 import com.verba.interpretation.cloud.UsageSummary
 import com.verba.interpretation.ui.AccountUiState
-import com.verba.interpretation.ui.RedeemUiState
 
-enum class AccountAction { USAGE, HISTORY, SETTINGS, SERVICE_SETTINGS, HELP, LOGOUT }
+enum class AccountAction { USAGE, HISTORY, SETTINGS, SECURITY, SERVICE_SETTINGS, HELP, LOGOUT }
 
 data class AccountCallbacks(
     val onBack: () -> Unit,
     val onUsage: () -> Unit = {},
     val onHistory: () -> Unit,
     val onSettings: () -> Unit = {},
+    val onSecurity: () -> Unit = {},
     val onServiceSettings: () -> Unit,
     val onHelp: () -> Unit = {},
     val onLogout: () -> Unit,
@@ -66,12 +73,25 @@ object AccountActionDispatcher {
         AccountAction.USAGE -> callbacks.onUsage()
         AccountAction.HISTORY -> callbacks.onHistory()
         AccountAction.SETTINGS -> callbacks.onSettings()
+        AccountAction.SECURITY -> callbacks.onSecurity()
         AccountAction.SERVICE_SETTINGS -> callbacks.onServiceSettings()
         AccountAction.HELP -> callbacks.onHelp()
         AccountAction.LOGOUT -> callbacks.onLogout()
     }
 }
 
+/**
+ * 「我的」首页。
+ *
+ * 结构：品牌符号+用户名+账户类型 → 权益大卡（整卡进入权益详情）→ 历史/权益/账户/安全四个纵向入口。
+ * 不显示邮箱、不伪造头像；不展示累计用量、不常驻兑换输入、不提供退出登录（退出登录位于安全页）。
+ * 服务设置入口不在此页展示，由账户二级页在 debug 构建下提供。
+ *
+ * [onRedeemCodeChange] 与 [onRedeem] 仅为旧调用兼容保留：兑换输入已移至独立兑换页
+ * （见 [AccountRedemptionScreen]），首页通过 [onRedeemNavigate] 导航过去。
+ * [showServiceSettings] 同为旧调用兼容保留，本页已不再渲染服务设置入口，取值被忽略。
+ * [showBack] 仅在二级账户页显示返回箭头；底部“我的”根页不显示无效返回操作。
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AccountScreen(
@@ -83,9 +103,13 @@ fun AccountScreen(
     onServiceSettings: () -> Unit,
     onLogout: () -> Unit,
     modifier: Modifier = Modifier,
-    showServiceSettings: Boolean = true,
+    @Suppress("UNUSED_PARAMETER") showServiceSettings: Boolean = true,
     onRedeemCodeChange: (String) -> Unit = {},
     onRedeem: () -> Unit = {},
+    onSecurity: () -> Unit = {},
+    onRetry: () -> Unit = {},
+    onRedeemNavigate: () -> Unit = {},
+    showBack: Boolean = true,
 ) {
     val overview = state.overview ?: AccountOverview(
         username = state.user?.username ?: "未登录",
@@ -98,144 +122,78 @@ fun AccountScreen(
         onUsage = onUsage,
         onHistory = onHistory,
         onSettings = onSettings,
+        onSecurity = onSecurity,
         onServiceSettings = onServiceSettings,
         onLogout = onLogout,
     )
 
     Column(modifier.fillMaxSize()) {
-        TopAppBar(
-            title = { Text("我的", fontWeight = FontWeight.SemiBold) },
-            navigationIcon = {
-                IconButton(
-                    onClick = { AccountActionDispatcher.back(callbacks) },
-                    modifier = Modifier.heightIn(min = 48.dp).semantics { contentDescription = "返回" },
-                ) {
-                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null)
-                }
-            },
-            colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background),
-        )
+        if (showBack) {
+            TopAppBar(
+                title = { Text("我的", fontWeight = FontWeight.SemiBold) },
+                navigationIcon = {
+                    IconButton(
+                        onClick = { AccountActionDispatcher.back(callbacks) },
+                        modifier = Modifier.heightIn(min = 48.dp).semantics { contentDescription = "返回" },
+                    ) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null)
+                    }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background),
+            )
+        } else {
+            TopAppBar(
+                title = { Text("我的", fontWeight = FontWeight.SemiBold) },
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background),
+            )
+        }
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(20.dp),
         ) {
-            item {
-                Surface(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = MaterialTheme.shapes.large,
-                    color = MaterialTheme.colorScheme.primaryContainer,
-                ) {
-                    Column(Modifier.padding(horizontal = 20.dp, vertical = 18.dp)) {
-                        Text(
-                            displayName,
-                            style = MaterialTheme.typography.headlineSmall,
-                            fontWeight = FontWeight.SemiBold,
-                            color = MaterialTheme.colorScheme.onPrimaryContainer,
-                        )
-                        Text(
-                            accountRoleLabel(state),
-                            style = MaterialTheme.typography.bodyLarge,
-                            color = MaterialTheme.colorScheme.onPrimaryContainer,
-                            modifier = Modifier.padding(top = 4.dp),
-                        )
-                        if (state.loading) {
-                            Text(
-                                "正在同步账户信息…",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onPrimaryContainer,
-                                modifier = Modifier.padding(top = 12.dp),
-                            )
-                        }
-                    }
-                }
+            state.message?.takeIf { it.isNotBlank() }?.let { message ->
+                item { AccountNoticeLine(message) }
             }
             item {
-                AccountSectionLabel("权益与用量")
-                Surface(
-                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
-                    shape = MaterialTheme.shapes.medium,
-                    color = MaterialTheme.colorScheme.surfaceContainerLow,
-                ) {
-                    Column {
-                        AccountRow(
-                            title = "使用与权益",
-                            detail = "${entitlementSummary(overview.entitlement)} · ${usageSummary(overview.usage)}",
-                            icon = Icons.Outlined.WorkspacePremium,
-                            onClick = { AccountActionDispatcher.dispatch(AccountAction.USAGE, callbacks) },
-                        )
-                    }
-                }
+                AccountIdentityHeader(displayName, accountRoleLabel(state))
             }
             item {
-                RedeemCard(
-                    redeem = state.redeem,
-                    enabled = !state.loading,
-                    onCodeChange = onRedeemCodeChange,
-                    onRedeem = onRedeem,
+                AccountEntitlementCard(
+                    entitlement = overview.entitlement ?: state.entitlement,
+                    loading = state.loading,
+                    failed = !state.message.isNullOrBlank(),
+                    onOpenDetails = { AccountActionDispatcher.dispatch(AccountAction.USAGE, callbacks) },
+                    onRedeemNavigate = onRedeemNavigate,
+                    onRetry = onRetry,
                 )
             }
             item {
-                AccountSectionLabel("账户管理")
                 Surface(
-                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                    modifier = Modifier.fillMaxWidth(),
                     shape = MaterialTheme.shapes.medium,
                     color = MaterialTheme.colorScheme.surfaceContainerLow,
                 ) {
                     Column {
-                        AccountRow("历史记录", "查看本机保存的翻译记录", Icons.Outlined.History) {
+                        AccountEntryRow("历史记录", "查看本机保存的翻译记录", Icons.Outlined.History) {
                             AccountActionDispatcher.dispatch(AccountAction.HISTORY, callbacks)
                         }
-                        AccountRow(
+                        Divider(color = MaterialTheme.colorScheme.outlineVariant)
+                        AccountEntryRow("权益详情", "权益状态、使用与兑换", Icons.Outlined.WorkspacePremium) {
+                            AccountActionDispatcher.dispatch(AccountAction.USAGE, callbacks)
+                        }
+                        Divider(color = MaterialTheme.colorScheme.outlineVariant)
+                        AccountEntryRow(
                             title = "账户设置",
                             detail = "查看账户状态或删除账户",
                             icon = Icons.Outlined.ManageAccounts,
-                            accessibilityTitle = "账户管理",
                         ) {
                             AccountActionDispatcher.dispatch(AccountAction.SETTINGS, callbacks)
                         }
-                        if (showServiceSettings) {
-                            AccountRow("服务设置", "管理语言与播放偏好", Icons.Outlined.Settings) {
-                                AccountActionDispatcher.dispatch(AccountAction.SERVICE_SETTINGS, callbacks)
-                            }
+                        Divider(color = MaterialTheme.colorScheme.outlineVariant)
+                        AccountEntryRow("安全与登录", "管理登录状态与安全选项", Icons.Outlined.Security) {
+                            AccountActionDispatcher.dispatch(AccountAction.SECURITY, callbacks)
                         }
-                    }
-                }
-            }
-            item {
-                OutlinedButton(
-                    onClick = { AccountActionDispatcher.dispatch(AccountAction.LOGOUT, callbacks) },
-                    enabled = !state.loading,
-                    modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
-                    colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error),
-                ) {
-                    Icon(Icons.AutoMirrored.Filled.Logout, contentDescription = null)
-                    Text("退出登录", modifier = Modifier.padding(start = 8.dp))
-                }
-            }
-            val accountMessage = state.message?.takeIf { it.isNotBlank() }
-            val feedback = accountMessage ?: when (val redeem = state.redeem) {
-                is RedeemUiState.Error -> redeem.message
-                is RedeemUiState.Success -> redeem.message
-                else -> null
-            }
-            feedback?.let { message ->
-                val success = accountMessage == null && state.redeem is RedeemUiState.Success
-                item {
-                    Surface(
-                        shape = MaterialTheme.shapes.medium,
-                        color = if (success) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.errorContainer,
-                        modifier = Modifier.fillMaxWidth().semantics {
-                            contentDescription = if (success) "兑换结果：$message" else "账户错误：$message"
-                            liveRegion = LiveRegionMode.Polite
-                        },
-                    ) {
-                        Text(
-                            message,
-                            color = if (success) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onErrorContainer,
-                            style = MaterialTheme.typography.bodyMedium,
-                            modifier = Modifier.padding(16.dp),
-                        )
                     }
                 }
             }
@@ -243,47 +201,292 @@ fun AccountScreen(
     }
 }
 
+/** 品牌符号 + 用户名 + 账户类型。不显示邮箱，不伪造头像。 */
 @Composable
-private fun RedeemCard(
-    redeem: RedeemUiState,
-    enabled: Boolean,
-    onCodeChange: (String) -> Unit,
-    onRedeem: () -> Unit,
-) {
-    val submitting = redeem is RedeemUiState.Submitting
-    val code = redeem.code
-    val error = (redeem as? RedeemUiState.Error)?.message
-    Surface(
-        modifier = Modifier.fillMaxWidth(),
-        shape = MaterialTheme.shapes.medium,
-        color = MaterialTheme.colorScheme.surfaceContainerLow,
+private fun AccountIdentityHeader(displayName: String, roleLabel: String) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.fillMaxWidth().semantics(mergeDescendants = true) {},
     ) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text("兑换权益码", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-            Text("输入四段六码兑换码以更新账户权益。", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            OutlinedTextField(
-                value = code,
-                onValueChange = onCodeChange,
-                modifier = Modifier.fillMaxWidth().semantics { contentDescription = "兑换码输入框" },
-                label = { Text("兑换码") },
-                placeholder = { Text("AAAAAA-BBBBBB-CCCCCC-DDDDDD") },
-                supportingText = error?.let { { Text(it) } },
-                isError = error != null,
-                singleLine = true,
-                enabled = enabled,
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                keyboardActions = KeyboardActions(onDone = { if (enabled && !submitting) onRedeem() }),
+        BrandConfig.Logo(Modifier.size(44.dp))
+        Column(Modifier.padding(start = 14.dp)) {
+            Text(
+                displayName,
+                style = MaterialTheme.typography.headlineMedium,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSurface,
             )
-            Button(
-                onClick = onRedeem,
-                enabled = enabled && !submitting,
-                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).semantics { contentDescription = "兑换权益码" },
-            ) {
-                Text(if (submitting) "正在兑换…" else "兑换")
-            }
+            Text(
+                roleLabel,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 2.dp),
+            )
         }
     }
 }
+
+/** 顶部账户级轻提示；权益卡内另行提供针对性错误与重试。 */
+@Composable
+internal fun AccountNoticeLine(message: String, modifier: Modifier = Modifier) {
+    Text(
+        message,
+        style = MaterialTheme.typography.bodyMedium,
+        color = MaterialTheme.colorScheme.error,
+        modifier = modifier
+            .fillMaxWidth()
+            .semantics {
+                contentDescription = "账户提示：$message"
+                liveRegion = LiveRegionMode.Polite
+            },
+    )
+}
+
+/**
+ * 权益大卡：首页整卡可点进入详情，详情页传 [onOpenDetails] = null 仅展示。
+ * 状态优先级：加载失败（不冒充无权益，也不用陈旧权益冒充最新）> 加载骨架 > 已知权益 > 无权益灰卡。
+ * 仅在展示有效（含状态未知）权益数据时启用整卡点击；首页在已知过期与无权益状态改为卡内
+ * 兑换导航按钮，避免与整卡点击形成嵌套手势；详情页传 [showRedeemAction] = false
+ * 关闭卡内按钮，由页面底部按钮承担唯一兑换主 CTA。
+ */
+@Composable
+internal fun AccountEntitlementCard(
+    entitlement: CloudEntitlement?,
+    loading: Boolean,
+    failed: Boolean,
+    onOpenDetails: (() -> Unit)?,
+    onRedeemNavigate: () -> Unit,
+    onRetry: () -> Unit,
+    modifier: Modifier = Modifier,
+    showRedeemAction: Boolean = true,
+) {
+    val baseModifier = modifier.fillMaxWidth().heightIn(min = 88.dp)
+    val cardColor = if (entitlement == null && !loading && !failed) {
+        MaterialTheme.colorScheme.surfaceVariant
+    } else {
+        MaterialTheme.colorScheme.surfaceContainerLow
+    }
+    val cardClickable = onOpenDetails != null && !failed && !loading && entitlement != null &&
+        entitlementStateLabel(entitlement) != "已过期"
+    val cardModifier = if (cardClickable) {
+        baseModifier.clickable(
+            onClickLabel = "查看权益详情",
+            role = Role.Button,
+        ) { onOpenDetails?.invoke() }
+    } else {
+        baseModifier
+    }
+    Surface(
+        modifier = cardModifier,
+        shape = MaterialTheme.shapes.large,
+        color = cardColor,
+    ) {
+        AccountEntitlementCardContent(entitlement, loading, failed, onRedeemNavigate, onRetry, showRedeemAction)
+    }
+}
+
+@Composable
+private fun AccountEntitlementCardContent(
+    entitlement: CloudEntitlement?,
+    loading: Boolean,
+    failed: Boolean,
+    onRedeemNavigate: () -> Unit,
+    onRetry: () -> Unit,
+    showRedeemAction: Boolean,
+) {
+    when {
+        // 失败最优先：权益状态未知时不得用陈旧 entitlement 冒充已知，也不得显示为无权益。
+        failed -> AccountEntitlementError(onRetry)
+        loading -> AccountEntitlementSkeleton()
+        entitlement != null -> AccountEntitlementSummary(entitlement, onRedeemNavigate, showRedeemAction)
+        else -> AccountEntitlementEmpty(onRedeemNavigate, showRedeemAction)
+    }
+}
+
+/**
+ * 已知权益：类型、有效状态、大号剩余天数、精确到期日。
+ * 已过期时首页在卡内提供兑换导航按钮（与无权益灰卡一致）；详情页 [showRedeemAction] = false
+ * 时不在卡内放按钮，由页面底部唯一按钮承担兑换入口。
+ */
+@Composable
+private fun AccountEntitlementSummary(
+    entitlement: CloudEntitlement,
+    onRedeemNavigate: () -> Unit,
+    showRedeemAction: Boolean,
+) {
+    val stateLabel = entitlementStateLabel(entitlement)
+    val active = stateLabel == "有效"
+    val expired = stateLabel == "已过期"
+    Column(Modifier.padding(horizontal = 20.dp, vertical = 18.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                entitlementKindLabel(entitlement.kind),
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Text(
+                stateLabel,
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.SemiBold,
+                color = if (active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        val remainingDays = if (active) entitlementRemainingDays(entitlement) else null
+        if (remainingDays != null) {
+            Row(
+                verticalAlignment = Alignment.Bottom,
+                modifier = Modifier.padding(top = 12.dp),
+            ) {
+                Text(
+                    remainingDays.toString(),
+                    style = MaterialTheme.typography.displaySmall,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+                Text(
+                    " 天剩余",
+                    style = MaterialTheme.typography.titleLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(start = 6.dp, bottom = 5.dp),
+                )
+            }
+        } else if (active) {
+            Text(
+                "不足 1 天",
+                style = MaterialTheme.typography.headlineMedium,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.padding(top = 12.dp),
+            )
+        }
+        val expiry = parseAccountInstant(entitlement.expiresAt)
+        val expiryLine = if (expiry != null) "到期 ${formatAccountTime(entitlement.expiresAt)}" else "到期时间未知"
+        Text(
+            expiryLine,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(top = 6.dp),
+        )
+        if (expired && showRedeemAction) {
+            Button(
+                onClick = onRedeemNavigate,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 14.dp)
+                    .heightIn(min = 48.dp)
+                    .semantics { contentDescription = "兑换权益码" },
+                colors = AccountPrimaryCtaColors(),
+            ) { Text("兑换权益码") }
+        }
+    }
+}
+
+/**
+ * 无有效权益：中性灰卡。首页在卡内放主兑换按钮（导航至独立兑换页）；
+ * 详情页 [showRedeemAction] = false 时不放，避免与页面底部按钮形成重复主 CTA。
+ */
+@Composable
+private fun AccountEntitlementEmpty(onRedeemNavigate: () -> Unit, showRedeemAction: Boolean) {
+    Column(Modifier.padding(horizontal = 20.dp, vertical = 18.dp)) {
+        Text(
+            "暂无有效权益",
+            style = MaterialTheme.typography.titleLarge,
+            fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Text(
+            "兑换权益码后即可使用云端翻译。",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(top = 4.dp),
+        )
+        if (showRedeemAction) {
+            Button(
+                onClick = onRedeemNavigate,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 14.dp)
+                    .heightIn(min = 48.dp)
+                    .semantics { contentDescription = "兑换权益码" },
+                colors = AccountPrimaryCtaColors(),
+            ) { Text("兑换权益码") }
+        }
+    }
+}
+
+/** 加载失败：明确「暂不可确认」，不冒充无权益。 */
+@Composable
+private fun AccountEntitlementError(onRetry: () -> Unit) {
+    Column(Modifier.padding(horizontal = 20.dp, vertical = 18.dp)) {
+        Text(
+            "权益状态暂不可确认",
+            style = MaterialTheme.typography.titleLarge,
+            fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.onSurface,
+        )
+        Text(
+            "网络或服务暂时不可用，请稍后重试。",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(top = 4.dp),
+        )
+        OutlinedButton(
+            onClick = onRetry,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 14.dp)
+                .heightIn(min = 48.dp)
+                .semantics { contentDescription = "重试加载权益" },
+        ) { Text("重试") }
+    }
+}
+
+/** 局部加载骨架：不阻断页面其余内容。 */
+@Composable
+private fun AccountEntitlementSkeleton() {
+    Column(
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+        modifier = Modifier
+            .padding(horizontal = 20.dp, vertical = 18.dp)
+            .semantics { contentDescription = "正在加载权益信息" },
+    ) {
+        AccountSkeletonLine(Modifier.width(64.dp), MaterialTheme.typography.labelLarge.lineHeight.value.dp)
+        AccountSkeletonLine(Modifier.width(168.dp), MaterialTheme.typography.headlineMedium.lineHeight.value.dp)
+        AccountSkeletonLine(Modifier.width(196.dp), MaterialTheme.typography.bodyMedium.lineHeight.value.dp)
+    }
+}
+
+@Composable
+private fun AccountSkeletonLine(modifier: Modifier, height: Dp) {
+    Surface(
+        modifier = modifier.height(height),
+        shape = MaterialTheme.shapes.extraSmall,
+        color = MaterialTheme.colorScheme.surfaceVariant,
+    ) {}
+}
+
+/**
+ * 主兑换按钮配色：浅色主题为黑色按钮（onSurface 容器 / surface 文字），
+ * 深色主题为高对比反色（primary / onPrimary），禁止黑底黑字。
+ */
+@Composable
+internal fun AccountPrimaryCtaColors() = ButtonDefaults.buttonColors(
+    containerColor = if (MaterialTheme.colorScheme.background.luminance() >= 0.5f) {
+        MaterialTheme.colorScheme.onSurface
+    } else {
+        MaterialTheme.colorScheme.primary
+    },
+    contentColor = if (MaterialTheme.colorScheme.background.luminance() >= 0.5f) {
+        MaterialTheme.colorScheme.surface
+    } else {
+        MaterialTheme.colorScheme.onPrimary
+    },
+)
 
 @Composable
 internal fun AccountSectionLabel(label: String) {
@@ -314,27 +517,40 @@ internal fun entitlementSummary(entitlement: CloudEntitlement?): String = entitl
 internal fun usageSummary(usage: UsageSummary): String =
     "累计 ${formatDuration(usage.totalSeconds)} · ${usage.sessionCount.coerceAtLeast(0)} 次会话 · 最近 ${formatAccountTime(usage.lastUsedAt)}"
 
-private fun entitlementKindLabel(kind: String): String = when (kind.trim().lowercase()) {
+internal fun entitlementKindLabel(kind: String): String = when (kind.trim().lowercase()) {
     "trial" -> "试用"
     "subscription", "subscribed", "paid" -> "订阅"
     else -> "权益"
 }
 
-private fun entitlementStateLabel(entitlement: CloudEntitlement): String = when {
+internal fun entitlementStateLabel(entitlement: CloudEntitlement): String = when {
     !entitlement.active -> "已过期"
     isExpired(entitlement.expiresAt) -> "已过期"
     entitlement.expiresAt.isBlank() || parseAccountInstant(entitlement.expiresAt) == null -> "状态未知"
     else -> "有效"
 }
 
+/**
+ * 有效权益的剩余整天数；不足一天返回 null（由界面显示「不足 1 天」，不得显示为过期）。
+ * 服务器秒数缺失时按到期时刻推算。
+ */
+internal fun entitlementRemainingDays(entitlement: CloudEntitlement): Long? {
+    val seconds = if (entitlement.remainingSeconds >= 0) {
+        entitlement.remainingSeconds
+    } else {
+        val instant = parseAccountInstant(entitlement.expiresAt) ?: return null
+        java.time.Duration.between(java.time.Instant.now(), instant).seconds
+    }
+    return if (seconds >= 86_400) seconds / 86_400 else null
+}
+
 internal fun isExpired(value: String): Boolean = parseAccountInstant(value)?.let { it.isBefore(java.time.Instant.now()) } ?: false
 
 @Composable
-private fun AccountRow(
+private fun AccountEntryRow(
     title: String,
     detail: String,
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
-    accessibilityTitle: String = title,
+    icon: ImageVector,
     onClick: () -> Unit,
 ) {
     ListItem(
@@ -342,12 +558,12 @@ private fun AccountRow(
         supportingContent = { Text(detail) },
         leadingContent = { Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
         trailingContent = { Icon(Icons.Outlined.ChevronRight, contentDescription = null) },
-        colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+        colors = ListItemDefaults.colors(containerColor = Color.Transparent),
         modifier = Modifier
             .fillMaxWidth()
             .heightIn(min = 64.dp)
             .clickable(onClick = onClick)
-            .semantics { contentDescription = accessibilityTitle },
+            .semantics { contentDescription = "$title。$detail" },
     )
 }
 

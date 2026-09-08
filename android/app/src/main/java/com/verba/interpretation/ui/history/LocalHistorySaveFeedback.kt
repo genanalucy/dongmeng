@@ -18,7 +18,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.verba.interpretation.history.LocalHistorySaveState
 import com.verba.interpretation.history.LocalHistorySaveStatus
-import com.verba.interpretation.ui.design.VerbaColors
 import kotlinx.coroutines.delay
 
 /** Save feedback is event-driven; IDLE deliberately renders no persistent footer. */
@@ -48,8 +47,8 @@ internal fun LocalHistorySaveFeedback(
     Surface(
         modifier = modifier.padding(horizontal = 20.dp, vertical = 4.dp),
         shape = androidx.compose.foundation.shape.RoundedCornerShape(18.dp),
-        color = VerbaColors.TopControl,
-        border = BorderStroke(1.dp, VerbaColors.ShellStroke),
+        color = MaterialTheme.colorScheme.secondaryContainer,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
     ) {
     Row(
         modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),

@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Dark system on API 27+: identical colors and appearance flags to
+         values-night/themes.xml, split out only so
+         android:windowLightNavigationBar needs no tools:targetApi suppression
+         at this folder's floor. Night mode outranks the platform-version
+         qualifier, so night-mode API 27+ devices resolve this folder over both
+         values-night (version eliminates it) and values-v27 (night eliminates
+         it); styles never merge items across qualifiers, so the full item set
+         is repeated. -->
+    <style name="Theme.Interpretation" parent="android:style/Theme.Material.NoActionBar">
+        <item name="android:fontFamily">sans</item>
+        <item name="android:windowActionModeOverlay">true</item>
+        <item name="android:statusBarColor">#07111F</item>
+        <item name="android:navigationBarColor">#07111F</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar">false</item>
+    </style>
+</resources>

@@ -1,5 +1,6 @@
 package com.verba.interpretation.ui.account
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -10,6 +11,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.outlined.ChevronRight
+import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Divider
@@ -35,7 +38,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.testTag
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.verba.interpretation.cloud.AccountIdentityProfile
 import com.verba.interpretation.cloud.AccountOverview
 import com.verba.interpretation.cloud.CloudUsage
 import com.verba.interpretation.cloud.UsagePage
@@ -154,7 +159,7 @@ private fun AccountFeedback(message: String, modifier: Modifier = Modifier, isEr
     )
 }
 
-/** 产品不支持身份编辑或恢复；仅保留破坏性自助删除。 */
+/** 产品不支持身份编辑或恢复；仅保留破坏性自助删除与真实资料展示。 */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AccountIdentitySettingsScreen(
@@ -165,12 +170,15 @@ fun AccountIdentitySettingsScreen(
     onDeleteAccount: (String) -> Unit,
     isAdmin: Boolean,
     modifier: Modifier = Modifier,
+    identityProfile: AccountIdentityProfile? = null,
+    showServiceSettings: Boolean = false,
+    onServiceSettings: () -> Unit = {},
 ) {
     val availability = AccountDeletionPolicy.deletionAvailability(username, isAdmin)
     var dialogVisible by remember { mutableStateOf(false) }
     Column(modifier.fillMaxSize()) {
         TopAppBar(
-            title = { Text("账户设置") },
+            title = { Text("账户") },
             navigationIcon = { BackButton(onBack) },
             colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background),
         )
@@ -180,21 +188,45 @@ fun AccountIdentitySettingsScreen(
             verticalArrangement = Arrangement.spacedBy(20.dp),
         ) {
             item {
-                AccountSectionLabel("当前账户")
+                AccountSectionLabel("账户资料")
                 Surface(
                     modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
                     shape = MaterialTheme.shapes.medium,
                     color = MaterialTheme.colorScheme.surfaceContainerLow,
                 ) {
-                    Text(
-                        username.ifBlank { "账户信息不可用" },
-                        style = MaterialTheme.typography.bodyLarge,
-                        modifier = Modifier.padding(16.dp),
-                    )
+                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        if (identityProfile != null) {
+                            ProfileField("用户名", identityProfile.username)
+                            ProfileField("邮箱", identityProfile.email.ifBlank { "未设置" })
+                            ProfileField("手机号", identityProfile.maskedPhone ?: "未绑定")
+                        } else {
+                            Text(
+                                username.ifBlank { "账户信息不可用" },
+                                style = MaterialTheme.typography.bodyLarge,
+                            )
+                            Text(
+                                "账户资料尚未加载。",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
                 }
             }
             message?.takeIf { it.isNotBlank() }?.let {
                 item { AccountFeedback(it, isError = true) }
+            }
+            if (showServiceSettings) {
+                item {
+                    AccountSectionLabel("服务偏好")
+                    Surface(
+                        modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                        shape = MaterialTheme.shapes.medium,
+                        color = MaterialTheme.colorScheme.surfaceContainerLow,
+                    ) {
+                        ServiceSettingsRow(onServiceSettings)
+                    }
+                }
             }
             when (availability) {
                 AccountDeletionPolicy.Availability.AVAILABLE -> item {
@@ -221,6 +253,31 @@ fun AccountIdentitySettingsScreen(
         }
     }
     if (dialogVisible) DeleteAccountDialog(username, loading, onDismiss = { dialogVisible = false }, onConfirm = onDeleteAccount)
+}
+
+@Composable
+private fun ProfileField(label: String, value: String) {
+    Column {
+        Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(value, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.padding(top = 2.dp))
+    }
+}
+
+/** 服务偏好入口：仅开发构建可见，指向测试服务地址设置。 */
+@Composable
+private fun ServiceSettingsRow(onClick: () -> Unit) {
+    ListItem(
+        headlineContent = { Text("服务偏好设置", fontWeight = FontWeight.Medium) },
+        supportingContent = { Text("服务连接与偏好（仅开发构建可用）") },
+        leadingContent = { Icon(Icons.Outlined.Settings, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
+        trailingContent = { Icon(Icons.Outlined.ChevronRight, contentDescription = null, tint = MaterialTheme.colorScheme.outlineVariant) },
+        colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 64.dp)
+            .clickable(onClick = onClick)
+            .semantics { contentDescription = "服务偏好设置，仅开发构建可用" },
+    )
 }
 
 @Composable
