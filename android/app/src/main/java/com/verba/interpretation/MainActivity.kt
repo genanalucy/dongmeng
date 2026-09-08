@@ -643,6 +643,7 @@ private fun SoloWorkbench(modifier: Modifier, viewModel: InterpretationViewModel
         onResume = viewModel::resume,
         onFinish = viewModel::finish,
         onReset = viewModel::clearError,
+        onSetLanguages = viewModel::setLanguages,
         modifier = Modifier.fillMaxSize(),
         overlayContent = {
             LocalHistorySaveFeedback(

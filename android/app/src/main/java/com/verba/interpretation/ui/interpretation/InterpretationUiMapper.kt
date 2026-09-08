@@ -30,6 +30,8 @@ object InterpretationActionDispatcher {
 
 data class InterpretationScreenModel(
     val phase: SessionPhase,
+    val sourceLanguage: String,
+    val targetLanguage: String,
     val sourceLanguageName: String,
     val targetLanguageName: String,
     val languageDirection: String,
@@ -57,6 +59,8 @@ object InterpretationUiMapper {
         val targetLanguageName = TranslationLanguage.displayName(state.targetLanguage)
         return InterpretationScreenModel(
             phase = state.phase,
+            sourceLanguage = state.sourceLanguage,
+            targetLanguage = state.targetLanguage,
             sourceLanguageName = sourceLanguageName,
             targetLanguageName = targetLanguageName,
             languageDirection = "$sourceLanguageName → $targetLanguageName",

@@ -37,12 +37,15 @@ import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -50,6 +53,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -69,6 +73,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.verba.interpretation.ui.SessionPhase
+import com.verba.interpretation.ui.TranslationLanguage
 import com.verba.interpretation.ui.design.TranslationVisualTokens
 import com.verba.interpretation.ui.design.VerbaColors
 import kotlinx.coroutines.flow.collect
@@ -101,6 +106,7 @@ fun InterpretationScreen(
     onResume: () -> Unit,
     onFinish: () -> Unit,
     onReset: () -> Unit,
+    onSetLanguages: (String, String) -> Unit = { _, _ -> },
     modifier: Modifier = Modifier,
     overlayContent: @Composable BoxScope.() -> Unit = {},
 ) {
@@ -186,12 +192,15 @@ fun InterpretationScreen(
 
     Column(modifier = modifier.fillMaxSize()) {
         CompactHeader(
+            sourceLanguage = model.sourceLanguage,
+            targetLanguage = model.targetLanguage,
             languageDirection = model.languageDirection,
             statusLabel = model.statusLabel,
             phase = model.phase,
             sessionActive = isSessionActive,
             microphoneRunning = model.showMicrophoneRipple,
             onExit = { InterpretationActionDispatcher.exit(callbacks) },
+            onSetLanguages = onSetLanguages,
         )
         // Keep long transcript/error content scrollable so the pinned controls remain reachable.
         Box(modifier = Modifier.weight(1f)) {
@@ -256,12 +265,15 @@ fun InterpretationScreen(
 
 @Composable
 private fun CompactHeader(
+    sourceLanguage: String,
+    targetLanguage: String,
     languageDirection: String,
     statusLabel: String,
     phase: SessionPhase,
     sessionActive: Boolean,
     microphoneRunning: Boolean,
     onExit: () -> Unit,
+    onSetLanguages: (String, String) -> Unit,
 ) {
     val languages = languageDirection.split(" → ", limit = 2)
     Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
@@ -283,9 +295,19 @@ private fun CompactHeader(
             horizontalArrangement = Arrangement.Center,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text(languages.firstOrNull().orEmpty(), fontSize = 13.sp, lineHeight = 18.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            LanguageSelector(
+                language = sourceLanguage,
+                otherLanguage = targetLanguage,
+                enabled = !sessionActive,
+                onSelect = { onSetLanguages(it, targetLanguage) },
+            )
             Text(" → ", fontSize = 13.sp, lineHeight = 18.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Text(languages.getOrNull(1).orEmpty(), fontSize = 13.sp, lineHeight = 18.sp, color = MaterialTheme.colorScheme.primary)
+            LanguageSelector(
+                language = targetLanguage,
+                otherLanguage = sourceLanguage,
+                enabled = !sessionActive,
+                onSelect = { onSetLanguages(sourceLanguage, it) },
+            )
         }
     }
 }
@@ -300,6 +322,24 @@ private fun LiveMarker(microphoneRunning: Boolean) {
     ) {
         Box(Modifier.size(6.dp).clip(CircleShape).background(markerColor))
         Text("实时", style = MaterialTheme.typography.labelSmall, color = markerColor)
+    }
+}
+
+@Composable
+private fun LanguageSelector(language: String, otherLanguage: String, enabled: Boolean, onSelect: (String) -> Unit) {
+    var expanded by remember { mutableStateOf(false) }
+    TextButton(
+        onClick = { expanded = true },
+        enabled = enabled,
+        modifier = Modifier.heightIn(min = 44.dp).semantics { contentDescription = "选择${TranslationLanguage.displayName(language)}语言" },
+    ) {
+        Text(TranslationLanguage.displayName(language), fontSize = 13.sp, lineHeight = 18.sp)
+        Icon(Icons.Filled.KeyboardArrowDown, contentDescription = null, modifier = Modifier.size(16.dp))
+    }
+    DropdownMenu(expanded = expanded && enabled, onDismissRequest = { expanded = false }) {
+        TranslationLanguage.entries.filter { it.code != otherLanguage }.forEach { choice ->
+            DropdownMenuItem(text = { Text(choice.displayName) }, onClick = { onSelect(choice.code); expanded = false })
+        }
     }
 }
 
@@ -418,8 +458,7 @@ private fun PinnedControls(
                 OutlinedButton(
                     onClick = { onAction(finishAction) },
                     modifier = Modifier
-                        .widthIn(min = TranslationVisualTokens.SecondaryActionWidth)
-                        .height(48.dp)
+                        .size(48.dp)
                         .semantics {
                             contentDescription = if (phase == SessionPhase.STARTING) "取消连接" else "结束同传"
                         },
@@ -427,10 +466,9 @@ private fun PinnedControls(
                         containerColor = MaterialTheme.colorScheme.secondaryContainer,
                         contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
                     ),
-                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
+                    contentPadding = PaddingValues(0.dp),
                 ) {
                     Icon(Icons.Filled.Stop, contentDescription = null, modifier = Modifier.size(22.dp))
-                    Text(if (phase == SessionPhase.STARTING) "取消" else "结束", modifier = Modifier.padding(start = 6.dp))
                 }
             }
         }
@@ -482,9 +520,7 @@ private fun ActionButton(action: InterpretationAction, onClick: () -> Unit) {
     }
     Button(
         onClick = onClick,
-        modifier = Modifier
-            .then(if (action == InterpretationAction.RESET) Modifier.widthIn(min = TranslationVisualTokens.PrimaryActionMinWidth) else Modifier.width(TranslationVisualTokens.PrimaryActionMinWidth))
-            .height(48.dp)
+        modifier = Modifier.size(48.dp)
             .semantics {
             contentDescription = when (action) {
                 InterpretationAction.START -> "开始同传"
@@ -502,6 +538,5 @@ private fun ActionButton(action: InterpretationAction, onClick: () -> Unit) {
         contentPadding = ButtonDefaults.ContentPadding,
     ) {
         Icon(icon, contentDescription = null, modifier = Modifier.size(22.dp))
-        Text(label, modifier = Modifier.padding(start = 6.dp))
     }
 }

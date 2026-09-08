@@ -37,6 +37,35 @@ class InterpretationScreenTest {
     }
 
     @Test
+    fun idleLanguageSelectorChangesSourceLanguage() {
+        var selected: Pair<String, String>? = null
+        compose.setContent {
+            MaterialTheme {
+                InterpretationScreen(
+                    model = InterpretationUiMapper.map(InterpretationUiState(sourceLanguage = "zh", targetLanguage = "en")),
+                    onExit = {}, onStart = {}, onPause = {}, onResume = {}, onFinish = {}, onReset = {},
+                    onSetLanguages = { source, target -> selected = source to target },
+                )
+            }
+        }
+
+        compose.onNodeWithContentDescription("选择中文语言").performClick()
+        compose.onNodeWithText("Tiếng Việt").performClick()
+
+        assertEquals("vi" to "en", selected)
+    }
+
+    @Test
+    fun controlsExposeOnlyIconsWhileKeepingAccessibleLabels() {
+        setScreen(state = InterpretationUiState(phase = SessionPhase.RUNNING))
+
+        compose.onNodeWithContentDescription("暂停同传").assertIsDisplayed()
+        compose.onNodeWithContentDescription("结束同传").assertIsDisplayed()
+        compose.onAllNodesWithText("暂停").assertCountEquals(0)
+        compose.onAllNodesWithText("结束").assertCountEquals(0)
+    }
+
+    @Test
     fun largeLabelTextKeepsStartTargetAtLeast48Dp() {
         setScreen(state = InterpretationUiState())
 
