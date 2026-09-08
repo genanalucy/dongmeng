@@ -13,8 +13,8 @@ android {
         applicationId = "com.verba.interpretation"
         minSdk = 26
         targetSdk = 36
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 2
+        versionName = "1.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         buildConfigField("String", "AGENT_HTTP_URL", "\"https://47-129-170-16.sslip.io\"")
