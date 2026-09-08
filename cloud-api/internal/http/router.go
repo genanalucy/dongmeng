@@ -87,6 +87,7 @@ func NewRouter(options RouterOptions) http.Handler {
 	router.Get("/api/v1/health", health)
 	router.Get("/api/v1/ready", ready)
 	router.Get("/api/v1/config", publicConfig)
+	router.Get("/api/v1/app-update", appUpdate(options.Config.AppUpdate))
 	verification := options.Verification
 	if verification == nil {
 		verification = disabledPhoneVerificationService{}

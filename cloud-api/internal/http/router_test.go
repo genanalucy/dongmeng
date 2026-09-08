@@ -54,6 +54,16 @@ func TestHealthReadyAndPublicConfig(t *testing.T) {
 	}
 }
 
+func TestPublicAppUpdateIsDisabledWithoutCompleteMetadata(t *testing.T) {
+	response := request(testRouter(readinessFunc(func(context.Context) error { return nil }), nil), http.MethodGet, "/api/v1/app-update", "")
+	if response.Code != http.StatusOK || response.Body.String() != "{\"available\":false}\n" {
+		t.Fatalf("response = %d %s", response.Code, response.Body.String())
+	}
+	if response.Header().Get("Cache-Control") != "public, max-age=300" {
+		t.Fatalf("cache control = %q", response.Header().Get("Cache-Control"))
+	}
+}
+
 func TestMaskedInstallIDNeverReturnsCompleteIdentifier(t *testing.T) {
 	for _, test := range []struct {
 		input, expected string

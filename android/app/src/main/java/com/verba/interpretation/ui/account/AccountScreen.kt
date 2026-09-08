@@ -54,7 +54,7 @@ import com.verba.interpretation.cloud.CloudEntitlement
 import com.verba.interpretation.cloud.UsageSummary
 import com.verba.interpretation.ui.AccountUiState
 
-enum class AccountAction { USAGE, HISTORY, SETTINGS, SECURITY, SERVICE_SETTINGS, HELP, LOGOUT }
+enum class AccountAction { USAGE, HISTORY, SETTINGS, SECURITY, ABOUT, SERVICE_SETTINGS, HELP, LOGOUT }
 
 data class AccountCallbacks(
     val onBack: () -> Unit,
@@ -62,6 +62,7 @@ data class AccountCallbacks(
     val onHistory: () -> Unit,
     val onSettings: () -> Unit = {},
     val onSecurity: () -> Unit = {},
+    val onAbout: () -> Unit = {},
     val onServiceSettings: () -> Unit,
     val onHelp: () -> Unit = {},
     val onLogout: () -> Unit,
@@ -74,6 +75,7 @@ object AccountActionDispatcher {
         AccountAction.HISTORY -> callbacks.onHistory()
         AccountAction.SETTINGS -> callbacks.onSettings()
         AccountAction.SECURITY -> callbacks.onSecurity()
+        AccountAction.ABOUT -> callbacks.onAbout()
         AccountAction.SERVICE_SETTINGS -> callbacks.onServiceSettings()
         AccountAction.HELP -> callbacks.onHelp()
         AccountAction.LOGOUT -> callbacks.onLogout()
@@ -107,6 +109,7 @@ fun AccountScreen(
     onRedeemCodeChange: (String) -> Unit = {},
     onRedeem: () -> Unit = {},
     onSecurity: () -> Unit = {},
+    onAbout: () -> Unit = {},
     onRetry: () -> Unit = {},
     onRedeemNavigate: () -> Unit = {},
     showBack: Boolean = true,
@@ -123,6 +126,7 @@ fun AccountScreen(
         onHistory = onHistory,
         onSettings = onSettings,
         onSecurity = onSecurity,
+        onAbout = onAbout,
         onServiceSettings = onServiceSettings,
         onLogout = onLogout,
     )
@@ -193,6 +197,10 @@ fun AccountScreen(
                         Divider(color = MaterialTheme.colorScheme.outlineVariant)
                         AccountEntryRow("安全与登录", "管理登录状态与安全选项", Icons.Outlined.Security) {
                             AccountActionDispatcher.dispatch(AccountAction.SECURITY, callbacks)
+                        }
+                        Divider(color = MaterialTheme.colorScheme.outlineVariant)
+                        AccountEntryRow("关于", "版本信息与检查更新", Icons.Outlined.ManageAccounts) {
+                            AccountActionDispatcher.dispatch(AccountAction.ABOUT, callbacks)
                         }
                     }
                 }

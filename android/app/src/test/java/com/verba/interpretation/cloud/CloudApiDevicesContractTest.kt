@@ -18,6 +18,26 @@ import org.junit.Test
  * - 服务端按 last_seen_at DESC 排序，客户端必须原样保持顺序。
  */
 class CloudApiDevicesContractTest {
+    @Test fun appUpdateUsesPublicEndpointAndRejectsUnsafeMetadata() {
+        val fake = DevicesTestFakeHttp(200, """{"available":true,"package_name":"com.verba.interpretation","version_code":2,"version_name":"1.1","apk_url":"https://downloads.example/app.apk","apk_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","release_notes":"修复","force_update":false}""")
+        val api = CloudApi("https://cloud.example", DevicesTestMemoryTokenStore(AuthTokens("access", "refresh")), DevicesTestFixedInstallationIdStore(), fake.client)
+
+        val update = api.appUpdate()
+
+        assertEquals("GET", fake.singleRequest().method)
+        assertEquals("/api/v1/app-update", fake.singleRequest().url.encodedPath)
+        assertEquals(null, fake.singleRequest().header("Authorization"))
+        assertEquals(2, update!!.versionCode)
+        assertEquals("https://downloads.example/app.apk", update.apkUrl)
+    }
+
+    @Test fun appUpdateRejectsNonHttpsDownload() {
+        val fake = DevicesTestFakeHttp(200, """{"available":true,"package_name":"com.verba.interpretation","version_code":2,"version_name":"1.1","apk_url":"http://downloads.example/app.apk","apk_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}""")
+        val api = CloudApi("https://cloud.example", DevicesTestMemoryTokenStore(), DevicesTestFixedInstallationIdStore(), fake.client)
+
+        assertThrows(CloudApiException::class.java) { api.appUpdate() }
+    }
+
     @Test fun devicesRequestsAuthorizedEndpointAndParsesAllFieldsInServerOrder() {
         val fake = DevicesTestFakeHttp(
             200,

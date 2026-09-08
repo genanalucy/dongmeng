@@ -25,6 +25,7 @@ data class AccountOverview(val username: String, val entitlement: CloudEntitleme
 data class AccountIdentityProfile(val username: String, val email: String, val maskedPhone: String?)
 data class CloudUsage(val startedAt: String, val endedAt: String?, val durationSeconds: Long, val sourceLanguage: String?, val targetLanguage: String?)
 data class UsagePage(val items: List<CloudUsage>, val total: Int)
+data class CloudAppUpdate(val packageName: String, val versionCode: Int, val versionName: String, val apkUrl: String, val apkSha256: String, val releaseNotes: String, val forceUpdate: Boolean)
 
 data class HistoryPushOperation(val operationId: String, val kind: String, val sessionId: String, val turnId: String? = null, val payloadBase64: String? = null)
 data class HistoryPushResponse(val cursors: List<Long>)
@@ -161,6 +162,27 @@ class CloudApi private constructor(
     ) : this({ endpoint }, tokenStore, installationIdStore, client)
 
     /** 拼图验证码：严格解析，任何字段缺失或几何越界都视为服务响应无效。 */
+    /** Public OTA metadata is unsigned only in transit; the APK is pinned by SHA-256 before installation. */
+    fun appUpdate(): CloudAppUpdate? {
+        val json = publicGet("app-update")
+        if (!json.optBoolean("available", false)) return null
+        val versionCode = json.requiredInt("version_code")
+        if (versionCode <= 0) throw CloudApiException("服务返回了无效的更新版本。")
+        val sha256 = json.requiredString("apk_sha256")
+        if (!sha256.matches(Regex("[0-9a-fA-F]{64}"))) throw CloudApiException("服务返回了无效的更新校验值。")
+        val apkURL = json.requiredString("apk_url")
+        val parsed = runCatching { apkURL.toHttpUrl() }.getOrNull()
+            ?: throw CloudApiException("服务返回了无效的更新地址。")
+        if (!parsed.isHttps || parsed.username.isNotEmpty() || parsed.password.isNotEmpty() || parsed.fragment != null) {
+            throw CloudApiException("服务返回了不安全的更新地址。")
+        }
+        return CloudAppUpdate(
+            packageName = json.requiredString("package_name"), versionCode = versionCode,
+            versionName = json.requiredString("version_name"), apkUrl = apkURL, apkSha256 = sha256,
+            releaseNotes = json.optString("release_notes"), forceUpdate = json.optBoolean("force_update", false),
+        )
+    }
+
     override fun fetchRegistrationCaptcha(): SlideCaptchaChallenge {
         val json = publicGet("auth/captcha")
         val challengeImage = parseCaptchaImage(json.requiredObject("challenge"), expectWidthRange = 1..4096)

@@ -30,6 +30,19 @@ func TestLoadReadsSafeDefaultsAndOverrides(t *testing.T) {
 	}
 }
 
+func TestAppUpdateRejectsPartialOrUnsafeMetadata(t *testing.T) {
+	partial := validConfig()
+	partial.AppUpdate = AppUpdate{Enabled: true, VersionCode: 2}
+	if err := partial.Validate(); err == nil || !strings.Contains(err.Error(), "APP_UPDATE requires") {
+		t.Fatalf("Validate() error = %v", err)
+	}
+	unsafeURL := validConfig()
+	unsafeURL.AppUpdate = AppUpdate{Enabled: true, PackageName: "com.verba.interpretation", VersionCode: 2, VersionName: "1.1", APKURL: "http://downloads.example/app.apk", APKSHA256: strings.Repeat("a", 64)}
+	if err := unsafeURL.Validate(); err == nil || !strings.Contains(err.Error(), "APP_UPDATE_APK_URL") {
+		t.Fatalf("Validate() error = %v", err)
+	}
+}
+
 func TestLoadRejectsUnsafeValues(t *testing.T) {
 	tests := []struct {
 		name     string

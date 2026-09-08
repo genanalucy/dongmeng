@@ -2,6 +2,8 @@ package com.verba.interpretation
 
 import android.Manifest
 import android.content.pm.PackageManager
+import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
@@ -134,6 +136,7 @@ import com.verba.interpretation.ui.account.AccountRedemptionScreen
 import com.verba.interpretation.ui.account.AccountScreen
 import com.verba.interpretation.ui.account.AccountSecurityScreen
 import com.verba.interpretation.ui.account.AccountUsageScreen
+import com.verba.interpretation.ui.account.AppAboutScreen
 import com.verba.interpretation.ui.account.AuthenticationForm
 import com.verba.interpretation.ui.interpretation.InterpretationScreen
 import com.verba.interpretation.ui.interpretation.InterpretationUiMapper
@@ -162,6 +165,8 @@ import com.verba.interpretation.ui.ProductScreen
 import com.verba.interpretation.ui.SessionPhase
 import com.verba.interpretation.ui.SubtitleTurn
 import com.verba.interpretation.ui.TranslationLanguage
+import com.verba.interpretation.update.AppUpdateState
+import com.verba.interpretation.update.AppUpdateViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -170,6 +175,8 @@ class MainActivity : ComponentActivity() {
     private val accountViewModel: AccountViewModel by viewModels {
         AccountViewModel.factory(application)
     }
+    private val appUpdateViewModel: AppUpdateViewModel by viewModels()
+    private var pendingUpdateInstall: android.content.Intent? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -182,11 +189,31 @@ class MainActivity : ComponentActivity() {
             BrandTheme(darkTheme = darkTheme) {
                 InterpretationApp(
                     accountViewModel = accountViewModel,
+                    appUpdateViewModel = appUpdateViewModel,
+                    onInstallUpdate = ::installUpdate,
                     themeMode = themeModeState.mode,
                     onSelectThemeMode = themeModeState::select,
                 )
             }
         }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        val pending = pendingUpdateInstall ?: return
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O || packageManager.canRequestPackageInstalls()) {
+            pendingUpdateInstall = null
+            startActivity(pending)
+        }
+    }
+
+    private fun installUpdate(intent: android.content.Intent) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !packageManager.canRequestPackageInstalls()) {
+            pendingUpdateInstall = intent
+            startActivity(android.content.Intent(android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:$packageName")))
+            return
+        }
+        startActivity(intent)
     }
 }
 
@@ -195,6 +222,8 @@ class MainActivity : ComponentActivity() {
 private fun InterpretationApp(
     viewModel: InterpretationViewModel = viewModel(),
     accountViewModel: AccountViewModel,
+    appUpdateViewModel: AppUpdateViewModel,
+    onInstallUpdate: (android.content.Intent) -> Unit,
     historyViewModel: HistoryViewModel = viewModel(),
     themeMode: ThemeMode,
     onSelectThemeMode: (ThemeMode) -> Unit,
@@ -275,6 +304,7 @@ private fun InterpretationApp(
                 onSettings = { stack = stack.push(ProductScreen.ACCOUNT_SETTINGS) },
                 onServiceSettings = { stack = stack.push(ProductNavigationPolicy.accountSecondaryScreen(AccountSecondaryDestination.SERVICE_SETTINGS)) },
                 onSecurity = { stack = stack.push(ProductScreen.ACCOUNT_SECURITY) },
+                onAbout = { stack = stack.push(ProductScreen.ACCOUNT_ABOUT) },
                 onRedeemNavigate = { stack = stack.push(ProductScreen.ACCOUNT_REDEMPTION) },
                 onRetry = { accountViewModel.loadEntitlementDetails() },
                 accountViewModel = accountViewModel,
@@ -292,6 +322,7 @@ private fun InterpretationApp(
                 onSettings = { stack = stack.push(ProductScreen.ACCOUNT_SETTINGS) },
                 onServiceSettings = { stack = stack.push(ProductNavigationPolicy.accountSecondaryScreen(AccountSecondaryDestination.SERVICE_SETTINGS)) },
                 onSecurity = { stack = stack.push(ProductScreen.ACCOUNT_SECURITY) },
+                onAbout = { stack = stack.push(ProductScreen.ACCOUNT_ABOUT) },
                 onRedeemNavigate = { stack = stack.push(ProductScreen.ACCOUNT_REDEMPTION) },
                 onRetry = { accountViewModel.loadEntitlementDetails() },
                 accountViewModel = accountViewModel,
@@ -322,6 +353,12 @@ private fun InterpretationApp(
                 onServiceSettings = { stack = stack.push(ProductNavigationPolicy.accountSecondaryScreen(AccountSecondaryDestination.SERVICE_SETTINGS)) },
                 themeMode = themeMode,
                 onSelectThemeMode = onSelectThemeMode,
+            )
+            ProductScreen.ACCOUNT_ABOUT -> AppAboutPage(
+                modifier = Modifier.padding(padding),
+                onBack = { stack = stack.pop() },
+                updateViewModel = appUpdateViewModel,
+                onInstallUpdate = onInstallUpdate,
             )
             ProductScreen.ADMIN_TEST -> AdminTestPage(
                 modifier = Modifier.padding(padding),
@@ -883,6 +920,34 @@ private fun AccountSecurityPage(
 }
 
 @Composable
+private fun AppAboutPage(
+    modifier: Modifier,
+    onBack: () -> Unit,
+    updateViewModel: AppUpdateViewModel,
+    onInstallUpdate: (android.content.Intent) -> Unit,
+) {
+    val state by updateViewModel.state.collectAsStateWithLifecycle()
+    LaunchedEffect(state) {
+        if (state is AppUpdateState.ReadyToInstall) {
+            onInstallUpdate(updateViewModel.installerIntent((state as AppUpdateState.ReadyToInstall).apkUri))
+        }
+    }
+    AppAboutScreen(
+        state = state,
+        onBack = onBack,
+        onCheck = updateViewModel::check,
+        onDownload = {
+            when (val current = state) {
+                is AppUpdateState.Available -> updateViewModel.download(current.update)
+                is AppUpdateState.ReadyToInstall -> onInstallUpdate(updateViewModel.installerIntent(current.apkUri))
+                else -> updateViewModel.check()
+            }
+        },
+        modifier = modifier,
+    )
+}
+
+@Composable
 private fun AccountSettingsPage(
     modifier: Modifier,
     onBack: () -> Unit,
@@ -920,6 +985,7 @@ private fun AccountPage(
     onSettings: () -> Unit,
     onServiceSettings: () -> Unit,
     onSecurity: () -> Unit,
+    onAbout: () -> Unit,
     onRedeemNavigate: () -> Unit,
     onRetry: () -> Unit,
     accountViewModel: AccountViewModel,
@@ -942,6 +1008,7 @@ private fun AccountPage(
             modifier = modifier,
             showServiceSettings = showServiceSettings,
             onSecurity = onSecurity,
+            onAbout = onAbout,
             onRetry = onRetry,
             onRedeemNavigate = onRedeemNavigate,
             showBack = showBack,

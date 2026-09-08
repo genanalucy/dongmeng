@@ -70,9 +70,46 @@ type Config struct {
 	HistoryEnabled    bool
 	HistoryRootKey    []byte
 	HistoryKeyVersion int
+	AppUpdate         AppUpdate
+}
+
+// AppUpdate is public OTA metadata. It is disabled unless every required field
+// is configured and validated; a partial configuration never becomes a broken
+// update response.
+type AppUpdate struct {
+	Enabled      bool
+	PackageName  string
+	VersionCode  int
+	VersionName  string
+	APKURL       string
+	APKSHA256    string
+	ReleaseNotes string
+	ForceUpdate  bool
 }
 
 // Load reads environment variables and validates the resulting configuration.
+func (u AppUpdate) Validate() error {
+	if !u.Enabled {
+		return nil
+	}
+	if u.PackageName == "" || u.VersionCode <= 0 || u.VersionName == "" || u.APKURL == "" || u.APKSHA256 == "" {
+		return errors.New("APP_UPDATE requires package name, positive version code, version name, APK URL, and SHA-256")
+	}
+	parsed, err := url.Parse(u.APKURL)
+	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil || parsed.Fragment != "" {
+		return errors.New("APP_UPDATE_APK_URL must be an absolute HTTPS URL without credentials or fragment")
+	}
+	if len(u.APKSHA256) != 64 {
+		return errors.New("APP_UPDATE_APK_SHA256 must be a SHA-256 hex digest")
+	}
+	for _, char := range u.APKSHA256 {
+		if !((char >= '0' && char <= '9') || (char >= 'a' && char <= 'f') || (char >= 'A' && char <= 'F')) {
+			return errors.New("APP_UPDATE_APK_SHA256 must be a SHA-256 hex digest")
+		}
+	}
+	return nil
+}
+
 func Load() (Config, error) {
 	cfg := Config{
 		Environment:                      envOrDefault("CLOUD_API_ENV", "development"),
@@ -100,6 +137,13 @@ func Load() (Config, error) {
 		EmailVerificationRateLimitSecret: os.Getenv("EMAIL_VERIFICATION_RATE_LIMIT_SECRET"),
 		CaptchaSecret:                    strings.TrimSpace(os.Getenv("CAPTCHA_SECRET")),
 		AgentServiceToken:                strings.TrimSpace(os.Getenv("CLOUD_API_AGENT_SERVICE_TOKEN")),
+		AppUpdate: AppUpdate{
+			PackageName:  strings.TrimSpace(os.Getenv("APP_UPDATE_PACKAGE_NAME")),
+			VersionName:  strings.TrimSpace(os.Getenv("APP_UPDATE_VERSION_NAME")),
+			APKURL:       strings.TrimSpace(os.Getenv("APP_UPDATE_APK_URL")),
+			APKSHA256:    strings.TrimSpace(os.Getenv("APP_UPDATE_APK_SHA256")),
+			ReleaseNotes: strings.TrimSpace(os.Getenv("APP_UPDATE_RELEASE_NOTES")),
+		},
 	}
 	historyRootKey, err := base64StdEnv("HISTORY_ROOT_KEY")
 	if err != nil {
@@ -140,6 +184,13 @@ func Load() (Config, error) {
 	if cfg.HistoryKeyVersion, err = intEnv("HISTORY_KEY_VERSION", 0); err != nil {
 		return Config{}, err
 	}
+	if cfg.AppUpdate.VersionCode, err = intEnv("APP_UPDATE_VERSION_CODE", 0); err != nil {
+		return Config{}, err
+	}
+	if cfg.AppUpdate.ForceUpdate, err = boolEnv("APP_UPDATE_FORCE", false); err != nil {
+		return Config{}, err
+	}
+	cfg.AppUpdate.Enabled = cfg.AppUpdate.VersionCode > 0 || cfg.AppUpdate.PackageName != "" || cfg.AppUpdate.VersionName != "" || cfg.AppUpdate.APKURL != "" || cfg.AppUpdate.APKSHA256 != ""
 	if cfg.SMTPPort, err = intEnv("SMTP_PORT", cfg.SMTPPort); err != nil {
 		return Config{}, err
 	}
@@ -178,6 +229,9 @@ func (c Config) Validate() error {
 		if err := validateOrigin(origin, c.Environment); err != nil {
 			problems = append(problems, err.Error())
 		}
+	}
+	if err := c.AppUpdate.Validate(); err != nil {
+		problems = append(problems, err.Error())
 	}
 	if c.DatabaseTimeout <= 0 {
 		problems = append(problems, "DATABASE_TIMEOUT must be positive")

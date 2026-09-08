@@ -28,6 +28,7 @@ enum class ProductScreen {
     ACCOUNT_SECURITY,
     ACCOUNT_USAGE,
     ACCOUNT_SETTINGS,
+    ACCOUNT_ABOUT,
     ADMIN_TEST,
 }
 
@@ -103,6 +104,7 @@ object ProductNavigationPolicy {
         ProductScreen.ACCOUNT_SECURITY,
         ProductScreen.ACCOUNT_USAGE,
         ProductScreen.ACCOUNT_SETTINGS,
+        ProductScreen.ACCOUNT_ABOUT,
         -> ProductDestination.PROFILE
         ProductScreen.ADMIN_TEST -> ProductDestination.ADMIN_TEST
     }
