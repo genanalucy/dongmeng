@@ -7,6 +7,7 @@ import com.verba.interpretation.ui.FaceToFaceMode
 import com.verba.interpretation.ui.FaceToFacePhase
 import com.verba.interpretation.ui.FaceToFaceSide
 import com.verba.interpretation.ui.FaceToFaceState
+import com.verba.interpretation.ui.FaceToFaceTurn
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -27,6 +28,39 @@ class FaceToFaceUiMapperTest {
 
         assertEquals(FaceToFaceTurnAlignment.START, faceToFaceTurnAlignment(leftTurn))
         assertEquals(FaceToFaceTurnAlignment.END, faceToFaceTurnAlignment(rightTurn))
+    }
+
+    @Test
+    fun panelProjectionShowsOwnSourceAndOtherSideTranslationByEventBoundary() {
+        val leftTurn = FaceToFaceTurn(
+            id = 1L,
+            side = FaceToFaceSide.LEFT,
+            sourceLanguage = "zh",
+            targetLanguage = "en",
+            route = PlaybackRoute.RIGHT,
+            sourceFinals = listOf("左方原文一", "左方原文二"),
+            translationFinals = listOf("left translation"),
+            finished = true,
+        )
+        val rightTurn = FaceToFaceTurn(
+            id = 2L,
+            side = FaceToFaceSide.RIGHT,
+            sourceLanguage = "en",
+            targetLanguage = "zh",
+            route = PlaybackRoute.LEFT,
+            sourceFinals = listOf("right source"),
+            translationFinals = listOf("右方译文一", "右方译文二"),
+            finished = true,
+        )
+        val state = FaceToFaceState(turns = listOf(leftTurn, rightTurn))
+
+        val leftReader = faceToFacePanelBubbles(state, FaceToFaceSide.LEFT)
+        val rightReader = faceToFacePanelBubbles(state, FaceToFaceSide.RIGHT)
+
+        assertEquals(listOf("左方原文一", "左方原文二", "右方译文一", "右方译文二"), leftReader.mapNotNull { it.sourceText })
+        assertEquals(listOf("left translation", "right source"), rightReader.mapNotNull { it.sourceText })
+        assertTrue(leftReader.all { it.translationText == null })
+        assertTrue(rightReader.all { it.translationText == null })
     }
 
     @Test
@@ -284,6 +318,16 @@ class FaceToFaceUiMapperTest {
 
         assertEquals(FaceToFaceSide.LEFT, faceToFacePresentation(base.copy(activeSide = FaceToFaceSide.LEFT)).activeMic)
         assertEquals(FaceToFaceSide.RIGHT, faceToFacePresentation(base.copy(activeSide = FaceToFaceSide.RIGHT)).activeMic)
+    }
+
+    @Test
+    fun middleContinuousControlMapsPhasesToTheExpectedPrimaryActions() {
+        assertEquals(FaceToFaceAction.START_CONTINUOUS, continuousLeftAction(FaceToFacePhase.IDLE))
+        assertEquals(FaceToFaceAction.PAUSE_CONTINUOUS, continuousLeftAction(FaceToFacePhase.LISTENING))
+        assertEquals(FaceToFaceAction.RESUME_CONTINUOUS, continuousLeftAction(FaceToFacePhase.PAUSED))
+        assertNull(continuousLeftAction(FaceToFacePhase.PROCESSING))
+        assertNull(continuousLeftAction(FaceToFacePhase.STOPPING))
+        assertNull(continuousLeftAction(FaceToFacePhase.ERROR))
     }
 
     @Test

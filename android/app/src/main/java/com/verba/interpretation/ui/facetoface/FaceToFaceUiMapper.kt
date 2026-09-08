@@ -6,6 +6,7 @@ import com.verba.interpretation.ui.FaceToFacePhase
 import com.verba.interpretation.ui.FaceToFaceSide
 import com.verba.interpretation.ui.FaceToFaceState
 import com.verba.interpretation.ui.FaceToFaceTurn
+import com.verba.interpretation.ui.display.EventBoundaryDisplay
 
 internal enum class FaceToFaceTurnAlignment { START, END }
 
@@ -47,9 +48,39 @@ internal fun faceToFacePresentation(state: FaceToFaceState): FaceToFacePresentat
     },
 )
 
-/** Both participants read the same conversation; `side` only names the panel for semantics. */
-internal fun faceToFacePanelTurns(state: FaceToFaceState, side: FaceToFaceSide): List<FaceToFaceTurn> =
-    state.turns
+/**
+ * Builds a reader-specific timeline without inferring source/translation pairs from list indexes.
+ * A reader sees their own spoken source and only the translation of the other reader's source.
+ */
+/** Compatibility helper; face panels render the reader-specific projection below. */
+internal fun faceToFacePanelTurns(state: FaceToFaceState, side: FaceToFaceSide): List<FaceToFaceTurn> = state.turns
+
+internal fun faceToFacePanelBubbles(
+    state: FaceToFaceState,
+    readerSide: FaceToFaceSide,
+): List<ConversationDisplayBubble> = state.turns.flatMap { turn ->
+    EventBoundaryDisplay.rows(
+        sourceFinals = turn.sourceFinals,
+        sourcePartial = turn.sourcePartial,
+        translationFinals = turn.translationFinals,
+        translationPartial = turn.translationPartial,
+    ).mapNotNull { row ->
+        val isOwnTurn = turn.side == readerSide
+        val text = if (isOwnTurn) row.sourceText else row.translationText
+        text?.let {
+            ConversationDisplayBubble(
+                key = "${turn.id}:${row.key}:$readerSide",
+                sourceText = it,
+                translationText = null,
+                side = turn.side,
+                sourceLanguage = if (isOwnTurn) turn.sourceLanguage else turn.targetLanguage,
+                targetLanguage = if (isOwnTurn) turn.targetLanguage else turn.sourceLanguage,
+                alignment = faceToFaceTurnAlignment(turn),
+                displayMode = ConversationDisplayMode.SINGLE_LANGUAGE,
+            )
+        }
+    }
+}
 
 internal fun faceToFaceTurnAlignment(turn: FaceToFaceTurn): FaceToFaceTurnAlignment =
     if (turn.side == FaceToFaceSide.LEFT) FaceToFaceTurnAlignment.START else FaceToFaceTurnAlignment.END

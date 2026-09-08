@@ -1,6 +1,7 @@
 package com.verba.interpretation.ui.facetoface
 
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -248,6 +249,15 @@ internal fun EarMicControls(
                 },
                 onLanguage = { onSetLanguages(it, state.rightLanguage) },
             )
+            if (showAutoControls && visibleSides.size == 2 && (!manual || state.phase == FaceToFacePhase.IDLE)) {
+                ContinuousControls(
+                    mode = state.mode,
+                    phase = state.phase,
+                    requestMicrophone = requestMicrophone,
+                    onPause = { clearMicrophoneRequest(); onPauseAuto() },
+                    onStop = { clearMicrophoneRequest(); onStopAuto() },
+                )
+            }
             if (FaceToFaceSide.RIGHT in visibleSides) EarMicButton(
                 side = FaceToFaceSide.RIGHT,
                 language = state.rightLanguage,
@@ -451,7 +461,70 @@ internal fun EarMicButton(
     }
 }
 
-/* Continuous actions remain reachable through the overflow menu; no duplicate action row is rendered. */
+@Composable
+private fun ContinuousControls(
+    mode: FaceToFaceMode,
+    phase: FaceToFacePhase,
+    requestMicrophone: (MicrophonePermissionAction) -> Unit,
+    onPause: () -> Unit,
+    onStop: () -> Unit,
+) {
+    val action = continuousLeftAction(phase)
+    val label = when (action) {
+        FaceToFaceAction.START_CONTINUOUS -> "开启连续翻译"
+        FaceToFaceAction.PAUSE_CONTINUOUS -> "暂停连续翻译"
+        FaceToFaceAction.RESUME_CONTINUOUS -> "继续连续翻译"
+        null -> if (phase == FaceToFacePhase.LISTENING || phase == FaceToFacePhase.PAUSED) "结束连续翻译" else "连续翻译不可用"
+        else -> "结束连续翻译"
+    }
+    val enabled = action != null || phase in setOf(FaceToFacePhase.LISTENING, FaceToFacePhase.PAUSED)
+    fun runAction() {
+        when (action) {
+            FaceToFaceAction.START_CONTINUOUS -> requestMicrophone(
+                if (mode == FaceToFaceMode.MANUAL) {
+                    MicrophonePermissionAction.ContinuousEnable
+                } else {
+                    MicrophonePermissionAction.ContinuousStart
+                },
+            )
+            FaceToFaceAction.PAUSE_CONTINUOUS -> onPause()
+            FaceToFaceAction.RESUME_CONTINUOUS -> requestMicrophone(MicrophonePermissionAction.ContinuousResume)
+            null -> onStop()
+            else -> onStop()
+        }
+    }
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+        ContinuousControlSurface(label, enabled, ::runAction)
+        if (mode == FaceToFaceMode.AUTO && phase in setOf(FaceToFacePhase.LISTENING, FaceToFacePhase.PAUSED)) {
+            ContinuousControlSurface("结束连续翻译", enabled = true, onClick = onStop)
+        }
+    }
+}
+
+@Composable
+private fun ContinuousControlSurface(label: String, enabled: Boolean, onClick: () -> Unit) {
+    Surface(
+        modifier = Modifier
+            .width(TranslationVisualTokens.MicGroupWidth)
+            .heightIn(min = 48.dp)
+            .clickable(enabled = enabled, role = Role.Button, onClick = onClick)
+            .semantics {
+                contentDescription = label
+                role = Role.Button
+                if (!enabled) disabled()
+                onClick(label = label) { onClick(); true }
+            },
+        shape = androidx.compose.foundation.shape.RoundedCornerShape(24.dp),
+        color = MaterialTheme.colorScheme.secondaryContainer,
+        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+    ) {
+        Box(contentAlignment = Alignment.Center) {
+            Text(label, color = MaterialTheme.colorScheme.onSecondaryContainer, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+        }
+    }
+}
+
+/* Legacy action-row prototype retained below for source history. */
 /*
     state: FaceToFaceState,
     requestMicrophone: (MicrophonePermissionAction) -> Unit,

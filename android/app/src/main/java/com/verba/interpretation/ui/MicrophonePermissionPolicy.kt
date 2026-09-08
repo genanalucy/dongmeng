@@ -3,6 +3,8 @@ package com.verba.interpretation.ui
 /** The user intent that must survive the runtime permission dialog. */
 sealed interface MicrophonePermissionAction {
     data class Manual(val side: FaceToFaceSide) : MicrophonePermissionAction
+    /** Enables AUTO only after microphone permission has been granted. */
+    data object ContinuousEnable : MicrophonePermissionAction
     data object ContinuousStart : MicrophonePermissionAction
     data object ContinuousResume : MicrophonePermissionAction
     data object ContinuousTakeover : MicrophonePermissionAction

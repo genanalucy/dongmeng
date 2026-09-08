@@ -62,6 +62,8 @@ import kotlinx.coroutines.launch
 internal fun conversationTimelineLatestIndex(turnCount: Int, hasListeningPlaceholder: Boolean): Int =
     (turnCount + if (hasListeningPlaceholder) 1 else 0).coerceAtLeast(1) - 1
 
+internal enum class ConversationDisplayMode { BILINGUAL, SINGLE_LANGUAGE }
+
 internal data class ConversationDisplayBubble(
     val key: String,
     val sourceText: String?,
@@ -72,6 +74,7 @@ internal data class ConversationDisplayBubble(
     val alignment: FaceToFaceTurnAlignment,
     val isLive: Boolean = false,
     val livePhase: FaceToFacePhase? = null,
+    val displayMode: ConversationDisplayMode = ConversationDisplayMode.BILINGUAL,
 )
 
 /**
@@ -165,10 +168,12 @@ internal fun ConversationTimeline(
     activeTurnId: Long? = null,
     contentDescription: String = "对话记录",
     visualSpec: ConversationTimelineVisualSpec = ConversationTimelineVisualSpec.Conversation,
+    displayBubbles: List<ConversationDisplayBubble>? = null,
+    bubbleModifier: Modifier = Modifier,
 ) {
     // The old arguments remain source-compatible for continuous mode callers. Live content is
     // now represented by the actual unfinished turn, never by a fixed input row.
-    val bubbles = remember(turns, phase, activeTurnId) { displayConversationBubbles(turns, phase, activeTurnId) }
+    val bubbles = displayBubbles ?: remember(turns, phase, activeTurnId) { displayConversationBubbles(turns, phase, activeTurnId) }
     val turnToken = remember(bubbles) { bubbles.map { "${it.key}:${it.sourceText}:${it.translationText}:${it.isLive}" } }
     val scope = rememberCoroutineScope()
     var previousToken by remember { mutableStateOf<List<String>?>(null) }
@@ -238,7 +243,7 @@ internal fun ConversationTimeline(
             ),
             verticalArrangement = Arrangement.spacedBy(visualSpec.turnSpacing),
         ) {
-            items(bubbles, key = { it.key }) { bubble -> ConversationBubble(bubble, visualSpec) }
+            items(bubbles, key = { it.key }) { bubble -> ConversationBubble(bubble, visualSpec, bubbleModifier) }
             if (phase == FaceToFacePhase.ERROR) {
                 item(key = "conversation-error") {
                     Text(
@@ -268,9 +273,11 @@ internal fun ConversationTimeline(
 private fun ConversationBubble(
     bubble: ConversationDisplayBubble,
     visualSpec: ConversationTimelineVisualSpec,
+    modifier: Modifier,
 ) {
     val isRight = bubble.alignment == FaceToFaceTurnAlignment.END
     val isLive = bubble.isLive
+    val isSingleLanguage = bubble.displayMode == ConversationDisplayMode.SINGLE_LANGUAGE
     // Static bubbles read MaterialTheme.colorScheme (BrandDarkColors keeps the exact legacy
     // pixels in dark mode); live bubbles keep the theme-stable ear-identity colors below.
     val colorScheme = MaterialTheme.colorScheme
@@ -285,7 +292,7 @@ private fun ConversationBubble(
         FaceToFacePhase.PROCESSING -> "${earLabel(bubble.side)} · 翻译中"
         else -> null
     }
-    Column(Modifier.fillMaxWidth(), horizontalAlignment = if (isRight) Alignment.End else Alignment.Start) {
+    Column(modifier.fillMaxWidth(), horizontalAlignment = if (isRight) Alignment.End else Alignment.Start) {
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = if (isRight) Arrangement.End else Arrangement.Start,
@@ -347,26 +354,28 @@ private fun ConversationBubble(
                         cursor = bubble.isLive && bubble.livePhase == FaceToFacePhase.LISTENING,
                     )
                 }
-                Spacer(Modifier.height(12.dp))
-                Spacer(Modifier.fillMaxWidth().height(1.dp).background(if (isLive) ConversationColors.liveDivider else colorScheme.outlineVariant))
-                Spacer(Modifier.height(12.dp))
-                bubble.translationText?.let { translation ->
-                    LiveText(
-                        text = translation,
-                        style = MaterialTheme.typography.titleLarge.copy(
-                            fontSize = visualSpec.translationFontSize,
-                            lineHeight = visualSpec.translationLineHeight,
-                            fontWeight = FontWeight.Medium,
-                        ),
+                if (!isSingleLanguage) {
+                    Spacer(Modifier.height(12.dp))
+                    Spacer(Modifier.fillMaxWidth().height(1.dp).background(if (isLive) ConversationColors.liveDivider else colorScheme.outlineVariant))
+                    Spacer(Modifier.height(12.dp))
+                    bubble.translationText?.let { translation ->
+                        LiveText(
+                            text = translation,
+                            style = MaterialTheme.typography.titleLarge.copy(
+                                fontSize = visualSpec.translationFontSize,
+                                lineHeight = visualSpec.translationLineHeight,
+                                fontWeight = FontWeight.Medium,
+                            ),
+                            color = translationColor,
+                            cursor = bubble.isLive && bubble.livePhase == FaceToFacePhase.PROCESSING,
+                            modifier = Modifier.heightIn(min = 42.dp),
+                        )
+                    } ?: EmptyLiveLine(
+                        height = 42.dp,
                         color = translationColor,
                         cursor = bubble.isLive && bubble.livePhase == FaceToFacePhase.PROCESSING,
-                        modifier = Modifier.heightIn(min = 42.dp),
                     )
-                } ?: EmptyLiveLine(
-                    height = 42.dp,
-                    color = translationColor,
-                    cursor = bubble.isLive && bubble.livePhase == FaceToFacePhase.PROCESSING,
-                )
+                }
             }
         }
         // No playback callback is available in this model. Keep the outside slot empty rather than

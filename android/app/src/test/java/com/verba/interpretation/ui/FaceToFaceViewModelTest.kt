@@ -96,6 +96,23 @@ class FaceToFaceViewModelTest {
         assertEquals(1, cloud.opens)
     }
 
+    @Test fun continuousEnableWaitsForPermissionBeforeLeavingManualMode() {
+        vm.setMode(FaceToFaceMode.MANUAL)
+        assertTrue(vm.microphonePermissionPolicy.request(MicrophonePermissionAction.ContinuousEnable))
+        vm.microphonePermissionResult(false)
+
+        assertEquals(FaceToFaceMode.MANUAL, vm.state.value.mode)
+        assertEquals(FaceToFacePhase.ERROR, vm.state.value.phase)
+
+        vm.clearError()
+        assertTrue(vm.microphonePermissionPolicy.request(MicrophonePermissionAction.ContinuousEnable))
+        vm.microphonePermissionResult(true)
+        dispatcher.scheduler.advanceUntilIdle()
+
+        assertEquals(FaceToFaceMode.AUTO, vm.state.value.mode)
+        assertEquals(FaceToFacePhase.LISTENING, vm.state.value.phase)
+    }
+
     @Test fun deniedOrClearedPermissionNeverStartsCapture() {
         leftClick()
         vm.microphonePermissionResult(false)

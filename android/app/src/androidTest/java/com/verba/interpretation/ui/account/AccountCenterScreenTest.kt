@@ -1,6 +1,8 @@
 package com.verba.interpretation.ui.account
 
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.ui.test.assertIsNotSelected
+import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onNodeWithContentDescription
@@ -9,6 +11,8 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
 import com.verba.interpretation.brand.BrandConfig
+import com.verba.interpretation.brand.ThemeMode
+import com.verba.interpretation.brand.ThemeModePresentation
 import com.verba.interpretation.cloud.AccountOverview
 import com.verba.interpretation.cloud.CloudEntitlement
 import com.verba.interpretation.cloud.CloudRole
@@ -334,6 +338,32 @@ class AccountCenterScreenTest {
     @Test fun adminHasNoSelfDeletionControl() {
         compose.setContent { MaterialTheme { AccountIdentitySettingsScreen("admin", false, null, {}, {}, true) } }
         compose.onNodeWithTag("delete-account").assertDoesNotExist()
+    }
+
+    // --- 账户设置页：应用内主题模式三选一 ---
+
+    @Test fun settingsPageOffersThreeWayThemeModeSelection() {
+        var selected: ThemeMode? = null
+        compose.setContent {
+            MaterialTheme {
+                AccountIdentitySettingsScreen(
+                    "alice_01", false, null, {}, {}, false,
+                    themeMode = ThemeMode.SYSTEM,
+                    onSelectThemeMode = { selected = it },
+                )
+            }
+        }
+
+        compose.onNodeWithText("外观").assertExists()
+        listOf("跟随系统", "浅色", "深色").forEach { label ->
+            compose.onNodeWithText(label).assertExists()
+        }
+        // 入口行有语义：单选角色 + 选中状态描述，且各选项 tag 唯一。
+        compose.onNodeWithTag(ThemeModePresentation.optionTestTag(ThemeMode.SYSTEM)).assertIsSelected()
+        compose.onNodeWithTag(ThemeModePresentation.optionTestTag(ThemeMode.LIGHT)).assertIsNotSelected()
+        compose.onNodeWithTag(ThemeModePresentation.optionTestTag(ThemeMode.DARK)).assertIsNotSelected()
+        compose.onNodeWithTag(ThemeModePresentation.optionTestTag(ThemeMode.DARK)).performClick()
+        compose.runOnIdle { assertEquals(ThemeMode.DARK, selected) }
     }
 
     private fun signedInState(

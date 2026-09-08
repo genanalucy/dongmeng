@@ -106,6 +106,13 @@ class FaceToFaceViewModel @JvmOverloads constructor(
         if (transition.accepted && transition.closeCloudSession) endCloudSession()
     }
 
+    /** Switches from manual only after the permission intent has completed successfully. */
+    fun enableAndStartAuto() = synchronized(actionLock) {
+        if (coordinator.state().mode != FaceToFaceMode.MANUAL || coordinator.state().phase != FaceToFacePhase.IDLE) return
+        if (coordinator.setMode(FaceToFaceMode.AUTO)) publishState()
+        startAuto()
+    }
+
     fun startAuto() = startWithCloudGrant(
         side = FaceToFaceSide.LEFT,
         canStart = { coordinator.state().mode == FaceToFaceMode.AUTO && coordinator.state().phase == FaceToFacePhase.IDLE },
@@ -144,6 +151,7 @@ class FaceToFaceViewModel @JvmOverloads constructor(
     fun runMicrophoneAction(action: MicrophonePermissionAction) {
         when (action) {
             is MicrophonePermissionAction.Manual -> manualPress(action.side)
+            MicrophonePermissionAction.ContinuousEnable -> enableAndStartAuto()
             MicrophonePermissionAction.ContinuousStart -> startAuto()
             MicrophonePermissionAction.ContinuousResume -> resumeAuto()
             MicrophonePermissionAction.ContinuousTakeover -> pressRightAuto()

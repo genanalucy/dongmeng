@@ -31,9 +31,6 @@ import androidx.compose.ui.unit.dp
 internal fun FaceToFaceOverflowMenu(
     state: FaceToFaceState,
     onSelectMode: (FaceToFaceMode) -> Unit,
-    onStartAuto: () -> Unit,
-    onPauseAuto: () -> Unit,
-    onResumeAuto: () -> Unit,
     onStopAuto: () -> Unit,
 ) {
     var expanded by remember { mutableStateOf(false) }
@@ -73,19 +70,10 @@ internal fun FaceToFaceOverflowMenu(
             onClick = { onSelectMode(FaceToFaceMode.AUTO); expanded = false },
             enabled = state.phase == FaceToFacePhase.IDLE,
         )
-        if (state.mode == FaceToFaceMode.AUTO) {
-            when (state.phase) {
-                FaceToFacePhase.IDLE -> DropdownMenuItem(text = { Text("开始连续翻译") }, onClick = { onStartAuto(); expanded = false })
-                FaceToFacePhase.LISTENING -> {
-                    DropdownMenuItem(text = { Text("暂停连续翻译") }, onClick = { onPauseAuto(); expanded = false })
-                    DropdownMenuItem(text = { Text("结束连续翻译") }, onClick = { onStopAuto(); expanded = false })
-                }
-                FaceToFacePhase.PAUSED -> {
-                    DropdownMenuItem(text = { Text("恢复连续翻译") }, onClick = { onResumeAuto(); expanded = false })
-                    DropdownMenuItem(text = { Text("结束连续翻译") }, onClick = { onStopAuto(); expanded = false })
-                }
-                else -> Unit
-            }
+        if (state.mode == FaceToFaceMode.AUTO && state.phase in setOf(FaceToFacePhase.LISTENING, FaceToFacePhase.PAUSED)) {
+            // The primary pause/resume/start controls live between the microphones. Keep only
+            // the redundant termination path in this secondary menu.
+            DropdownMenuItem(text = { Text("结束连续翻译") }, onClick = { onStopAuto(); expanded = false })
         }
     }
 }

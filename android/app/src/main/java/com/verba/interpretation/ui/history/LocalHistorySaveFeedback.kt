@@ -1,26 +1,44 @@
 package com.verba.interpretation.ui.history
 
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import com.verba.interpretation.history.LocalHistorySaveState
 import com.verba.interpretation.history.LocalHistorySaveStatus
-import kotlinx.coroutines.delay
 
-/** Save feedback is event-driven; IDLE deliberately renders no persistent footer. */
+/** Fixed safe copy for the failure notice; never derived from errorCode or the raw error. */
+internal const val LOCAL_HISTORY_SAVE_FAILED_TEXT = "部分文字未能保存到本机"
+
+/** The only renderable local-save feedback: a persistent, non-blocking failure notice. */
+internal data class LocalHistorySaveFeedbackMessage(val text: String)
+
+/**
+ * Successful and in-flight saves are silent by design: finishing a translation must not raise a
+ * per-turn "加入历史记录" notice. Only FAILED produces renderable feedback, with copy fixed to
+ * [LOCAL_HISTORY_SAVE_FAILED_TEXT] so no error detail can leak to the UI.
+ */
+internal fun LocalHistorySaveState.visibleFeedback(): LocalHistorySaveFeedbackMessage? = when (status) {
+    LocalHistorySaveStatus.IDLE,
+    LocalHistorySaveStatus.SAVING,
+    LocalHistorySaveStatus.SAVED,
+    -> null
+    LocalHistorySaveStatus.FAILED -> LocalHistorySaveFeedbackMessage(LOCAL_HISTORY_SAVE_FAILED_TEXT)
+}
+
+/**
+ * Renders nothing while saves succeed. [canOpenHistory] and [onViewHistory] are kept so existing
+ * call sites (solo and face screens) do not change; success no longer renders a view action.
+ */
 @Composable
 internal fun LocalHistorySaveFeedback(
     state: LocalHistorySaveState,
@@ -28,48 +46,20 @@ internal fun LocalHistorySaveFeedback(
     onViewHistory: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    var showSaved by remember { mutableStateOf(false) }
-    LaunchedEffect(state.status, state.sessionId) {
-        showSaved = state.status != LocalHistorySaveStatus.SAVED
-        if (state.status == LocalHistorySaveStatus.SAVED) {
-            showSaved = true
-            delay(SAVED_FEEDBACK_MILLIS)
-            showSaved = false
-        }
-    }
-    if (state.status == LocalHistorySaveStatus.SAVED && !showSaved) return
-    val message = when (state.status) {
-        LocalHistorySaveStatus.IDLE -> null
-        LocalHistorySaveStatus.SAVING -> "正在保存到本机…"
-        LocalHistorySaveStatus.SAVED -> "已保存到本机"
-        LocalHistorySaveStatus.FAILED -> "部分文字未能保存到本机"
-    } ?: return
+    val feedback = remember(state) { state.visibleFeedback() } ?: return
     Surface(
-        modifier = modifier.padding(horizontal = 20.dp, vertical = 4.dp),
-        shape = androidx.compose.foundation.shape.RoundedCornerShape(18.dp),
+        modifier = modifier
+            .padding(horizontal = 20.dp, vertical = 4.dp)
+            .semantics(mergeDescendants = true) { liveRegion = LiveRegionMode.Polite },
+        shape = RoundedCornerShape(18.dp),
         color = MaterialTheme.colorScheme.secondaryContainer,
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
     ) {
-    Row(
-        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
         Text(
-            message,
+            feedback.text,
             style = MaterialTheme.typography.labelMedium,
-            color = if (state.status == LocalHistorySaveStatus.FAILED) MaterialTheme.colorScheme.error
-            else MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.weight(1f),
+            color = MaterialTheme.colorScheme.error,
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
         )
-        val sessionId = state.sessionId
-        if (state.status == LocalHistorySaveStatus.SAVED && sessionId != null) {
-            TextButton(
-                onClick = { onViewHistory(sessionId) },
-                enabled = canOpenHistory,
-            ) { Text("查看本次记录") }
-        }
-    }
     }
 }
-
-private const val SAVED_FEEDBACK_MILLIS = 3_000L

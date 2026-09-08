@@ -14,11 +14,15 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.Button
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -29,6 +33,7 @@ import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.testTag
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -59,9 +64,9 @@ internal fun FaceToFaceScreen(
         TranslationTopBar(
             title = if (state.view == FaceToFaceView.FACE_TO_FACE) "面对面" else "对话",
             state = state,
-            onToggleView = {
+            onSelectView = { view ->
                 clearMicrophoneRequest()
-                viewModel.setView(if (state.view == FaceToFaceView.CONVERSATION) FaceToFaceView.FACE_TO_FACE else FaceToFaceView.CONVERSATION)
+                viewModel.setView(view)
             },
             onSelectMode = { mode -> clearMicrophoneRequest(); viewModel.setMode(mode) },
             onStartAuto = { requestMicrophone(MicrophonePermissionAction.ContinuousStart) },
@@ -114,7 +119,7 @@ internal fun FaceToFaceScreen(
 private fun TranslationTopBar(
     title: String,
     state: FaceToFaceState,
-    onToggleView: () -> Unit,
+    onSelectView: (FaceToFaceView) -> Unit,
     onSelectMode: (FaceToFaceMode) -> Unit,
     onStartAuto: () -> Unit,
     onPauseAuto: () -> Unit,
@@ -124,24 +129,12 @@ private fun TranslationTopBar(
     Box(
         Modifier.fillMaxWidth().height(TranslationVisualTokens.TopBarHeight).padding(horizontal = 16.dp),
     ) {
-        Surface(
-            modifier = Modifier
-                .align(Alignment.CenterStart)
-                .width(64.dp)
-                .height(44.dp)
-                .clickable(
-                    enabled = state.phase != FaceToFacePhase.PROCESSING && state.phase != FaceToFacePhase.STOPPING && state.phase != FaceToFacePhase.ERROR,
-                    role = Role.Button,
-                    onClick = onToggleView,
-                )
-                .semantics {
-                    testTag = "face-view-toggle"
-                    contentDescription = if (state.view == FaceToFaceView.CONVERSATION) "切换到面对面布局" else "切换到对话布局"
-                },
-            shape = androidx.compose.foundation.shape.RoundedCornerShape(22.dp),
-            color = MaterialTheme.colorScheme.secondaryContainer,
-            border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
-        ) { Box(contentAlignment = Alignment.Center) { Text("视图", color = MaterialTheme.colorScheme.onSecondaryContainer, fontSize = 16.sp) } }
+        FaceToFaceViewMenu(
+            selectedView = state.view,
+            enabled = state.phase != FaceToFacePhase.PROCESSING && state.phase != FaceToFacePhase.STOPPING && state.phase != FaceToFacePhase.ERROR,
+            onSelectView = onSelectView,
+            modifier = Modifier.align(Alignment.CenterStart),
+        )
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             Text(title, color = MaterialTheme.colorScheme.onBackground, fontSize = 19.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.semantics { heading() }, textAlign = TextAlign.Center)
         }
@@ -149,13 +142,55 @@ private fun TranslationTopBar(
             FaceToFaceOverflowMenu(
                 state = state,
                 onSelectMode = onSelectMode,
-                onStartAuto = onStartAuto,
-                onPauseAuto = onPauseAuto,
-                onResumeAuto = onResumeAuto,
                 onStopAuto = onStopAuto,
             )
         }
     }
+}
+
+@Composable
+private fun FaceToFaceViewMenu(
+    selectedView: FaceToFaceView,
+    enabled: Boolean,
+    onSelectView: (FaceToFaceView) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    var expanded by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
+    Box(modifier) {
+        Surface(
+            modifier = Modifier
+                .width(64.dp)
+                .height(48.dp)
+                .clickable(enabled = enabled, role = Role.Button) { expanded = true }
+                .semantics {
+                    testTag = "face-view-menu"
+                    contentDescription = "选择视图"
+                    stateDescription = if (selectedView == FaceToFaceView.CONVERSATION) "已选对话视图" else "已选面对面视图"
+                },
+            shape = androidx.compose.foundation.shape.RoundedCornerShape(24.dp),
+            color = MaterialTheme.colorScheme.secondaryContainer,
+            border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+        ) { Box(contentAlignment = Alignment.Center) { Text("视图", color = MaterialTheme.colorScheme.onSecondaryContainer, fontSize = 16.sp) } }
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            FaceToFaceView.entries.forEach { view ->
+                val selected = view == selectedView
+                DropdownMenuItem(
+                    text = { Text(if (selected) "✓  ${faceViewLabel(view)}" else faceViewLabel(view)) },
+                    onClick = { onSelectView(view); expanded = false },
+                    modifier = Modifier.semantics {
+                        testTag = "face-view-option-${view.name.lowercase()}"
+                        contentDescription = faceViewLabel(view)
+                        stateDescription = if (selected) "已选中" else "未选中"
+                    },
+                )
+            }
+        }
+    }
+}
+
+private fun faceViewLabel(view: FaceToFaceView): String = when (view) {
+    FaceToFaceView.CONVERSATION -> "对话视图"
+    FaceToFaceView.FACE_TO_FACE -> "面对面视图"
 }
 
 @Composable
@@ -253,28 +288,26 @@ private fun FaceReadingHalf(
     viewModel: FaceToFaceViewModel,
     modifier: Modifier,
 ) {
-    val rotated = position == FaceToFacePanelPosition.FAR
-    val side = if (rotated) FaceToFaceSide.RIGHT else FaceToFaceSide.LEFT
+    val far = position == FaceToFacePanelPosition.FAR
+    val side = if (far) FaceToFaceSide.RIGHT else FaceToFaceSide.LEFT
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .graphicsLayer {
-                rotationZ = if (rotated) 180f else 0f
-                clip = true
-            }
             .semantics {
                 testTag = "face-to-face-panel-${position.name.lowercase()}"
-                contentDescription = if (rotated) "远端右耳阅读区和麦克风，旋转180度" else "近端左耳阅读区和麦克风，正向"
+                contentDescription = if (far) "远端右耳阅读区和麦克风，文字倒向对方，滑动方向自然" else "近端左耳阅读区和麦克风，正向"
             },
     ) {
         ConversationTimeline(
-            turns = faceToFacePanelTurns(state, side),
+            turns = emptyList(),
             activeMic = presentation.activeMic,
             listeningPlaceholder = presentation.timelinePlaceholder,
             phase = state.phase,
             activeTurnId = state.activeTurnId,
             contentDescription = "${earLabel(side)}对话记录",
             visualSpec = ConversationTimelineVisualSpec.Face,
+            displayBubbles = faceToFacePanelBubbles(state, side),
+            bubbleModifier = if (far) Modifier.graphicsLayer { rotationZ = 180f } else Modifier,
             modifier = Modifier.weight(1f),
         )
         EarMicControls(
@@ -293,7 +326,8 @@ private fun FaceReadingHalf(
             onResumeAuto = viewModel::resumeAuto,
             onStopAuto = { clearMicrophoneRequest(); viewModel.stopAuto() },
             onSetLanguages = viewModel::setLanguages,
-            modifier = Modifier.semantics { testTag = "face-to-face-mic-${position.name.lowercase()}" },
+            modifier = (if (far) Modifier.graphicsLayer { rotationZ = 180f } else Modifier)
+                .semantics { testTag = "face-to-face-mic-${position.name.lowercase()}" },
             visibleSides = setOf(side),
             showAutoControls = false,
         )

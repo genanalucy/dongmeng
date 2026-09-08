@@ -16,8 +16,12 @@ class MicrophonePermissionPolicyTest {
         assertNull(policy.consumeResult(true))
     }
 
-    @Test fun startAndResumeRemainDistinctAndConsumeOnce() {
-        for (action in listOf(MicrophonePermissionAction.ContinuousStart, MicrophonePermissionAction.ContinuousResume)) {
+    @Test fun enableStartAndResumeRemainDistinctAndConsumeOnce() {
+        for (action in listOf(
+            MicrophonePermissionAction.ContinuousEnable,
+            MicrophonePermissionAction.ContinuousStart,
+            MicrophonePermissionAction.ContinuousResume,
+        )) {
             val policy = MicrophonePermissionPolicy()
             assertTrue(policy.request(action))
             assertEquals(MicrophonePermissionPolicy.Result(action, true), policy.consumeResult(true))

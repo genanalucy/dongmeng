@@ -17,6 +17,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.interaction.collectIsDraggedAsState
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -116,7 +117,12 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.verba.interpretation.audio.PlaybackRoute
 import com.verba.interpretation.brand.BrandConfig
+import com.verba.interpretation.brand.BrandSystemBars
 import com.verba.interpretation.brand.BrandTheme
+import com.verba.interpretation.brand.ThemeMode
+import com.verba.interpretation.brand.ThemeModeStore
+import com.verba.interpretation.brand.rememberThemeModeState
+import com.verba.interpretation.brand.resolveDarkTheme
 import com.verba.interpretation.cloud.CloudEndpointSettings
 import com.verba.interpretation.protocol.EndpointSettings
 import com.verba.interpretation.ui.AccountSecondaryDestination
@@ -167,7 +173,20 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContent { BrandTheme { InterpretationApp(accountViewModel = accountViewModel) } }
+        val themeModeStore = ThemeModeStore(applicationContext)
+        setContent {
+            val themeModeState = rememberThemeModeState(themeModeStore)
+            val darkTheme = resolveDarkTheme(themeModeState.mode, isSystemInDarkTheme())
+            // 手动切换主题时，系统栏需立即与新主题匹配；跟随系统时与 XML 主题解析结果幂等一致。
+            BrandSystemBars(darkTheme)
+            BrandTheme(darkTheme = darkTheme) {
+                InterpretationApp(
+                    accountViewModel = accountViewModel,
+                    themeMode = themeModeState.mode,
+                    onSelectThemeMode = themeModeState::select,
+                )
+            }
+        }
     }
 }
 
@@ -177,6 +196,8 @@ private fun InterpretationApp(
     viewModel: InterpretationViewModel = viewModel(),
     accountViewModel: AccountViewModel,
     historyViewModel: HistoryViewModel = viewModel(),
+    themeMode: ThemeMode,
+    onSelectThemeMode: (ThemeMode) -> Unit,
 ) {
     val interpretationState by viewModel.state.collectAsStateWithLifecycle()
     val accountState by accountViewModel.state.collectAsStateWithLifecycle()
@@ -299,6 +320,8 @@ private fun InterpretationApp(
                 onBack = { stack = stack.pop() },
                 accountViewModel = accountViewModel,
                 onServiceSettings = { stack = stack.push(ProductNavigationPolicy.accountSecondaryScreen(AccountSecondaryDestination.SERVICE_SETTINGS)) },
+                themeMode = themeMode,
+                onSelectThemeMode = onSelectThemeMode,
             )
             ProductScreen.ADMIN_TEST -> AdminTestPage(
                 modifier = Modifier.padding(padding),
@@ -865,6 +888,8 @@ private fun AccountSettingsPage(
     onBack: () -> Unit,
     accountViewModel: AccountViewModel,
     onServiceSettings: () -> Unit = {},
+    themeMode: ThemeMode = ThemeMode.SYSTEM,
+    onSelectThemeMode: (ThemeMode) -> Unit = {},
 ) {
     val state by accountViewModel.state.collectAsStateWithLifecycle()
     LaunchedEffect(Unit) { accountViewModel.loadIdentityProfile() }
@@ -880,6 +905,8 @@ private fun AccountSettingsPage(
         identityProfile = identityProfile,
         showServiceSettings = EndpointSettingsAccessPolicy.endpointEditingEnabled(BuildConfig.DEBUG),
         onServiceSettings = onServiceSettings,
+        themeMode = themeMode,
+        onSelectThemeMode = onSelectThemeMode,
     )
 }
 

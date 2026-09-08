@@ -1,6 +1,7 @@
 package com.verba.interpretation.ui.account
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -24,6 +25,7 @@ import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -35,11 +37,15 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.semantics.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.verba.interpretation.brand.ThemeMode
+import com.verba.interpretation.brand.ThemeModePresentation
 import com.verba.interpretation.cloud.AccountIdentityProfile
 import com.verba.interpretation.cloud.AccountOverview
 import com.verba.interpretation.cloud.CloudUsage
@@ -173,6 +179,8 @@ fun AccountIdentitySettingsScreen(
     identityProfile: AccountIdentityProfile? = null,
     showServiceSettings: Boolean = false,
     onServiceSettings: () -> Unit = {},
+    themeMode: ThemeMode = ThemeMode.SYSTEM,
+    onSelectThemeMode: (ThemeMode) -> Unit = {},
 ) {
     val availability = AccountDeletionPolicy.deletionAvailability(username, isAdmin)
     var dialogVisible by remember { mutableStateOf(false) }
@@ -211,6 +219,16 @@ fun AccountIdentitySettingsScreen(
                             )
                         }
                     }
+                }
+            }
+            item {
+                AccountSectionLabel("外观")
+                Surface(
+                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                    shape = MaterialTheme.shapes.medium,
+                    color = MaterialTheme.colorScheme.surfaceContainerLow,
+                ) {
+                    ThemeModeOptionList(current = themeMode, onSelect = onSelectThemeMode)
                 }
             }
             message?.takeIf { it.isNotBlank() }?.let {
@@ -261,6 +279,39 @@ private fun ProfileField(label: String, value: String) {
         Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Text(value, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.padding(top = 2.dp))
     }
+}
+
+/**
+ * 应用内主题模式三选一（跟随系统/浅色/深色）。每行不低于 64dp（≥48dp 触控目标），
+ * 整行可选、带 RadioButton 角色与选中状态语义；文案与语义字符串统一出自
+ * [ThemeModePresentation]，便于 JVM 侧直接测试呈现策略。
+ */
+@Composable
+private fun ThemeModeOptionList(current: ThemeMode, onSelect: (ThemeMode) -> Unit) {
+    Column {
+        ThemeModePresentation.options.forEachIndexed { index, option ->
+            if (index > 0) Divider(color = MaterialTheme.colorScheme.outlineVariant)
+            ThemeModeOptionRow(option, selected = option == current, onClick = { onSelect(option) })
+        }
+    }
+}
+
+@Composable
+private fun ThemeModeOptionRow(option: ThemeMode, selected: Boolean, onClick: () -> Unit) {
+    ListItem(
+        headlineContent = { Text(ThemeModePresentation.label(option)) },
+        leadingContent = { RadioButton(selected = selected, onClick = null) },
+        colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 64.dp)
+            .selectable(selected = selected, role = Role.RadioButton, onClick = onClick)
+            .semantics {
+                testTag = ThemeModePresentation.optionTestTag(option)
+                contentDescription = ThemeModePresentation.optionAnnouncement(option)
+                stateDescription = ThemeModePresentation.optionStateDescription(selected)
+            },
+    )
 }
 
 /** 服务偏好入口：仅开发构建可见，指向测试服务地址设置。 */
