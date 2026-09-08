@@ -226,8 +226,8 @@ internal fun EarMicControls(
                 side = FaceToFaceSide.LEFT,
                 language = state.leftLanguage,
                 otherLanguage = state.rightLanguage,
-                pointerEnabled = if (manual) state.phase == FaceToFacePhase.IDLE else state.phase in setOf(FaceToFacePhase.IDLE, FaceToFacePhase.LISTENING, FaceToFacePhase.PAUSED),
-                actionEnabled = if (manual) state.phase == FaceToFacePhase.IDLE || activeSide == FaceToFaceSide.LEFT else continuousLeftAction(state.phase) != null,
+                pointerEnabled = if (manual) state.phase in setOf(FaceToFacePhase.IDLE, FaceToFacePhase.PROCESSING) else state.phase in setOf(FaceToFacePhase.IDLE, FaceToFacePhase.LISTENING, FaceToFacePhase.PAUSED),
+                actionEnabled = if (manual) state.phase in setOf(FaceToFacePhase.IDLE, FaceToFacePhase.PROCESSING) || activeSide == FaceToFaceSide.LEFT else continuousLeftAction(state.phase) != null,
                 active = activeSide == FaceToFaceSide.LEFT,
                 activeSide = activeSide,
                 phase = state.phase,
@@ -244,7 +244,7 @@ internal fun EarMicControls(
                 onCancel = leftCancel,
                 onAccessibleClick = if (manual) {
                     {
-                        if (state.phase == FaceToFacePhase.IDLE) requestMicrophone(MicrophonePermissionAction.Manual(FaceToFaceSide.LEFT))
+                        if (state.phase in setOf(FaceToFacePhase.IDLE, FaceToFacePhase.PROCESSING)) requestMicrophone(MicrophonePermissionAction.Manual(FaceToFaceSide.LEFT))
                         else { clearMicrophoneRequest(); onManualRelease() }
                     }
                 } else {
@@ -265,8 +265,8 @@ internal fun EarMicControls(
                 side = FaceToFaceSide.RIGHT,
                 language = state.rightLanguage,
                 otherLanguage = state.leftLanguage,
-                pointerEnabled = if (manual) state.phase == FaceToFacePhase.IDLE else state.phase == FaceToFacePhase.LISTENING,
-                actionEnabled = if (manual) state.phase == FaceToFacePhase.IDLE || activeSide == FaceToFaceSide.RIGHT else state.phase == FaceToFacePhase.LISTENING,
+                pointerEnabled = if (manual) state.phase in setOf(FaceToFacePhase.IDLE, FaceToFacePhase.PROCESSING) else state.phase == FaceToFacePhase.LISTENING,
+                actionEnabled = if (manual) state.phase in setOf(FaceToFacePhase.IDLE, FaceToFacePhase.PROCESSING) || activeSide == FaceToFaceSide.RIGHT else state.phase == FaceToFacePhase.LISTENING,
                 active = activeSide == FaceToFaceSide.RIGHT,
                 activeSide = activeSide,
                 phase = state.phase,
@@ -284,7 +284,7 @@ internal fun EarMicControls(
                 },
                 onAccessibleClick = if (manual) {
                     {
-                        if (state.phase == FaceToFacePhase.IDLE) requestMicrophone(MicrophonePermissionAction.Manual(FaceToFaceSide.RIGHT))
+                        if (state.phase in setOf(FaceToFacePhase.IDLE, FaceToFacePhase.PROCESSING)) requestMicrophone(MicrophonePermissionAction.Manual(FaceToFaceSide.RIGHT))
                         else { clearMicrophoneRequest(); onManualRelease() }
                     }
                 } else {

@@ -59,6 +59,27 @@ class FaceToFaceViewModelTest {
         dispatcher.scheduler.advanceUntilIdle()
     }
 
+    @Test fun manualModeStartsNextPressBeforePreviousTurnFinishes() {
+        vm.setMode(FaceToFaceMode.MANUAL)
+        assertEquals(FaceToFaceMode.MANUAL, vm.state.value.mode)
+        vm.manualPress(FaceToFaceSide.LEFT)
+        dispatcher.scheduler.runCurrent()
+        assertEquals(1, runtime.sockets.size)
+        assertEquals(FaceToFacePhase.LISTENING, vm.state.value.phase)
+        runtime.sockets.single().source("第一轮")
+        assertEquals("第一轮", vm.state.value.turns.single().sourceText)
+        vm.manualRelease()
+
+        assertEquals(FaceToFacePhase.PROCESSING, vm.state.value.phase)
+        vm.manualPress(FaceToFaceSide.RIGHT)
+        dispatcher.scheduler.runCurrent()
+
+        assertEquals(FaceToFacePhase.LISTENING, vm.state.value.phase)
+        assertEquals(FaceToFaceSide.RIGHT, vm.state.value.activeSide)
+        assertEquals(2, runtime.sockets.size)
+        assertEquals(2, runtime.captureStarts)
+    }
+
     @Test fun accessibleTakeoverActionStartsAndEndsRightTurn() {
         start()
 

@@ -138,7 +138,12 @@ class FaceToFaceCoordinator<S> {
 
     @Synchronized
     fun manualPress(turnId: Long, side: FaceToFaceSide, session: S): Transition<S> {
-        if (current.mode != FaceToFaceMode.MANUAL || current.phase != FaceToFacePhase.IDLE || entries.isNotEmpty()) {
+        // A released manual turn may still translate or drain TTS. Like AUTO takeovers,
+        // keep that entry alive while accepting the next press immediately.
+        val canStart = current.mode == FaceToFaceMode.MANUAL &&
+            current.phase in setOf(FaceToFacePhase.IDLE, FaceToFacePhase.PROCESSING) &&
+            !current.captureActive && activeTurnId == null
+        if (!canStart) {
             return Transition(accepted = false, cancelSessions = listOf(session))
         }
         addTurnLocked(turnId, side, session)

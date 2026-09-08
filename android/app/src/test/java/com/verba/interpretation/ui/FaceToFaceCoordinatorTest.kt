@@ -40,7 +40,7 @@ class FaceToFaceCoordinatorTest {
         assertTrue(coordinator.canCloseCloudSession())
     }
 
-    @Test fun manualPttLocksBothSidesUntilFinishedAndPlaybackDrains() {
+    @Test fun manualPttAcceptsNextPressWhilePreviousTurnTranslatesAndDrains() {
         val coordinator = FaceToFaceCoordinator<String>()
         val press = coordinator.manualPress(1, FaceToFaceSide.LEFT, "left")
         assertTrue(press.accepted)
@@ -48,22 +48,26 @@ class FaceToFaceCoordinatorTest {
         assertEquals(25_000L, press.timer?.delayMillis)
         coordinator.updateSubtitle(1, SubtitleKind.SOURCE_PARTIAL, "你好")
 
-        val blocked = coordinator.manualPress(2, FaceToFaceSide.RIGHT, "right")
-        assertFalse(blocked.accepted)
-        assertEquals(listOf("right"), blocked.cancelSessions)
+        val blockedWhilePressed = coordinator.manualPress(2, FaceToFaceSide.RIGHT, "right")
+        assertFalse(blockedWhilePressed.accepted)
+        assertEquals(listOf("right"), blockedWhilePressed.cancelSessions)
 
         val release = coordinator.endManualInput()
         assertEquals(listOf("left"), release.finishSessions)
         assertTrue(release.stopCapture)
         assertEquals(FaceToFacePhase.PROCESSING, coordinator.state().phase)
-        assertFalse(coordinator.manualPress(3, FaceToFaceSide.RIGHT, "blocked").accepted)
 
+        val nextPress = coordinator.manualPress(3, FaceToFaceSide.RIGHT, "right-next")
+        assertTrue(nextPress.accepted)
+        assertTrue(nextPress.startCapture)
+        assertEquals(FaceToFacePhase.LISTENING, coordinator.state().phase)
+        assertEquals(FaceToFaceSide.RIGHT, coordinator.state().activeSide)
+
+        // Old turn can finish and drain while the new manual capture remains active.
         val drain = coordinator.sessionFinished(1)
         assertTrue(drain is FaceToFaceCoordinator.PlaybackWork.Drain)
-        assertFalse(coordinator.manualPress(4, FaceToFaceSide.RIGHT, "still-blocked").accepted)
-        assertNull(coordinator.playbackWorkFinished(1, drained = true))
-        assertEquals(FaceToFacePhase.IDLE, coordinator.state().phase)
-        assertTrue(coordinator.manualPress(5, FaceToFaceSide.RIGHT, "next").accepted)
+        coordinator.playbackWorkFinished(1, drained = true)
+        assertEquals(FaceToFacePhase.LISTENING, coordinator.state().phase)
     }
 
     @Test fun viewDefaultsToConversationAndSwitchingStopsActiveManualInputSafely() {

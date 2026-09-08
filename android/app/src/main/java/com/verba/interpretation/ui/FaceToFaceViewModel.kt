@@ -88,7 +88,12 @@ class FaceToFaceViewModel @JvmOverloads constructor(
 
     fun manualPress(side: FaceToFaceSide) = startWithCloudGrant(
         side = side,
-        canStart = { coordinator.state().mode == FaceToFaceMode.MANUAL && coordinator.state().phase == FaceToFacePhase.IDLE },
+        canStart = {
+            val state = coordinator.state()
+            state.mode == FaceToFaceMode.MANUAL &&
+                state.phase in setOf(FaceToFacePhase.IDLE, FaceToFacePhase.PROCESSING) &&
+                !state.captureActive
+        },
     ) { created -> applyTransition(coordinator.manualPress(created.turnId, side, created.socket)) }
 
     fun manualRelease() = synchronized(actionLock) {
