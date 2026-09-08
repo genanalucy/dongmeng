@@ -127,6 +127,16 @@ class FaceToFaceViewModelTest {
         assertEquals(0, cloud.opens)
     }
 
+    @Test fun closedActiveSocketDropsTailAudioPacketWithoutFailingCapture() {
+        start()
+        runtime.sockets.single().sendSucceeds = false
+
+        runtime.packet?.invoke(ByteArray(2_560))
+
+        assertEquals(FaceToFacePhase.LISTENING, vm.state.value.phase)
+        assertEquals(null, vm.state.value.error)
+    }
+
     @Test fun pauseAndLifecycleInvalidatePendingCloudGrant() {
         startPendingThenInvalidate(vm::pauseAuto)
         startPendingThenInvalidate(vm::cancel)
@@ -253,12 +263,13 @@ private class RecordingSocket(val event: (AgentEvent) -> Unit, val tts: (ByteArr
     var finishes = 0
     var cancels = 0
     var languages: Pair<String, String>? = null
+    var sendSucceeds = true
     override fun start(source: String, target: String, grant: TranslationSessionGrant): Boolean {
         languages = source to target
         onStart()
         return true
     }
-    override fun sendAudio(packet: ByteArray) = true
+    override fun sendAudio(packet: ByteArray) = sendSucceeds
     override fun finish() { finishes++ }
     override fun cancel() { cancels++ }
     fun source(text: String) = event(AgentEvent.Subtitle(AgentEvent.Subtitle.Kind.SOURCE_FINAL, text))

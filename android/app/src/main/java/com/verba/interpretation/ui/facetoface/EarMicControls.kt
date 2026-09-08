@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.border
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.RepeatMode
@@ -315,14 +316,6 @@ private fun LanguagePairRow(
     }
 }
 
-private fun languageShortLabel(language: String): String = when (language) {
-    "zh" -> "中"
-    "en" -> "EN"
-    "vi" -> "VI"
-    "fr" -> "FR"
-    else -> language.uppercase()
-}
-
 @Composable
 private fun LanguageEntry(side: FaceToFaceSide, language: String, otherLanguage: String, enabled: Boolean, onSelect: (String) -> Unit) {
     var expanded by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
@@ -451,7 +444,7 @@ internal fun EarMicButton(
             Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
                 Icon(Icons.Filled.Mic, contentDescription = null, tint = VerbaColors.Canvas, modifier = Modifier.size(26.dp))
                 Text(
-                    "${earLabel(side)} · ${languageShortLabel(language)}",
+                    if (side == FaceToFaceSide.LEFT) "L" else "R",
                     color = VerbaColors.Canvas,
                     style = MaterialTheme.typography.labelSmall,
                     fontWeight = FontWeight.SemiBold,
@@ -492,6 +485,7 @@ private fun ContinuousControls(
     Surface(
         modifier = Modifier
             .size(56.dp)
+            .clip(CircleShape)
             .clickable(enabled = action != null, role = Role.Button, onClick = ::runAction)
             .semantics {
                 contentDescription = label

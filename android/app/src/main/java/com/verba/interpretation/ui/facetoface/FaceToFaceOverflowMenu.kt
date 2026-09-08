@@ -36,7 +36,9 @@ internal fun FaceToFaceOverflowMenu(
     var expanded by remember { mutableStateOf(false) }
     IconButton(
         onClick = { expanded = true },
-        modifier = Modifier.semantics { contentDescription = "面对面翻译更多选项" },
+        modifier = Modifier
+            .clip(RoundedCornerShape(24.dp))
+            .semantics { contentDescription = "面对面翻译更多选项" },
     ) {
         androidx.compose.material3.Surface(
             modifier = Modifier.size(44.dp),

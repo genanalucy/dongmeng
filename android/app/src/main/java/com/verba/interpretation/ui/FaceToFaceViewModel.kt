@@ -277,7 +277,10 @@ class FaceToFaceViewModel @JvmOverloads constructor(
     private fun startCapture() {
         when (val result = runtime.startCapture(
             onPacket = { packet ->
-                if (!coordinator.sendToActive { it.sendAudio(packet) }) fail("音频包无法发送，连接尚未就绪或已断开。")
+                // During AUTO side hand-off an outgoing turn may close between this 80 ms
+                // capture frame and its terminal callback. That tail frame is not an audio
+                // fault; drop it and let the socket terminal event settle the turn.
+                coordinator.sendToActive { it.sendAudio(packet) }
             },
             onError = ::fail,
             onLevel = { level ->

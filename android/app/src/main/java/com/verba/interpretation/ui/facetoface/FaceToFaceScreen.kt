@@ -26,6 +26,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.semantics.contentDescription
@@ -161,6 +162,7 @@ private fun FaceToFaceViewMenu(
             modifier = Modifier
                 .width(64.dp)
                 .height(48.dp)
+                .clip(androidx.compose.foundation.shape.RoundedCornerShape(24.dp))
                 .clickable(enabled = enabled, role = Role.Button) { expanded = true }
                 .semantics {
                     testTag = "face-view-menu"

@@ -1,63 +1,29 @@
 package server
 
-import (
-	"context"
-	"testing"
-	"time"
-)
+import "testing"
 
-func TestRegistryReplacementSupersedesAndStaleCleanupCannotRemoveIt(t *testing.T) {
+func TestRegistryAllowsOverlappingConnectionsForSameIdentity(t *testing.T) {
 	registry := newConnectionRegistry()
-	cancelled := make([]string, 0, 2)
-	cancels := map[string]chan struct{}{
-		"first":  make(chan struct{}),
-		"second": make(chan struct{}),
+	firstCancelled := false
+	secondCancelled := false
+	first := registry.register("identity", func() { firstCancelled = true })
+	second := registry.register("identity", func() { secondCancelled = true })
+
+	if firstCancelled || secondCancelled {
+		t.Fatal("registering an overlapping turn must not cancel either live connection")
 	}
-	makeCancel := func(name string) context.CancelFunc {
-		return func() {
-			cancelled = append(cancelled, name)
-			close(cancels[name])
-		}
+	if !registry.active(first) || !registry.active(second) || registry.len() != 2 {
+		t.Fatalf("overlapping registrations not active: first=%v second=%v len=%d", registry.active(first), registry.active(second), registry.len())
 	}
 
-	first := registry.register("identity", makeCancel("first"))
-	if !registry.active(first) || registry.len() != 1 {
-		t.Fatalf("first registration not active: active=%v len=%d", registry.active(first), registry.len())
-	}
-
-	// A newer connection with the same identity supersedes the older one: the
-	// older context is cancelled and the newer registration replaces it.
-	second := registry.register("identity", makeCancel("second"))
-	select {
-	case <-cancels["first"]:
-	case <-time.After(time.Second):
-		t.Fatal("superseded connection was not cancelled")
-	}
-	if registry.active(first) || !registry.active(second) || registry.len() != 1 {
-		t.Fatalf("replacement not active: first=%v second=%v len=%d",
-			registry.active(first), registry.active(second), registry.len())
-	}
-
-	// The superseded connection's stale cleanup must never erase the newer
-	// registration.
 	registry.unregister(first)
-	if !registry.active(second) || registry.len() != 1 {
-		t.Fatal("stale cleanup removed the replacement registration")
+	if registry.active(first) || !registry.active(second) || registry.len() != 1 {
+		t.Fatal("first cleanup removed the overlapping second turn")
 	}
-
-	// The live connection's own cleanup is the only one that removes it.
 	registry.unregister(second)
-	if registry.active(second) || registry.len() != 0 {
-		t.Fatal("live registration was not removed by its own cleanup")
+	if registry.len() != 0 {
+		t.Fatal("registry retained a released connection")
 	}
-
-	// A later registration for the freed identity is not affected by the
-	// retired handles.
-	third := registry.register("identity", makeCancel("second"))
-	if !registry.active(third) || registry.len() != 1 {
-		t.Fatal("identity could not be re-registered after cleanup")
-	}
-	third.cancel()
 }
 
 func TestRegistryUnregisterNilAndDistinctKeysAreSafe(t *testing.T) {
