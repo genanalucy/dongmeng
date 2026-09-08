@@ -535,8 +535,10 @@ private fun ActionButton(action: InterpretationAction, onClick: () -> Unit) {
         // intentionally theme-stable). There is no colorScheme role for it, and the dark
         // canvas ink keeps >= 7:1 contrast on the accent in both themes.
         colors = ButtonDefaults.buttonColors(containerColor = VerbaColors.LeftMic, contentColor = VerbaColors.Canvas),
-        contentPadding = ButtonDefaults.ContentPadding,
+        // Icon-only actions must not retain Button's horizontal text padding:
+        // 48dp width minus 48dp padding leaves no measurable space for the icon.
+        contentPadding = PaddingValues(0.dp),
     ) {
-        Icon(icon, contentDescription = null, modifier = Modifier.size(22.dp))
+        Icon(icon, contentDescription = null, modifier = Modifier.size(22.dp), tint = VerbaColors.Canvas)
     }
 }

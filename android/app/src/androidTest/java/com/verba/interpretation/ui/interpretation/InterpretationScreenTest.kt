@@ -31,6 +31,7 @@ class InterpretationScreenTest {
         compose.onNodeWithText("中文 原文").assertIsDisplayed()
         compose.onNodeWithText("English 译文").assertIsDisplayed()
         compose.onNodeWithText("译文会显示在这里").assertIsDisplayed()
+        compose.onNodeWithContentDescription("开始同传").assertIsDisplayed()
         compose.onNodeWithContentDescription("开始同传").performClick()
         assertEquals(1, starts)
         compose.onAllNodesWithText("正在翻译").assertCountEquals(0)
