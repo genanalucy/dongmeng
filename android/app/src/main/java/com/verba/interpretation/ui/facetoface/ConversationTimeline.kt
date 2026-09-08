@@ -278,11 +278,11 @@ private fun ConversationBubble(
     val isRight = bubble.alignment == FaceToFaceTurnAlignment.END
     val isLive = bubble.isLive
     val isSingleLanguage = bubble.displayMode == ConversationDisplayMode.SINGLE_LANGUAGE
-    // Static bubbles read MaterialTheme.colorScheme (BrandDarkColors keeps the exact legacy
-    // pixels in dark mode); live bubbles keep the theme-stable ear-identity colors below.
+    // Live state is expressed by the themed outline and waveform instead of a fixed dark
+    // surface, so a light workspace never contains an unrelated dark capture bubble.
     val colorScheme = MaterialTheme.colorScheme
-    val sourceColor = if (isLive) ConversationColors.liveInk else colorScheme.onSurface
-    val translationColor = if (isLive) ConversationColors.liveTranslation else colorScheme.primary
+    val sourceColor = colorScheme.onSurface
+    val translationColor = colorScheme.primary
     val sourceLanguage = TranslationLanguage.displayName(bubble.sourceLanguage)
     val targetLanguage = TranslationLanguage.displayName(bubble.targetLanguage)
     val targetEar = targetEarLabel(bubble.side)
@@ -316,22 +316,15 @@ private fun ConversationBubble(
                 bottomStart = if (isRight) TranslationVisualTokens.BubbleRadius else TranslationVisualTokens.BubbleTailRadius,
                 bottomEnd = if (isRight) TranslationVisualTokens.BubbleTailRadius else TranslationVisualTokens.BubbleRadius,
             ),
-            color = if (isLive) {
-                if (isRight) ConversationColors.rightLive else ConversationColors.leftLive
-            } else colorScheme.surfaceContainer,
-            border = BorderStroke(
-                1.dp,
-                if (isLive) {
-                    if (isRight) ConversationColors.rightAccent else ConversationColors.leftAccent
-                } else colorScheme.outline,
-            ),
+            color = if (isLive) colorScheme.surfaceContainerHigh else colorScheme.surfaceContainer,
+            border = BorderStroke(1.dp, if (isLive) colorScheme.primary else colorScheme.outline),
         ) {
             Column(Modifier.padding(horizontal = visualSpec.bubbleHorizontalPadding, vertical = visualSpec.bubbleVerticalPadding)) {
                 Box(Modifier.fillMaxWidth().height(22.dp)) {
                     if (liveLabel != null) {
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            LiveWaveform(color = if (isRight) ConversationColors.rightAccent else ConversationColors.leftAccent)
-                            Text(liveLabel, fontSize = 11.sp, lineHeight = 16.sp, color = if (isRight) ConversationColors.rightAccent else ConversationColors.leftAccent, fontWeight = FontWeight.Medium)
+                            LiveWaveform(color = colorScheme.primary)
+                            Text(liveLabel, fontSize = 11.sp, lineHeight = 16.sp, color = colorScheme.primary, fontWeight = FontWeight.Medium)
                         }
                     }
                 }
@@ -356,7 +349,7 @@ private fun ConversationBubble(
                 }
                 if (!isSingleLanguage) {
                     Spacer(Modifier.height(12.dp))
-                    Spacer(Modifier.fillMaxWidth().height(1.dp).background(if (isLive) ConversationColors.liveDivider else colorScheme.outlineVariant))
+                    Spacer(Modifier.fillMaxWidth().height(1.dp).background(colorScheme.outlineVariant))
                     Spacer(Modifier.height(12.dp))
                     bubble.translationText?.let { translation ->
                         LiveText(
@@ -435,20 +428,4 @@ private fun EmptyLiveLine(height: androidx.compose.ui.unit.Dp, color: Color, cur
     Box(Modifier.fillMaxWidth().height(height).drawBehind {
         if (cursor) drawRect(color, androidx.compose.ui.geometry.Offset.Zero, androidx.compose.ui.geometry.Size(2.dp.toPx(), size.height))
     })
-}
-
-/**
- * Ear-identity colors for the live (still-streaming) turn bubble. The left/right live
- * surfaces and accents have no MaterialTheme.colorScheme role; they are the brand's
- * active-capture highlight and are intentionally theme-stable (see VerbaColors), with
- * light content kept alongside them so the pairs stay readable in dark and light mode.
- */
-private object ConversationColors {
-    val leftLive = androidx.compose.ui.graphics.Color(0xFF182533)
-    val rightLive = androidx.compose.ui.graphics.Color(0xFF28272A)
-    val leftAccent = androidx.compose.ui.graphics.Color(0xFF91B5D5)
-    val rightAccent = androidx.compose.ui.graphics.Color(0xFFE0BC83)
-    val liveInk = androidx.compose.ui.graphics.Color(0xFFF5F5F2)
-    val liveTranslation = androidx.compose.ui.graphics.Color(0xFFFFC46B)
-    val liveDivider = androidx.compose.ui.graphics.Color(0xFF48515E)
 }

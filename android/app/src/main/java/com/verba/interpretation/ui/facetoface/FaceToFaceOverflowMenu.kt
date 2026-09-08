@@ -71,8 +71,7 @@ internal fun FaceToFaceOverflowMenu(
             enabled = state.phase == FaceToFacePhase.IDLE,
         )
         if (state.mode == FaceToFaceMode.AUTO && state.phase in setOf(FaceToFacePhase.LISTENING, FaceToFacePhase.PAUSED)) {
-            // The primary pause/resume/start controls live between the microphones. Keep only
-            // the redundant termination path in this secondary menu.
+            // 主操作（播放/暂停）在双麦之间；结束是次要会话操作，保留在更多菜单。
             DropdownMenuItem(text = { Text("结束连续翻译") }, onClick = { onStopAuto(); expanded = false })
         }
     }

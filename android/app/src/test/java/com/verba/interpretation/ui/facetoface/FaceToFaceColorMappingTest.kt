@@ -20,8 +20,8 @@ import kotlin.math.pow
  * surface, item text), ConversationTimeline (static bubbles) and EarMicControls (language
  * entries). These read MaterialTheme.colorScheme roles instead of VerbaColors constants;
  * these plain JVM tests pin the dark scheme to the exact legacy VerbaColors pixels, pin
- * light mode as a genuinely light variant, and document the intentionally theme-stable
- * ear-identity live/accent pairs that have no colorScheme role.
+ * light mode as a genuinely light variant. Live bubbles use the same themed surface
+ * hierarchy, with primary outline/waveform indicating active capture.
  */
 class FaceToFaceColorMappingTest {
     private fun linearChannel(channel: Float): Double =
@@ -93,15 +93,15 @@ class FaceToFaceColorMappingTest {
         assertTrue(abs(legacy.blue - outline.blue) * 255 <= 2)
     }
 
-    @Test fun earIdentityLivePairsStayReadableInBothThemes() {
-        // Live-turn bubbles and ear mic buttons intentionally keep the ear-identity
-        // constants (theme-stable per VerbaColors docs; no colorScheme role exists), so
-        // their content pairs must meet WCAG AA in light mode as well.
+    @Test fun liveBubbleUsesThemedSurfaceAndPrimaryAccentInBothThemes() {
+        // A live capture never introduces a fixed dark panel in a light workspace.
+        assertNotEquals(BrandDarkColors.surfaceContainerHigh.toArgb(), BrandLightColors.surfaceContainerHigh.toArgb())
+        assertNotEquals(BrandDarkColors.primary.toArgb(), BrandLightColors.primary.toArgb())
         listOf(
-            "liveInk on leftLive" to (VerbaColors.Ink to VerbaColors.LeftLive),
-            "liveInk on rightLive" to (VerbaColors.Ink to VerbaColors.RightLive),
-            "canvas ink on LeftMic" to (VerbaColors.Canvas to VerbaColors.LeftMic),
-            "canvas ink on RightMic" to (VerbaColors.Canvas to VerbaColors.RightMic),
+            "dark onSurface on live surface" to (BrandDarkColors.onSurface to BrandDarkColors.surfaceContainerHigh),
+            "light onSurface on live surface" to (BrandLightColors.onSurface to BrandLightColors.surfaceContainerHigh),
+            "dark primary on live surface" to (BrandDarkColors.primary to BrandDarkColors.surfaceContainerHigh),
+            "light primary on live surface" to (BrandLightColors.primary to BrandLightColors.surfaceContainerHigh),
         ).forEach { (name, pair) ->
             val ratio = contrastRatio(pair.first, pair.second)
             assertTrue("$name contrast ${"%.2f".format(ratio)} is below WCAG AA 4.5", ratio >= 4.5)

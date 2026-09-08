@@ -24,6 +24,8 @@ import androidx.compose.animation.core.tween
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -249,13 +251,13 @@ internal fun EarMicControls(
                 },
                 onLanguage = { onSetLanguages(it, state.rightLanguage) },
             )
-            if (showAutoControls && visibleSides.size == 2 && (!manual || state.phase == FaceToFacePhase.IDLE)) {
+            // 连续控制只属于已选中的连续翻译模式；手动模式不展示，避免误以为
+            // 可以直接从双麦中间切换会话模式。
+            if (showAutoControls && visibleSides.size == 2 && !manual) {
                 ContinuousControls(
-                    mode = state.mode,
                     phase = state.phase,
                     requestMicrophone = requestMicrophone,
                     onPause = { clearMicrophoneRequest(); onPauseAuto() },
-                    onStop = { clearMicrophoneRequest(); onStopAuto() },
                 )
             }
             if (FaceToFaceSide.RIGHT in visibleSides) EarMicButton(
@@ -463,63 +465,46 @@ internal fun EarMicButton(
 
 @Composable
 private fun ContinuousControls(
-    mode: FaceToFaceMode,
     phase: FaceToFacePhase,
     requestMicrophone: (MicrophonePermissionAction) -> Unit,
     onPause: () -> Unit,
-    onStop: () -> Unit,
 ) {
     val action = continuousLeftAction(phase)
     val label = when (action) {
-        FaceToFaceAction.START_CONTINUOUS -> "开启连续翻译"
+        FaceToFaceAction.START_CONTINUOUS -> "开始连续翻译"
         FaceToFaceAction.PAUSE_CONTINUOUS -> "暂停连续翻译"
         FaceToFaceAction.RESUME_CONTINUOUS -> "继续连续翻译"
-        null -> if (phase == FaceToFacePhase.LISTENING || phase == FaceToFacePhase.PAUSED) "结束连续翻译" else "连续翻译不可用"
-        else -> "结束连续翻译"
+        null -> "连续翻译不可用"
+        else -> "连续翻译不可用"
     }
-    val enabled = action != null || phase in setOf(FaceToFacePhase.LISTENING, FaceToFacePhase.PAUSED)
+    val icon = when (action) {
+        FaceToFaceAction.PAUSE_CONTINUOUS -> Icons.Filled.Pause
+        else -> Icons.Filled.PlayArrow
+    }
     fun runAction() {
         when (action) {
-            FaceToFaceAction.START_CONTINUOUS -> requestMicrophone(
-                if (mode == FaceToFaceMode.MANUAL) {
-                    MicrophonePermissionAction.ContinuousEnable
-                } else {
-                    MicrophonePermissionAction.ContinuousStart
-                },
-            )
+            FaceToFaceAction.START_CONTINUOUS -> requestMicrophone(MicrophonePermissionAction.ContinuousStart)
             FaceToFaceAction.PAUSE_CONTINUOUS -> onPause()
             FaceToFaceAction.RESUME_CONTINUOUS -> requestMicrophone(MicrophonePermissionAction.ContinuousResume)
-            null -> onStop()
-            else -> onStop()
+            else -> Unit
         }
     }
-    Column(verticalArrangement = Arrangement.spacedBy(4.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-        ContinuousControlSurface(label, enabled, ::runAction)
-        if (mode == FaceToFaceMode.AUTO && phase in setOf(FaceToFacePhase.LISTENING, FaceToFacePhase.PAUSED)) {
-            ContinuousControlSurface("结束连续翻译", enabled = true, onClick = onStop)
-        }
-    }
-}
-
-@Composable
-private fun ContinuousControlSurface(label: String, enabled: Boolean, onClick: () -> Unit) {
     Surface(
         modifier = Modifier
-            .width(TranslationVisualTokens.MicGroupWidth)
-            .heightIn(min = 48.dp)
-            .clickable(enabled = enabled, role = Role.Button, onClick = onClick)
+            .size(56.dp)
+            .clickable(enabled = action != null, role = Role.Button, onClick = ::runAction)
             .semantics {
                 contentDescription = label
                 role = Role.Button
-                if (!enabled) disabled()
-                onClick(label = label) { onClick(); true }
+                if (action == null) disabled()
+                onClick(label = label) { runAction(); true }
             },
-        shape = androidx.compose.foundation.shape.RoundedCornerShape(24.dp),
+        shape = CircleShape,
         color = MaterialTheme.colorScheme.secondaryContainer,
         border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
     ) {
         Box(contentAlignment = Alignment.Center) {
-            Text(label, color = MaterialTheme.colorScheme.onSecondaryContainer, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+            Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.onSecondaryContainer)
         }
     }
 }
