@@ -410,7 +410,7 @@ private fun AppUpdateDownloadDialog(state: AppUpdateState.Downloading) {
     val fraction = state.progress?.fraction
     val detail = when {
         state.verifying -> "正在校验更新包，请勿退出。"
-        fraction != null -> "正在下载更新：${(fraction * 100).toInt().coerceIn(0, 100)}%"
+        fraction != null -> "正在下载更新：${(fraction * 100).toInt().coerceIn(0, 100)}%${formatUpdateDownloadSpeed(state.progress)}"
         else -> "正在下载更新包，请勿退出。"
     }
     AlertDialog(
@@ -432,6 +432,11 @@ private fun AppUpdateDownloadDialog(state: AppUpdateState.Downloading) {
         confirmButton = {},
     )
 }
+
+private fun formatUpdateDownloadSpeed(progress: com.verba.interpretation.update.AppUpdateProgress?): String = progress?.bytesPerSecond
+    ?.takeIf { it > 0 }
+    ?.let { " · %.1f MB/s".format(java.util.Locale.ROOT, it / 1024f / 1024f) }
+    .orEmpty()
 
 @Composable
 private fun AppUpdatePromptDialog(

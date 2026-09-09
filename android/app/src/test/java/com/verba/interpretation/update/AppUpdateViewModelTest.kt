@@ -22,6 +22,10 @@ class AppUpdateViewModelTest {
     @Before fun setUp() = Dispatchers.setMain(dispatcher)
     @After fun tearDown() = Dispatchers.resetMain()
 
+    @Test fun progressReportsAverageDownloadSpeedAfterTimeElapses() {
+        assertEquals(1_500L, AppUpdateProgress(3_000L, 10_000L, 2_000L).bytesPerSecond)
+    }
+
     @Test fun ordinaryAutomaticUpdateCanBeIgnoredByVersion() = runTest(dispatcher) {
         val preferences = RecordingPreferences()
         val viewModel = viewModel(preferences, forceUpdate = false)

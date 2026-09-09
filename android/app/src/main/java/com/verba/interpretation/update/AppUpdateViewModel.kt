@@ -16,6 +16,7 @@ import com.verba.interpretation.cloud.SharedPreferencesInstallationIdStore
 import java.io.File
 import java.io.IOException
 import java.security.MessageDigest
+import android.os.SystemClock
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -26,8 +27,13 @@ import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 
-data class AppUpdateProgress(val downloadedBytes: Long, val totalBytes: Long?) {
+data class AppUpdateProgress(
+    val downloadedBytes: Long,
+    val totalBytes: Long?,
+    val elapsedMillis: Long,
+) {
     val fraction: Float? get() = totalBytes?.takeIf { it > 0 }?.let { downloadedBytes.toFloat() / it }
+    val bytesPerSecond: Long? get() = elapsedMillis.takeIf { it > 0 }?.let { downloadedBytes * 1_000 / it }
 }
 
 data class AppUpdateInfo(
@@ -190,7 +196,8 @@ class AppUpdateViewModel @JvmOverloads constructor(
                 temporary.outputStream().use { output ->
                     val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
                     var downloaded = 0L
-                    onProgress(AppUpdateProgress(0L, body.contentLength().takeIf { it >= 0 }), false)
+                    val startedAtMillis = SystemClock.elapsedRealtime()
+                    onProgress(AppUpdateProgress(0L, body.contentLength().takeIf { it >= 0 }, 0L), false)
                     while (true) {
                         val count = input.read(buffer)
                         if (count < 0) break
@@ -198,7 +205,14 @@ class AppUpdateViewModel @JvmOverloads constructor(
                         if (downloaded > MAX_APK_BYTES) throw IOException("APK too large")
                         output.write(buffer, 0, count)
                         digest.update(buffer, 0, count)
-                        onProgress(AppUpdateProgress(downloaded, body.contentLength().takeIf { it >= 0 }), false)
+                        onProgress(
+                            AppUpdateProgress(
+                                downloaded,
+                                body.contentLength().takeIf { it >= 0 },
+                                SystemClock.elapsedRealtime() - startedAtMillis,
+                            ),
+                            false,
+                        )
                     }
                 }
             }
