@@ -26,6 +26,10 @@ import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 
+data class AppUpdateProgress(val downloadedBytes: Long, val totalBytes: Long?) {
+    val fraction: Float? get() = totalBytes?.takeIf { it > 0 }?.let { downloadedBytes.toFloat() / it }
+}
+
 data class AppUpdateInfo(
     val packageName: String,
     val versionCode: Int,
@@ -41,7 +45,11 @@ sealed interface AppUpdateState {
     data object Checking : AppUpdateState
     data object Current : AppUpdateState
     data class Available(val update: AppUpdateInfo) : AppUpdateState
-    data class Downloading(val update: AppUpdateInfo) : AppUpdateState
+    data class Downloading(
+        val update: AppUpdateInfo,
+        val progress: AppUpdateProgress? = null,
+        val verifying: Boolean = false,
+    ) : AppUpdateState
     data class ReadyToInstall(val update: AppUpdateInfo, val apkUri: Uri) : AppUpdateState
     data class Failed(val message: String) : AppUpdateState
 }
@@ -137,14 +145,17 @@ class AppUpdateViewModel @JvmOverloads constructor(
 
     fun downloadFromAutomaticPrompt() {
         val update = mutableAutomaticPrompt.value ?: return
-        mutableAutomaticPrompt.value = null
         download(update)
     }
 
     fun download(update: AppUpdateInfo) = viewModelScope.launch {
         mutableState.value = AppUpdateState.Downloading(update)
         mutableState.value = try {
-            val apk = withContext(dispatcher) { downloadAndVerify(update) }
+            val apk = withContext(dispatcher) {
+                downloadAndVerify(update) { progress, verifying ->
+                    mutableState.value = AppUpdateState.Downloading(update, progress, verifying)
+                }
+            }
             val uri = FileProvider.getUriForFile(getApplication(), "${BuildConfig.APPLICATION_ID}.updates", apk)
             AppUpdateState.ReadyToInstall(update, uri)
         } catch (_: Exception) {
@@ -157,7 +168,10 @@ class AppUpdateViewModel @JvmOverloads constructor(
         addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
     }
 
-    private fun downloadAndVerify(update: AppUpdateInfo): File {
+    private fun downloadAndVerify(
+        update: AppUpdateInfo,
+        onProgress: (AppUpdateProgress?, Boolean) -> Unit,
+    ): File {
         val request = Request.Builder().url(update.apkUrl).get().build()
         client.newCall(request).execute().use { response ->
             if (!response.isSuccessful || !isSafeHTTPS(response.request.url.toString())) throw IOException("APK request failed")
@@ -176,6 +190,7 @@ class AppUpdateViewModel @JvmOverloads constructor(
                 temporary.outputStream().use { output ->
                     val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
                     var downloaded = 0L
+                    onProgress(AppUpdateProgress(0L, body.contentLength().takeIf { it >= 0 }), false)
                     while (true) {
                         val count = input.read(buffer)
                         if (count < 0) break
@@ -183,9 +198,11 @@ class AppUpdateViewModel @JvmOverloads constructor(
                         if (downloaded > MAX_APK_BYTES) throw IOException("APK too large")
                         output.write(buffer, 0, count)
                         digest.update(buffer, 0, count)
+                        onProgress(AppUpdateProgress(downloaded, body.contentLength().takeIf { it >= 0 }), false)
                     }
                 }
             }
+            onProgress(null, true)
             if (!digest.digest().joinToString("") { "%02x".format(it.toInt() and 0xff) }.equals(update.sha256, ignoreCase = true)) {
                 temporary.delete()
                 throw IOException("APK digest mismatch")

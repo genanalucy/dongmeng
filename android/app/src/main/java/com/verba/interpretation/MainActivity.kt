@@ -70,6 +70,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -232,6 +233,7 @@ private fun InterpretationApp(
     val accountState by accountViewModel.state.collectAsStateWithLifecycle()
     val updateState by appUpdateViewModel.state.collectAsStateWithLifecycle()
     val automaticUpdatePrompt by appUpdateViewModel.automaticPrompt.collectAsStateWithLifecycle()
+    val updateDownloading = updateState is AppUpdateState.Downloading
     LaunchedEffect(Unit) {
         if (BuildConfig.DEBUG) appUpdateViewModel.checkAutomatically()
     }
@@ -390,7 +392,7 @@ private fun InterpretationApp(
             )
         }
     }
-    automaticUpdatePrompt?.let { update ->
+    automaticUpdatePrompt?.takeUnless { updateDownloading }?.let { update ->
         AppUpdatePromptDialog(
             update = update,
             onUpdate = appUpdateViewModel::downloadFromAutomaticPrompt,
@@ -398,6 +400,37 @@ private fun InterpretationApp(
             onDisableAutomaticPrompts = appUpdateViewModel::disableAutomaticPrompts,
         )
     }
+    (updateState as? AppUpdateState.Downloading)?.let { downloading ->
+        AppUpdateDownloadDialog(downloading)
+    }
+}
+
+@Composable
+private fun AppUpdateDownloadDialog(state: AppUpdateState.Downloading) {
+    val fraction = state.progress?.fraction
+    val detail = when {
+        state.verifying -> "正在校验更新包，请勿退出。"
+        fraction != null -> "正在下载更新：${(fraction * 100).toInt().coerceIn(0, 100)}%"
+        else -> "正在下载更新包，请勿退出。"
+    }
+    AlertDialog(
+        onDismissRequest = {},
+        title = { Text(if (state.verifying) "正在校验" else "正在下载更新") },
+        text = {
+            Column {
+                Text(detail)
+                if (fraction == null || state.verifying) {
+                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth().padding(top = 16.dp))
+                } else {
+                    LinearProgressIndicator(
+                        progress = { fraction.coerceIn(0f, 1f) },
+                        modifier = Modifier.fillMaxWidth().padding(top = 16.dp),
+                    )
+                }
+            }
+        },
+        confirmButton = {},
+    )
 }
 
 @Composable
