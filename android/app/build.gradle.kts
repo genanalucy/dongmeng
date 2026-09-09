@@ -26,7 +26,7 @@ android {
         targetSdk = 36
         // versionName is the human-facing release timestamp (UTC): YYYYMMDD.HHmm.
         // Android versionCode remains a compact monotonic integer (max 2,100,000,000).
-        versionCode = 4
+        versionCode = 5
         versionName = ZonedDateTime.now(ZoneOffset.UTC)
             .format(DateTimeFormatter.ofPattern("yyyyMMdd.HHmm"))
 
@@ -51,7 +51,6 @@ android {
     buildTypes {
         debug {
             applicationIdSuffix = ".debug"
-            versionNameSuffix = "-debug"
             buildConfigField("String", "AGENT_HTTP_URL", "\"https://47-129-170-16.sslip.io\"")
             // Cloud API uses the EC2 HTTPS edge in both debug and release builds.
             buildConfigField("String", "CLOUD_API_URL", "\"https://47-129-170-16.sslip.io\"")
