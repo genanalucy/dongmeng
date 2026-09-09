@@ -1,6 +1,13 @@
 import java.time.ZoneOffset
 import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
+import java.util.Properties
+
+val releaseSigningProperties = Properties().also { properties ->
+    val path = System.getenv("YANSHU_SIGNING_PROPERTIES")
+        ?: "${System.getProperty("user.home")}/.local/share/verba-release-signing/signing.properties"
+    file(path).takeIf { it.isFile }?.inputStream()?.use(properties::load)
+}
 
 plugins {
     id("com.android.application")
@@ -30,6 +37,17 @@ android {
         buildConfigField("String", "TRANSLATION_ORIGIN", "\"https://47-129-170-16.sslip.io\"")
     }
 
+    signingConfigs {
+        if (releaseSigningProperties.isNotEmpty()) {
+            create("production") {
+                storeFile = file(requireNotNull(releaseSigningProperties.getProperty("storeFile")))
+                storePassword = requireNotNull(releaseSigningProperties.getProperty("storePassword"))
+                keyAlias = requireNotNull(releaseSigningProperties.getProperty("keyAlias"))
+                keyPassword = requireNotNull(releaseSigningProperties.getProperty("keyPassword"))
+            }
+        }
+    }
+
     buildTypes {
         debug {
             applicationIdSuffix = ".debug"
@@ -41,6 +59,7 @@ android {
             buildConfigField("String", "TRANSLATION_ORIGIN", "\"https://47-129-170-16.sslip.io\"")
         }
         release {
+            signingConfigs.findByName("production")?.let { signingConfig = it }
             isMinifyEnabled = false
             buildConfigField("String", "AGENT_HTTP_URL", "\"https://47-129-170-16.sslip.io\"")
             buildConfigField("String", "CLOUD_API_URL", "\"https://47-129-170-16.sslip.io\"")
