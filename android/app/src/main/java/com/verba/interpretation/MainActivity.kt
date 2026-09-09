@@ -235,7 +235,7 @@ private fun InterpretationApp(
     val automaticUpdatePrompt by appUpdateViewModel.automaticPrompt.collectAsStateWithLifecycle()
     val updateDownloading = updateState is AppUpdateState.Downloading
     LaunchedEffect(Unit) {
-        if (BuildConfig.DEBUG) appUpdateViewModel.checkAutomatically()
+        appUpdateViewModel.checkAutomatically()
     }
     LaunchedEffect(updateState) {
         if (updateState is AppUpdateState.ReadyToInstall) {
