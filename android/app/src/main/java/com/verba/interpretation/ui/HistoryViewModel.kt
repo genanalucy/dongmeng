@@ -10,6 +10,8 @@ import com.verba.interpretation.cloud.CloudApi
 import com.verba.interpretation.cloud.CloudEndpointSettings
 import com.verba.interpretation.cloud.KeystoreTokenStore
 import com.verba.interpretation.cloud.SharedPreferencesInstallationIdStore
+import com.verba.interpretation.history.HistorySyncFailure
+import com.verba.interpretation.history.HistorySyncResult
 import com.verba.interpretation.history.HistoryTurn
 import java.time.Instant
 import java.time.ZoneId
@@ -32,7 +34,7 @@ private const val MAX_TITLE_LENGTH = 80
 
 interface HistoryRepository {
     fun observeHistory(userId: String): Flow<List<HistorySession>>
-    suspend fun sync(userId: String): Boolean
+    suspend fun sync(userId: String): HistorySyncResult
     suspend fun renameSession(userId: String, sessionId: String, title: String, updatedAtMillis: Long)
     suspend fun deleteSession(userId: String, sessionId: String, deletedAtMillis: Long)
     suspend fun clearAll(userId: String, nowMillis: Long)
@@ -49,8 +51,8 @@ private class LocalHistoryRepositoryAdapter(
     )
 
     override fun observeHistory(userId: String): Flow<List<HistorySession>> = repository.observeHistory(userId)
-    override suspend fun sync(userId: String): Boolean {
-        if (!cloudApi.hasCredentials()) return false
+    override suspend fun sync(userId: String): HistorySyncResult {
+        if (!cloudApi.hasCredentials()) return HistorySyncResult(false, HistorySyncFailure.NO_CREDENTIALS)
         return repository.sync(userId, CloudHistoryTransport(cloudApi))
     }
     override suspend fun renameSession(userId: String, sessionId: String, title: String, updatedAtMillis: Long) =
@@ -64,6 +66,18 @@ data class PendingHistoryDelete(val session: HistorySession, val expiresAtMillis
 
 enum class HistorySyncStatus { NOT_STARTED, SYNCING, SUCCESS, FAILED }
 
+enum class HistorySyncDiagnostic {
+    NO_CREDENTIALS,
+    UNAUTHORIZED,
+    SERVER,
+    INVALID_RESPONSE,
+    REMOTE_HISTORY_DATA,
+    LOCAL_DATABASE,
+    LOCAL_DATA,
+    NETWORK,
+    UNKNOWN,
+}
+
 data class HistoryUiState(
     val sessions: List<HistorySession> = emptyList(),
     val query: String = "",
@@ -71,6 +85,8 @@ data class HistoryUiState(
     val clearConfirmationVisible: Boolean = false,
     val errorMessage: String? = null,
     val syncStatus: HistorySyncStatus = HistorySyncStatus.NOT_STARTED,
+    val syncDiagnostic: HistorySyncDiagnostic? = null,
+    val syncDiagnosticType: String? = null,
 ) {
     val visibleSessions: List<HistorySession>
         get() {
@@ -135,15 +151,35 @@ class HistoryViewModel @JvmOverloads constructor(
         syncJob = viewModelScope.launch(dispatcher) {
             mutableState.value = mutableState.value.copy(syncStatus = HistorySyncStatus.SYNCING, errorMessage = null)
             try {
-                val success = withContext(syncDispatcher) { historyRepository.sync(id) }
+                val result = withContext(syncDispatcher) { historyRepository.sync(id) }
                 if (!isCurrentAccount(id, generation)) return@launch
-                mutableState.value = mutableState.value.copy(syncStatus = if (success) HistorySyncStatus.SUCCESS else HistorySyncStatus.FAILED)
+                mutableState.value = mutableState.value.copy(
+                    syncStatus = if (result.success) HistorySyncStatus.SUCCESS else HistorySyncStatus.FAILED,
+                    syncDiagnostic = result.failure?.toDiagnostic(),
+                    syncDiagnosticType = result.diagnosticType,
+                )
             } catch (error: CancellationException) {
                 throw error
-            } catch (_: Exception) {
-                if (isCurrentAccount(id, generation)) mutableState.value = mutableState.value.copy(syncStatus = HistorySyncStatus.FAILED)
+            } catch (error: Exception) {
+                if (isCurrentAccount(id, generation)) mutableState.value = mutableState.value.copy(
+                    syncStatus = HistorySyncStatus.FAILED,
+                    syncDiagnostic = HistorySyncDiagnostic.UNKNOWN,
+                    syncDiagnosticType = error.javaClass.simpleName,
+                )
             }
         }
+    }
+
+    private fun HistorySyncFailure.toDiagnostic(): HistorySyncDiagnostic = when (this) {
+        HistorySyncFailure.NO_CREDENTIALS -> HistorySyncDiagnostic.NO_CREDENTIALS
+        HistorySyncFailure.UNAUTHORIZED -> HistorySyncDiagnostic.UNAUTHORIZED
+        HistorySyncFailure.SERVER -> HistorySyncDiagnostic.SERVER
+        HistorySyncFailure.INVALID_RESPONSE -> HistorySyncDiagnostic.INVALID_RESPONSE
+        HistorySyncFailure.REMOTE_HISTORY_DATA -> HistorySyncDiagnostic.REMOTE_HISTORY_DATA
+        HistorySyncFailure.LOCAL_DATABASE -> HistorySyncDiagnostic.LOCAL_DATABASE
+        HistorySyncFailure.LOCAL_DATA -> HistorySyncDiagnostic.LOCAL_DATA
+        HistorySyncFailure.NETWORK -> HistorySyncDiagnostic.NETWORK
+        HistorySyncFailure.UNKNOWN -> HistorySyncDiagnostic.UNKNOWN
     }
 
     fun setQuery(query: String) {

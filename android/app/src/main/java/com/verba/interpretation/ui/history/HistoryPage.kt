@@ -58,6 +58,7 @@ import com.verba.interpretation.history.HistoryTurn
 import com.verba.interpretation.ui.HistoryEmptyStatePolicy
 import com.verba.interpretation.ui.HistoryFilter
 import com.verba.interpretation.ui.HistoryUiState
+import com.verba.interpretation.ui.HistorySyncDiagnostic
 import com.verba.interpretation.ui.HistorySyncStatus
 import com.verba.interpretation.ui.HistoryViewModel
 import com.verba.interpretation.ui.TranslationLanguage
@@ -173,7 +174,7 @@ private fun HistorySummary(
                 Column(Modifier.weight(1f)) {
                     Text("历史", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold, modifier = Modifier.semantics { heading() })
                     Text(
-                        if (showSyncControls) historySyncStatusLabel(state.syncStatus) else "记录保存在本机；同步状态需在联网后核验。",
+                        if (showSyncControls) historySyncStatusLabel(state.syncStatus, state.syncDiagnostic, state.syncDiagnosticType) else "记录保存在本机；同步状态需在联网后核验。",
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(top = 4.dp),
                     )
@@ -356,7 +357,7 @@ private fun HistoryEmptyState(query: String, hasSessions: Boolean, syncStatus: H
                 modifier = Modifier.padding(top = 6.dp),
             )
             Text(
-                if (showSyncStatus) historySyncStatusLabel(syncStatus) else "当前页面仅展示本机记录；同步状态需在联网后核验。",
+                if (showSyncStatus) historySyncStatusLabel(syncStatus, null, null) else "当前页面仅展示本机记录；同步状态需在联网后核验。",
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.outline,
                 modifier = Modifier.padding(top = 14.dp),
@@ -365,11 +366,26 @@ private fun HistoryEmptyState(query: String, hasSessions: Boolean, syncStatus: H
     }
 }
 
-private fun historySyncStatusLabel(status: HistorySyncStatus): String = when (status) {
+private fun historySyncStatusLabel(
+    status: HistorySyncStatus,
+    diagnostic: HistorySyncDiagnostic?,
+    diagnosticType: String?,
+): String = when (status) {
     HistorySyncStatus.NOT_STARTED -> "尚未同步云端历史"
     HistorySyncStatus.SYNCING -> "正在同步云端历史…"
     HistorySyncStatus.SUCCESS -> "云端历史已同步"
-    HistorySyncStatus.FAILED -> "云端同步失败，可稍后重试"
+    HistorySyncStatus.FAILED -> when (diagnostic) {
+        HistorySyncDiagnostic.NO_CREDENTIALS -> "未检测到登录凭据，请重新登录"
+        HistorySyncDiagnostic.UNAUTHORIZED -> "登录状态已失效，请重新登录"
+        HistorySyncDiagnostic.SERVER -> "云端服务暂不可用，可稍后重试"
+        HistorySyncDiagnostic.INVALID_RESPONSE -> "云端同步响应不兼容，请更新测试版"
+        HistorySyncDiagnostic.REMOTE_HISTORY_DATA -> "云端历史数据格式异常，请联系测试人员"
+        HistorySyncDiagnostic.LOCAL_DATABASE -> "本机历史数据库合并失败，请联系测试人员"
+        HistorySyncDiagnostic.LOCAL_DATA -> "本机历史数据无法读取，请保留数据并联系测试人员"
+        HistorySyncDiagnostic.NETWORK -> "网络不可用，可稍后重试"
+        HistorySyncDiagnostic.UNKNOWN -> "云端同步失败（${diagnosticType ?: "未知原因"}）"
+        null -> "云端同步失败，可稍后重试"
+    }
 }
 
 private fun HistorySession.displayTitle(): String = title?.takeIf { it.isNotBlank() } ?: if (kind == "face_to_face") "面对面翻译" else "同传翻译"

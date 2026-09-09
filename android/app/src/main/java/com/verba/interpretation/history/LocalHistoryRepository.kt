@@ -37,6 +37,25 @@ interface LocalHistoryTransport {
     suspend fun pull(cursor: Long): com.verba.interpretation.cloud.HistoryPullResponse
 }
 
+enum class HistorySyncFailure {
+    NO_CREDENTIALS,
+    UNAUTHORIZED,
+    SERVER,
+    INVALID_RESPONSE,
+    REMOTE_HISTORY_DATA,
+    LOCAL_DATABASE,
+    LOCAL_DATA,
+    NETWORK,
+    UNKNOWN,
+}
+
+data class HistorySyncResult(
+    val success: Boolean,
+    val failure: HistorySyncFailure? = null,
+    /** Debug-only diagnostic; contains the exception type only, never user content or credentials. */
+    val diagnosticType: String? = null,
+)
+
 class CloudHistoryTransport(private val api: HistoryApi) : LocalHistoryTransport {
     override suspend fun push(operations: List<HistoryPushOperation>) { api.pushHistory(operations) }
     override suspend fun pull(cursor: Long) = api.pullHistory(cursor)
@@ -106,7 +125,7 @@ class LocalHistoryRepository(private val database: HistoryDatabase, private val 
     }
 
     /** Push is always followed by pull; pull also runs with an empty outbox. */
-    suspend fun sync(userId: String, transport: LocalHistoryTransport): Boolean = try {
+    suspend fun sync(userId: String, transport: LocalHistoryTransport): HistorySyncResult = try {
         val pending = dao.pendingOutbox(userId, OUTBOX_BATCH)
         if (pending.isNotEmpty()) {
             val request = pending.map { operation -> operation.toCloudOperation(cipher) }
@@ -118,11 +137,24 @@ class LocalHistoryRepository(private val database: HistoryDatabase, private val 
             val page = transport.pull(currentCursor)
             database.withTransaction { applyPage(userId, page) }
         } while (page.hasMore)
-        true
+        HistorySyncResult(success = true)
     } catch (error: CloudApiException) {
         if (error.statusCode == 409 && error.message?.contains("history_limit_exceeded") == true) dao.upsertSyncState(HistorySyncStateEntity(userId, true))
-        false
-    } catch (_: Exception) { false }
+        HistorySyncResult(false, when {
+            error.statusCode == 401 -> HistorySyncFailure.UNAUTHORIZED
+            error.statusCode != null && error.statusCode >= 500 -> HistorySyncFailure.SERVER
+            error.statusCode != null -> HistorySyncFailure.INVALID_RESPONSE
+            else -> HistorySyncFailure.NETWORK
+        })
+    } catch (error: org.json.JSONException) {
+        HistorySyncResult(false, HistorySyncFailure.REMOTE_HISTORY_DATA, error.javaClass.simpleName)
+    } catch (error: IllegalStateException) {
+        HistorySyncResult(false, HistorySyncFailure.REMOTE_HISTORY_DATA, error.javaClass.simpleName)
+    } catch (error: android.database.sqlite.SQLiteException) {
+        HistorySyncResult(false, HistorySyncFailure.LOCAL_DATABASE, error.javaClass.simpleName)
+    } catch (error: java.security.GeneralSecurityException) {
+        HistorySyncResult(false, HistorySyncFailure.LOCAL_DATA, error.javaClass.simpleName)
+    } catch (error: Exception) { HistorySyncResult(false, HistorySyncFailure.UNKNOWN, error.javaClass.simpleName) }
 
     private suspend fun applyPage(userId: String, page: com.verba.interpretation.cloud.HistoryPullResponse) {
         page.changes.forEach { change ->
@@ -158,7 +190,7 @@ class LocalHistorySyncWorker(appContext: Context, params: WorkerParameters) : Co
         val userId = inputData.getString(USER_ID_KEY) ?: return Result.failure()
         val api = CloudApi(CloudEndpointSettings(applicationContext), KeystoreTokenStore(applicationContext), SharedPreferencesInstallationIdStore(applicationContext))
         if (!api.hasCredentials()) return Result.success()
-        val synced = LocalHistoryRepository.create(applicationContext).sync(userId, CloudHistoryTransport(api))
-        return if (synced) Result.success() else Result.retry()
+        val result = LocalHistoryRepository.create(applicationContext).sync(userId, CloudHistoryTransport(api))
+        return if (result.success) Result.success() else Result.retry()
     }
 }

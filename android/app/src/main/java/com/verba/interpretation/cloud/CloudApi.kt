@@ -419,14 +419,14 @@ class CloudApi private constructor(
         val remoteSession = CloudHistorySession(
             id = session.requiredString("id"),
             createdAtMillis = millis(session.requiredString("created_at")),
-            deletedAtMillis = session.optString("deleted_at").takeIf { it.isNotBlank() }?.let(::millis),
+            deletedAtMillis = session.optionalTimestampMillis("deleted_at", ::millis),
             title = session.optString("title").takeIf { it.isNotBlank() },
-            titleUpdatedAtMillis = session.optString("title_updated_at").takeIf { it.isNotBlank() }?.let(::millis),
+            titleUpdatedAtMillis = session.optionalTimestampMillis("title_updated_at", ::millis),
         )
         val turn = json.optJSONObject("turn")?.let { raw -> CloudHistoryTurn(
             id = raw.requiredString("id"), sessionId = raw.requiredString("session_id"),
             createdAtMillis = millis(raw.requiredString("created_at")),
-            deletedAtMillis = raw.optString("deleted_at").takeIf { it.isNotBlank() }?.let(::millis),
+            deletedAtMillis = raw.optionalTimestampMillis("deleted_at", ::millis),
             payloadBase64 = raw.optString("payload").takeIf { it.isNotBlank() },
         ) }
         return CloudHistoryChange(json.getLong("cursor"), remoteSession, turn)
@@ -516,6 +516,9 @@ class CloudApi private constructor(
         }
     } catch (_: Exception) { "网络或服务不可用（HTTP $status）。" }
 }
+
+internal fun JSONObject.optionalTimestampMillis(name: String, parse: (String) -> Long): Long? =
+    if (isNull(name)) null else optString(name).trim().takeIf(String::isNotEmpty)?.let(parse)
 
 private fun JSONObject.requiredString(name: String): String = optString(name).trim().takeIf(String::isNotEmpty)
     ?: throw CloudApiException("服务响应缺少 $name。")

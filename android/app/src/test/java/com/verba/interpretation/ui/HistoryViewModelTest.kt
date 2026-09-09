@@ -2,6 +2,8 @@ package com.verba.interpretation.ui
 
 import android.app.Application
 import com.verba.interpretation.history.HistorySession
+import com.verba.interpretation.history.HistorySyncFailure
+import com.verba.interpretation.history.HistorySyncResult
 import com.verba.interpretation.history.HistoryTurn
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -42,7 +44,7 @@ class HistoryViewModelTest {
 
     @Test
     fun autoSyncPullsCloudHistoryAndPublishesSuccess() = runTest(dispatcher) {
-        val repository = FakeHistoryRepository(syncResult = true)
+        val repository = FakeHistoryRepository(syncResult = HistorySyncResult(success = true))
         val viewModel = viewModel(repository)
 
         viewModel.load("user-1", autoSync = true)
@@ -54,7 +56,7 @@ class HistoryViewModelTest {
 
     @Test
     fun failedManualSyncKeepsLocalHistoryAndReportsRetryableState() = runTest(dispatcher) {
-        val repository = FakeHistoryRepository(syncResult = false)
+        val repository = FakeHistoryRepository(syncResult = HistorySyncResult(false, HistorySyncFailure.INVALID_RESPONSE))
         val viewModel = viewModel(repository)
         viewModel.load("user-1")
         repository.emit("user-1", listOf(session("local")))
@@ -65,6 +67,7 @@ class HistoryViewModelTest {
 
         assertEquals(listOf("local"), viewModel.state.value.sessions.map { it.id })
         assertEquals(HistorySyncStatus.FAILED, viewModel.state.value.syncStatus)
+        assertEquals(HistorySyncDiagnostic.INVALID_RESPONSE, viewModel.state.value.syncDiagnostic)
     }
 
     @Test
@@ -195,7 +198,7 @@ class HistoryViewModelTest {
 
 private class FakeHistoryRepository(
     private val deleteFailure: Boolean = false,
-    private val syncResult: Boolean = true,
+    private val syncResult: HistorySyncResult = HistorySyncResult(success = true),
 ) : HistoryRepository {
     private val histories = mutableMapOf<String, MutableStateFlow<List<HistorySession>>>()
     val deletedIds = mutableListOf<String>()
@@ -208,7 +211,7 @@ private class FakeHistoryRepository(
         histories.getOrPut(userId) { MutableStateFlow(emptyList()) }.value = sessions
     }
 
-    override suspend fun sync(userId: String): Boolean {
+    override suspend fun sync(userId: String): HistorySyncResult {
         syncedUsers += userId
         return syncResult
     }
