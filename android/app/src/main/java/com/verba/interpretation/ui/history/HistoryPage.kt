@@ -22,6 +22,7 @@ import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.outlined.CalendarMonth
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material3.AlertDialog
@@ -57,6 +58,7 @@ import com.verba.interpretation.history.HistoryTurn
 import com.verba.interpretation.ui.HistoryEmptyStatePolicy
 import com.verba.interpretation.ui.HistoryFilter
 import com.verba.interpretation.ui.HistoryUiState
+import com.verba.interpretation.ui.HistorySyncStatus
 import com.verba.interpretation.ui.HistoryViewModel
 import com.verba.interpretation.ui.TranslationLanguage
 import java.time.Instant
@@ -68,13 +70,23 @@ private val historyTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm
     .withZone(ZoneId.systemDefault())
 
 @Composable
-fun HistoryPage(modifier: Modifier, viewModel: HistoryViewModel, sessionId: String? = null) {
+fun HistoryPage(
+    modifier: Modifier,
+    viewModel: HistoryViewModel,
+    sessionId: String? = null,
+    showSyncControls: Boolean = false,
+    autoSync: Boolean = false,
+) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val snackbar = remember { SnackbarHostState() }
     var detailSessionId by remember(sessionId) { mutableStateOf(sessionId) }
     var editingId by remember { mutableStateOf<String?>(null) }
     var titleDraft by remember { mutableStateOf("") }
+
+    LaunchedEffect(autoSync) {
+        if (autoSync) viewModel.sync()
+    }
 
     LaunchedEffect(state.errorMessage) {
         state.errorMessage?.let { message ->
@@ -116,6 +128,8 @@ fun HistoryPage(modifier: Modifier, viewModel: HistoryViewModel, sessionId: Stri
                 onTitleChange = { titleDraft = it },
                 onSaveRename = { id -> if (viewModel.rename(id, titleDraft)) editingId = null },
                 onDelete = viewModel::requestDelete,
+                showSyncControls = showSyncControls,
+                onSync = viewModel::sync,
             )
         }
     }
@@ -146,6 +160,8 @@ private fun HistorySummary(
     onTitleChange: (String) -> Unit,
     onSaveRename: (String) -> Unit,
     onDelete: (String) -> Unit,
+    showSyncControls: Boolean,
+    onSync: () -> Unit,
 ) {
     LazyColumn(
         modifier = modifier,
@@ -157,10 +173,15 @@ private fun HistorySummary(
                 Column(Modifier.weight(1f)) {
                     Text("历史", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold, modifier = Modifier.semantics { heading() })
                     Text(
-                        "记录保存在本机；同步状态需在联网后核验。",
+                        if (showSyncControls) historySyncStatusLabel(state.syncStatus) else "记录保存在本机；同步状态需在联网后核验。",
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(top = 4.dp),
                     )
+                }
+                if (showSyncControls) {
+                    IconButton(onClick = onSync, enabled = state.syncStatus != HistorySyncStatus.SYNCING) {
+                        Icon(Icons.Filled.Sync, contentDescription = "立即同步历史")
+                    }
                 }
                 IconButton(onClick = onShareSearch, enabled = state.visibleSessions.isNotEmpty()) {
                     Icon(Icons.Filled.Share, contentDescription = "分享搜索结果")
@@ -185,7 +206,7 @@ private fun HistorySummary(
             )
         }
         if (state.visibleSessions.isEmpty()) {
-            item { HistoryEmptyState(query = state.query, hasSessions = state.sessions.isNotEmpty()) }
+            item { HistoryEmptyState(query = state.query, hasSessions = state.sessions.isNotEmpty(), syncStatus = state.syncStatus, showSyncStatus = showSyncControls) }
         }
         items(state.visibleSessions, key = { it.id }) { session ->
             SessionSummaryCard(
@@ -307,7 +328,7 @@ private fun UndoDeleteBar(state: HistoryUiState, onUndo: (String) -> Unit) {
 }
 
 @Composable
-private fun HistoryEmptyState(query: String, hasSessions: Boolean) {
+private fun HistoryEmptyState(query: String, hasSessions: Boolean, syncStatus: HistorySyncStatus, showSyncStatus: Boolean) {
     val isSearch = query.isNotBlank() && hasSessions
     Surface(
         modifier = Modifier.fillMaxWidth().heightIn(min = 300.dp),
@@ -335,13 +356,20 @@ private fun HistoryEmptyState(query: String, hasSessions: Boolean) {
                 modifier = Modifier.padding(top = 6.dp),
             )
             Text(
-                "当前页面仅展示本机记录；同步状态需在联网后核验。",
+                if (showSyncStatus) historySyncStatusLabel(syncStatus) else "当前页面仅展示本机记录；同步状态需在联网后核验。",
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.outline,
                 modifier = Modifier.padding(top = 14.dp),
             )
         }
     }
+}
+
+private fun historySyncStatusLabel(status: HistorySyncStatus): String = when (status) {
+    HistorySyncStatus.NOT_STARTED -> "尚未同步云端历史"
+    HistorySyncStatus.SYNCING -> "正在同步云端历史…"
+    HistorySyncStatus.SUCCESS -> "云端历史已同步"
+    HistorySyncStatus.FAILED -> "云端同步失败，可稍后重试"
 }
 
 private fun HistorySession.displayTitle(): String = title?.takeIf { it.isNotBlank() } ?: if (kind == "face_to_face") "面对面翻译" else "同传翻译"

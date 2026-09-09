@@ -41,6 +41,33 @@ class HistoryViewModelTest {
     }
 
     @Test
+    fun autoSyncPullsCloudHistoryAndPublishesSuccess() = runTest(dispatcher) {
+        val repository = FakeHistoryRepository(syncResult = true)
+        val viewModel = viewModel(repository)
+
+        viewModel.load("user-1", autoSync = true)
+        advanceUntilIdle()
+
+        assertEquals(listOf("user-1"), repository.syncedUsers)
+        assertEquals(HistorySyncStatus.SUCCESS, viewModel.state.value.syncStatus)
+    }
+
+    @Test
+    fun failedManualSyncKeepsLocalHistoryAndReportsRetryableState() = runTest(dispatcher) {
+        val repository = FakeHistoryRepository(syncResult = false)
+        val viewModel = viewModel(repository)
+        viewModel.load("user-1")
+        repository.emit("user-1", listOf(session("local")))
+        advanceUntilIdle()
+
+        viewModel.sync()
+        advanceUntilIdle()
+
+        assertEquals(listOf("local"), viewModel.state.value.sessions.map { it.id })
+        assertEquals(HistorySyncStatus.FAILED, viewModel.state.value.syncStatus)
+    }
+
+    @Test
     fun eachDeleteHasAnIndependentFiveSecondUndoWindow() = runTest(dispatcher) {
         val repository = FakeHistoryRepository()
         val viewModel = viewModel(repository)
@@ -155,7 +182,7 @@ class HistoryViewModelTest {
     }
 
     private fun viewModel(repository: FakeHistoryRepository): HistoryViewModel =
-        HistoryViewModel(Application(), repository, dispatcher, nowMillis = { 0L })
+        HistoryViewModel(Application(), repository, dispatcher, dispatcher, nowMillis = { 0L })
 
     private fun session(id: String, text: String = id): HistorySession = HistorySession(
         id = id,
@@ -168,15 +195,22 @@ class HistoryViewModelTest {
 
 private class FakeHistoryRepository(
     private val deleteFailure: Boolean = false,
+    private val syncResult: Boolean = true,
 ) : HistoryRepository {
     private val histories = mutableMapOf<String, MutableStateFlow<List<HistorySession>>>()
     val deletedIds = mutableListOf<String>()
+    val syncedUsers = mutableListOf<String>()
 
     override fun observeHistory(userId: String): Flow<List<HistorySession>> =
         histories.getOrPut(userId) { MutableStateFlow(emptyList()) }
 
     fun emit(userId: String, sessions: List<HistorySession>) {
         histories.getOrPut(userId) { MutableStateFlow(emptyList()) }.value = sessions
+    }
+
+    override suspend fun sync(userId: String): Boolean {
+        syncedUsers += userId
+        return syncResult
     }
 
     override suspend fun renameSession(userId: String, sessionId: String, title: String, updatedAtMillis: Long) = Unit

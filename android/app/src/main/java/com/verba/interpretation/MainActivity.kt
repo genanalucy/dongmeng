@@ -292,7 +292,13 @@ private fun InterpretationApp(
                     stack = stack.push(ProductScreen.HISTORY)
                 },
             )
-            ProductScreen.HISTORY -> HistoryPage(Modifier.padding(padding), historyViewModel, historyTargetSessionId)
+            ProductScreen.HISTORY -> HistoryPage(
+                Modifier.padding(padding),
+                historyViewModel,
+                historyTargetSessionId,
+                showSyncControls = BuildConfig.DEBUG,
+                autoSync = BuildConfig.DEBUG,
+            )
             ProductScreen.PROFILE -> AccountPage(
                 modifier = Modifier.padding(padding),
                 onBack = { },

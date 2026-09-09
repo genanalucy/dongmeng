@@ -4,7 +4,12 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.verba.interpretation.history.HistorySession
+import com.verba.interpretation.history.CloudHistoryTransport
 import com.verba.interpretation.history.LocalHistoryRepository
+import com.verba.interpretation.cloud.CloudApi
+import com.verba.interpretation.cloud.CloudEndpointSettings
+import com.verba.interpretation.cloud.KeystoreTokenStore
+import com.verba.interpretation.cloud.SharedPreferencesInstallationIdStore
 import com.verba.interpretation.history.HistoryTurn
 import java.time.Instant
 import java.time.ZoneId
@@ -20,19 +25,34 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 private const val DELETE_UNDO_WINDOW_MILLIS = 5_000L
 private const val MAX_TITLE_LENGTH = 80
 
 interface HistoryRepository {
     fun observeHistory(userId: String): Flow<List<HistorySession>>
+    suspend fun sync(userId: String): Boolean
     suspend fun renameSession(userId: String, sessionId: String, title: String, updatedAtMillis: Long)
     suspend fun deleteSession(userId: String, sessionId: String, deletedAtMillis: Long)
     suspend fun clearAll(userId: String, nowMillis: Long)
 }
 
-private class LocalHistoryRepositoryAdapter(private val repository: LocalHistoryRepository) : HistoryRepository {
+private class LocalHistoryRepositoryAdapter(
+    private val repository: LocalHistoryRepository,
+    context: android.content.Context,
+) : HistoryRepository {
+    private val cloudApi = CloudApi(
+        CloudEndpointSettings(context),
+        KeystoreTokenStore(context),
+        SharedPreferencesInstallationIdStore(context),
+    )
+
     override fun observeHistory(userId: String): Flow<List<HistorySession>> = repository.observeHistory(userId)
+    override suspend fun sync(userId: String): Boolean {
+        if (!cloudApi.hasCredentials()) return false
+        return repository.sync(userId, CloudHistoryTransport(cloudApi))
+    }
     override suspend fun renameSession(userId: String, sessionId: String, title: String, updatedAtMillis: Long) =
         repository.renameSession(userId, sessionId, title, updatedAtMillis)
     override suspend fun deleteSession(userId: String, sessionId: String, deletedAtMillis: Long) =
@@ -42,12 +62,15 @@ private class LocalHistoryRepositoryAdapter(private val repository: LocalHistory
 
 data class PendingHistoryDelete(val session: HistorySession, val expiresAtMillis: Long)
 
+enum class HistorySyncStatus { NOT_STARTED, SYNCING, SUCCESS, FAILED }
+
 data class HistoryUiState(
     val sessions: List<HistorySession> = emptyList(),
     val query: String = "",
     val pendingDeletes: List<PendingHistoryDelete> = emptyList(),
     val clearConfirmationVisible: Boolean = false,
     val errorMessage: String? = null,
+    val syncStatus: HistorySyncStatus = HistorySyncStatus.NOT_STARTED,
 ) {
     val visibleSessions: List<HistorySession>
         get() {
@@ -69,8 +92,9 @@ data class HistoryUiState(
 
 class HistoryViewModel @JvmOverloads constructor(
     application: Application,
-    private val historyRepository: HistoryRepository = LocalHistoryRepositoryAdapter(LocalHistoryRepository.create(application)),
+    private val historyRepository: HistoryRepository = LocalHistoryRepositoryAdapter(LocalHistoryRepository.create(application), application),
     private val dispatcher: CoroutineDispatcher = Dispatchers.Main.immediate,
+    private val syncDispatcher: CoroutineDispatcher = Dispatchers.IO,
     private val nowMillis: () -> Long = System::currentTimeMillis,
 ) : AndroidViewModel(application) {
     private val mutableState = MutableStateFlow(HistoryUiState())
@@ -79,15 +103,17 @@ class HistoryViewModel @JvmOverloads constructor(
     private var accountGeneration = 0L
     private var observation: Job? = null
     private var clearJob: Job? = null
+    private var syncJob: Job? = null
     private val deleteJobs = mutableMapOf<String, Job>()
 
-    fun load(userId: String?) {
+    fun load(userId: String?, autoSync: Boolean = false) {
         if (userId == this.userId) return
         accountGeneration += 1
         val generation = accountGeneration
         this.userId = userId
         observation?.cancel()
         clearJob?.cancel()
+        syncJob?.cancel()
         deleteJobs.values.forEach(Job::cancel)
         deleteJobs.clear()
         mutableState.value = HistoryUiState()
@@ -97,6 +123,25 @@ class HistoryViewModel @JvmOverloads constructor(
                 if (isCurrentAccount(userId, generation)) {
                     mutableState.value = mutableState.value.copy(sessions = sessions)
                 }
+            }
+        }
+        if (autoSync) sync()
+    }
+
+    fun sync() {
+        val id = userId ?: return
+        if (syncJob?.isActive == true) return
+        val generation = accountGeneration
+        syncJob = viewModelScope.launch(dispatcher) {
+            mutableState.value = mutableState.value.copy(syncStatus = HistorySyncStatus.SYNCING, errorMessage = null)
+            try {
+                val success = withContext(syncDispatcher) { historyRepository.sync(id) }
+                if (!isCurrentAccount(id, generation)) return@launch
+                mutableState.value = mutableState.value.copy(syncStatus = if (success) HistorySyncStatus.SUCCESS else HistorySyncStatus.FAILED)
+            } catch (error: CancellationException) {
+                throw error
+            } catch (_: Exception) {
+                if (isCurrentAccount(id, generation)) mutableState.value = mutableState.value.copy(syncStatus = HistorySyncStatus.FAILED)
             }
         }
     }
