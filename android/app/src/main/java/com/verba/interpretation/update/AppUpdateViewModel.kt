@@ -1,6 +1,7 @@
 package com.verba.interpretation.update
 
 import android.app.Application
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
@@ -15,6 +16,7 @@ import com.verba.interpretation.cloud.SharedPreferencesInstallationIdStore
 import java.io.File
 import java.io.IOException
 import java.security.MessageDigest
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -47,41 +49,102 @@ sealed interface AppUpdateState {
 /** Public update endpoint; it never needs an account token. */
 interface AppUpdateService { fun checkForUpdate(): AppUpdateInfo? }
 
+/** Stores only update-prompt choices, never APK metadata or account credentials. */
+interface AppUpdatePromptPreferences {
+    fun shouldPrompt(versionCode: Int): Boolean
+    fun ignoreVersion(versionCode: Int)
+    fun disableAutomaticPrompts()
+}
+
+private class SharedPreferencesAppUpdatePromptPreferences(context: Context) : AppUpdatePromptPreferences {
+    private val preferences = context.applicationContext.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
+
+    override fun shouldPrompt(versionCode: Int): Boolean =
+        preferences.getBoolean(AUTOMATIC_PROMPTS_ENABLED, true) && preferences.getInt(IGNORED_VERSION_CODE, NO_VERSION) != versionCode
+
+    override fun ignoreVersion(versionCode: Int) {
+        preferences.edit().putInt(IGNORED_VERSION_CODE, versionCode).apply()
+    }
+
+    override fun disableAutomaticPrompts() {
+        preferences.edit().putBoolean(AUTOMATIC_PROMPTS_ENABLED, false).apply()
+    }
+
+    private companion object {
+        const val PREFERENCES = "app_update_preferences"
+        const val AUTOMATIC_PROMPTS_ENABLED = "automatic_prompts_enabled"
+        const val IGNORED_VERSION_CODE = "ignored_version_code"
+        const val NO_VERSION = -1
+    }
+}
+
 class CloudAppUpdateService(private val api: CloudApi) : AppUpdateService {
     override fun checkForUpdate(): AppUpdateInfo? = api.appUpdate()?.let {
         AppUpdateInfo(it.packageName, it.versionCode, it.versionName, it.apkUrl, it.apkSha256, it.releaseNotes, it.forceUpdate)
     }
 }
 
-class AppUpdateViewModel(application: Application) : AndroidViewModel(application) {
-    private val service = CloudAppUpdateService(
+class AppUpdateViewModel @JvmOverloads constructor(
+    application: Application,
+    private val service: AppUpdateService = CloudAppUpdateService(
         CloudApi(
             CloudEndpointSettings(application),
             KeystoreTokenStore(application),
             SharedPreferencesInstallationIdStore(application),
         ),
-    )
+    ),
+    private val promptPreferences: AppUpdatePromptPreferences = SharedPreferencesAppUpdatePromptPreferences(application),
+    private val dispatcher: CoroutineDispatcher = Dispatchers.IO,
+) : AndroidViewModel(application) {
     private val client = OkHttpClient()
     private val mutableState = MutableStateFlow<AppUpdateState>(AppUpdateState.Idle)
     val state: StateFlow<AppUpdateState> = mutableState.asStateFlow()
+    private val mutableAutomaticPrompt = MutableStateFlow<AppUpdateInfo?>(null)
+    val automaticPrompt: StateFlow<AppUpdateInfo?> = mutableAutomaticPrompt.asStateFlow()
 
+    /** Manual checks always report the available version, regardless of automatic prompt preferences. */
     fun check() = viewModelScope.launch {
         mutableState.value = AppUpdateState.Checking
         mutableState.value = try {
-            val update = withContext(Dispatchers.IO) { service.checkForUpdate() }
-            when {
-                update == null || update.packageName != BuildConfig.APPLICATION_ID || update.versionCode <= BuildConfig.VERSION_CODE -> AppUpdateState.Current
-                else -> AppUpdateState.Available(update)
-            }
+            val update = withContext(dispatcher) { service.checkForUpdate() }
+            update.asAvailableState()
         } catch (_: Exception) {
             AppUpdateState.Failed("暂时无法检查更新，请确认网络后重试。")
         }
     }
 
+    /** Automatic checks are opt-out for ordinary updates; force updates always surface. */
+    fun checkAutomatically() = viewModelScope.launch {
+        val update = runCatching { withContext(dispatcher) { service.checkForUpdate() } }.getOrNull() ?: return@launch
+        if (update.isNewerForThisApp() && (update.forceUpdate || promptPreferences.shouldPrompt(update.versionCode))) {
+            mutableAutomaticPrompt.value = update
+        }
+    }
+
+    fun ignoreAutomaticPromptVersion() {
+        val update = mutableAutomaticPrompt.value ?: return
+        if (update.forceUpdate) return
+        promptPreferences.ignoreVersion(update.versionCode)
+        mutableAutomaticPrompt.value = null
+    }
+
+    fun disableAutomaticPrompts() {
+        val update = mutableAutomaticPrompt.value ?: return
+        if (update.forceUpdate) return
+        promptPreferences.disableAutomaticPrompts()
+        mutableAutomaticPrompt.value = null
+    }
+
+    fun downloadFromAutomaticPrompt() {
+        val update = mutableAutomaticPrompt.value ?: return
+        mutableAutomaticPrompt.value = null
+        download(update)
+    }
+
     fun download(update: AppUpdateInfo) = viewModelScope.launch {
         mutableState.value = AppUpdateState.Downloading(update)
         mutableState.value = try {
-            val apk = withContext(Dispatchers.IO) { downloadAndVerify(update) }
+            val apk = withContext(dispatcher) { downloadAndVerify(update) }
             val uri = FileProvider.getUriForFile(getApplication(), "${BuildConfig.APPLICATION_ID}.updates", apk)
             AppUpdateState.ReadyToInstall(update, uri)
         } catch (_: Exception) {
@@ -131,6 +194,14 @@ class AppUpdateViewModel(application: Application) : AndroidViewModel(applicatio
             if (!temporary.renameTo(target)) throw IOException("APK move failed")
             return target
         }
+    }
+
+    private fun AppUpdateInfo.isNewerForThisApp(): Boolean =
+        packageName == BuildConfig.APPLICATION_ID && versionCode > BuildConfig.VERSION_CODE
+
+    private fun AppUpdateInfo?.asAvailableState(): AppUpdateState = when {
+        this == null || !isNewerForThisApp() -> AppUpdateState.Current
+        else -> AppUpdateState.Available(this)
     }
 
     private fun isSafeHTTPS(raw: String): Boolean = runCatching {

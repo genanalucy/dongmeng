@@ -230,6 +230,16 @@ private fun InterpretationApp(
 ) {
     val interpretationState by viewModel.state.collectAsStateWithLifecycle()
     val accountState by accountViewModel.state.collectAsStateWithLifecycle()
+    val updateState by appUpdateViewModel.state.collectAsStateWithLifecycle()
+    val automaticUpdatePrompt by appUpdateViewModel.automaticPrompt.collectAsStateWithLifecycle()
+    LaunchedEffect(Unit) {
+        if (BuildConfig.DEBUG) appUpdateViewModel.checkAutomatically()
+    }
+    LaunchedEffect(updateState) {
+        if (updateState is AppUpdateState.ReadyToInstall) {
+            onInstallUpdate(appUpdateViewModel.installerIntent((updateState as AppUpdateState.ReadyToInstall).apkUri))
+        }
+    }
     val navigationMode = accountState.navigationMode
     var historyTargetSessionId by remember(accountState.user?.id) { mutableStateOf<String?>(null) }
     LaunchedEffect(accountState.user?.id) { historyViewModel.load(accountState.user?.id) }
@@ -380,6 +390,45 @@ private fun InterpretationApp(
             )
         }
     }
+    automaticUpdatePrompt?.let { update ->
+        AppUpdatePromptDialog(
+            update = update,
+            onUpdate = appUpdateViewModel::downloadFromAutomaticPrompt,
+            onIgnoreVersion = appUpdateViewModel::ignoreAutomaticPromptVersion,
+            onDisableAutomaticPrompts = appUpdateViewModel::disableAutomaticPrompts,
+        )
+    }
+}
+
+@Composable
+private fun AppUpdatePromptDialog(
+    update: com.verba.interpretation.update.AppUpdateInfo,
+    onUpdate: () -> Unit,
+    onIgnoreVersion: () -> Unit,
+    onDisableAutomaticPrompts: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = { if (!update.forceUpdate) onIgnoreVersion() },
+        title = { Text(if (update.forceUpdate) "需要更新" else "发现新版本 ${update.versionName}") },
+        text = {
+            Column {
+                Text("本次更新内容", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                Text(
+                    update.releaseNotes.ifBlank { "优化应用体验与稳定性。" },
+                    modifier = Modifier.padding(top = 8.dp),
+                )
+            }
+        },
+        confirmButton = { Button(onClick = onUpdate) { Text("立即更新") } },
+        dismissButton = if (update.forceUpdate) null else {
+            {
+                Row {
+                    TextButton(onClick = onIgnoreVersion) { Text("忽略此版本") }
+                    TextButton(onClick = onDisableAutomaticPrompts) { Text("不再提示") }
+                }
+            }
+        },
+    )
 }
 
 @Composable
