@@ -297,7 +297,7 @@ private fun InterpretationApp(
                 historyViewModel,
                 historyTargetSessionId,
                 showSyncControls = BuildConfig.DEBUG,
-                autoSync = BuildConfig.DEBUG,
+                autoSync = true,
             )
             ProductScreen.PROFILE -> AccountPage(
                 modifier = Modifier.padding(padding),
