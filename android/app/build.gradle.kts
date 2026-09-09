@@ -1,4 +1,4 @@
-import java.time.ZoneOffset
+import java.time.ZoneId
 import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
 import java.util.Properties
@@ -24,10 +24,10 @@ android {
         applicationId = "com.verba.interpretation"
         minSdk = 26
         targetSdk = 36
-        // versionName is the human-facing release timestamp (UTC): YYYYMMDD.HHmm.
+        // versionName is the human-facing China Standard Time timestamp: YYYYMMDD.HHmm.
         // Android versionCode remains a compact monotonic integer (max 2,100,000,000).
-        versionCode = 5
-        versionName = ZonedDateTime.now(ZoneOffset.UTC)
+        versionCode = 6
+        versionName = ZonedDateTime.now(ZoneId.of("Asia/Shanghai"))
             .format(DateTimeFormatter.ofPattern("yyyyMMdd.HHmm"))
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"

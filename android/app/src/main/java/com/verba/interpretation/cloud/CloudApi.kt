@@ -18,7 +18,8 @@ data class CloudEntitlement(
     val expiresAt: String,
     val startsAt: String = "",
     val active: Boolean = true,
-    val remainingSeconds: Long = 0,
+    /** -1 means the endpoint did not provide a duration; callers derive it from expiresAt. */
+    val remainingSeconds: Long = -1,
 )
 data class UsageSummary(val totalSeconds: Long, val sessionCount: Long, val lastUsedAt: String?)
 data class AccountOverview(val username: String, val entitlement: CloudEntitlement?, val usage: UsageSummary)
@@ -404,7 +405,11 @@ class CloudApi private constructor(
         expiresAt = json.requiredString("expires_at"),
         startsAt = json.optString("starts_at"),
         active = json.optBoolean("active", true),
-        remainingSeconds = json.optLong("remaining_seconds", 0).coerceAtLeast(0),
+        remainingSeconds = if (json.has("remaining_seconds") && !json.isNull("remaining_seconds")) {
+            json.getLong("remaining_seconds").coerceAtLeast(0)
+        } else {
+            -1
+        },
     )
 
     private fun parseUsageSummary(json: JSONObject): UsageSummary = UsageSummary(

@@ -3,6 +3,7 @@ package com.verba.interpretation.ui.account
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import com.verba.interpretation.cloud.CloudEntitlement
 import org.junit.Test
 
 class AccountPresentationPolicyTest {
@@ -20,6 +21,16 @@ class AccountPresentationPolicyTest {
     @Test fun parsesOffsetTimeAndRejectsMalformedInput() {
         assertTrue(parseAccountInstant("2026-09-02T12:00:00+02:00") != null)
         assertNull(parseAccountInstant("2026-09-02"))
+    }
+
+    @Test fun derivesRemainingDaysFromExpiryWhenEndpointOmitsDuration() {
+        val entitlement = CloudEntitlement(
+            kind = "subscription",
+            expiresAt = "2099-01-01T00:00:00Z",
+            remainingSeconds = -1,
+        )
+
+        assertTrue(entitlementRemainingDays(entitlement)!! > 20_000)
     }
 
     @Test fun clampsNegativeUsageAndUsesReadableUnits() {
