@@ -170,6 +170,8 @@ class AccountViewModel(
     companion object {
         private const val UsagePageSize = 20
         private const val SafeRequestError = "账户状态暂时无法更新，请稍后重试。"
+        private const val NetworkUnavailableMessage = "网络不可用，请检查连接后重试。"
+        private const val ServiceUnavailableMessage = "服务暂时不可用，请稍后重试。"
         private const val SessionExpiredMessage = "登录已过期，请重新登录。"
         private const val CaptchaConsumedMessage = "拼图位置未通过校验，已为你获取新的拼图。"
 
@@ -356,7 +358,7 @@ class AccountViewModel(
     }
 
 
-    fun login(identifier: String, password: String) = runRequest {
+    fun login(identifier: String, password: String) = runRequest(isLogin = true) {
         api.login(identifier, password)
         LatestLoginIdentifierPolicy.loginIdentifier(identifier)?.let(::rememberLoginIdentifier)
         api.currentUser() to api.currentEntitlement()
@@ -511,7 +513,7 @@ class AccountViewModel(
         }
     }
 
-    private fun runRequest(block: () -> Pair<CloudUser, CloudEntitlement?>) {
+    private fun runRequest(isLogin: Boolean = false, block: () -> Pair<CloudUser, CloudEntitlement?>) {
         viewModelScope.launch {
             mutableState.value = mutableState.value.copy(loading = true, message = null)
             try {
@@ -522,7 +524,7 @@ class AccountViewModel(
                     previewingUserExperience = mutableState.value.previewingUserExperience && user.role == CloudRole.ADMIN,
                 )
             } catch (error: Exception) {
-                handleRequestFailure(error)
+                handleRequestFailure(error, isLogin)
             }
         }
     }
@@ -544,14 +546,22 @@ class AccountViewModel(
         mutableState.value = state.copy(loading = false, redeem = RedeemUiState.Error(code, message))
     }
 
-    /** 会话过期时清除登录态并提示重新登录；其余失败维持原状态并给出安全提示。 */
-    private fun handleRequestFailure(error: Exception) {
+    /** 会话过期时清除登录态；其余请求按可恢复的用户动作映射，不泄露底层异常详情。 */
+    private fun handleRequestFailure(error: Exception, isLogin: Boolean = false) {
         if (error is CloudApiException && error.sessionExpired) {
             mutableState.value = AccountUiState(message = SessionExpiredMessage)
             mutableSecurityState.value = AccountSecurityUiState()
             return
         }
-        mutableState.value = mutableState.value.copy(loading = false, message = SafeRequestError)
+        mutableState.value = mutableState.value.copy(loading = false, message = accountRequestErrorMessage(error, isLogin))
+    }
+
+    private fun accountRequestErrorMessage(error: Exception, isLogin: Boolean): String = when {
+        error is CloudApiException && error.statusCode == 401 && isLogin -> "账号或密码错误，请重新输入。"
+        error is CloudApiException && error.statusCode == 401 -> SessionExpiredMessage
+        error is CloudApiException && error.statusCode != null && error.statusCode >= 500 -> ServiceUnavailableMessage
+        error is java.io.IOException -> NetworkUnavailableMessage
+        else -> SafeRequestError
     }
 
     /** 仅记住登录标识用于预填，不保存密码；最近一次成功登录覆盖旧值。 */

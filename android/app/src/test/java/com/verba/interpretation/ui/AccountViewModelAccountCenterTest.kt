@@ -36,6 +36,39 @@ class AccountViewModelAccountCenterTest {
     @Before fun setUp() = Dispatchers.setMain(dispatcher)
     @After fun tearDown() = Dispatchers.resetMain()
 
+    @Test fun loginMapsOfflineFailureToNetworkGuidance() {
+        val api = AccountCenterApi().apply { loginFailure = java.io.IOException("offline") }
+        val viewModel = AccountViewModel(Application(), api, dispatcher)
+
+        viewModel.login("alice_01", "Passw0rd")
+        dispatcher.scheduler.advanceUntilIdle()
+
+        assertEquals("网络不可用，请检查连接后重试。", viewModel.state.value.message)
+    }
+
+    @Test fun loginMapsInvalidCredentialsWithoutCallingItSessionExpiry() {
+        val api = AccountCenterApi().apply { loginFailure = CloudApiException("invalid", 401) }
+        val viewModel = AccountViewModel(Application(), api, dispatcher)
+
+        viewModel.login("alice_01", "wrong")
+        dispatcher.scheduler.advanceUntilIdle()
+
+        assertEquals("账号或密码错误，请重新输入。", viewModel.state.value.message)
+    }
+
+    @Test fun accountRefreshMapsServerFailuresToRetryableServiceGuidance() {
+        val api = AccountCenterApi().apply {
+            credentialsPresent = true
+            currentUserFailure = CloudApiException("server", 503)
+        }
+        val viewModel = AccountViewModel(Application(), api, dispatcher)
+
+        viewModel.refresh()
+        dispatcher.scheduler.advanceUntilIdle()
+
+        assertEquals("服务暂时不可用，请稍后重试。", viewModel.state.value.message)
+    }
+
     @Test fun redeemNormalizesCodeRefreshesOverviewAndClearsInput() {
         val api = AccountCenterApi()
         val viewModel = AccountViewModel(Application(), api, dispatcher)
@@ -197,21 +230,30 @@ private class AccountCenterApi : AccountApi {
     var redeemedCode: String? = null
     var redeemFailure: Exception? = null
     var overviewFailure: Exception? = null
+    var loginFailure: Exception? = null
+    var currentUserFailure: Exception? = null
+    var credentialsPresent = false
     var onOverviewRequested: (() -> Unit)? = null
     var overviewRequests = 0
     override fun fetchRegistrationCaptcha() = SlideCaptchaChallenge("captcha", 300, 6, SlideCaptchaImage("a", "image/jpeg", 300, 220), SlideCaptchaTile(SlideCaptchaImage("b", "image/png", 20, 20), 0, 0))
     override fun register(username: String, email: String, password: String, captchaId: String, captchaX: Int) = error("unused")
     override fun deleteAccount(username: String) { deletedUsername = username }
-    override fun login(identifier: String, password: String) = AuthTokens("access", "refresh")
+    override fun login(identifier: String, password: String): AuthTokens {
+        loginFailure?.let { throw it }
+        return AuthTokens("access", "refresh")
+    }
     override fun logout() = Unit
-    override fun currentUser() = CloudUser("user-1", "alice_01", CloudRole.USER)
+    override fun currentUser(): CloudUser {
+        currentUserFailure?.let { throw it }
+        return CloudUser("user-1", "alice_01", CloudRole.USER)
+    }
     override fun currentEntitlement(): CloudEntitlement? = null
     override fun redeem(code: String): CloudEntitlement {
         redeemedCode = code
         redeemFailure?.let { throw it }
         return CloudEntitlement("subscription", "2026-09-01")
     }
-    override fun hasCredentials() = false
+    override fun hasCredentials() = credentialsPresent
     override fun accountIdentityProfile() = AccountIdentityProfile("alice_01", "alice@example.test", null)
     override fun accountOverview(): AccountOverview {
         overviewRequests++
