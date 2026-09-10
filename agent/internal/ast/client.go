@@ -6,7 +6,10 @@ import (
 	"errors"
 )
 
-var ErrCodecUnavailable = errors.New("AST_CODEC_UNAVAILABLE")
+var (
+	ErrCodecUnavailable    = errors.New("AST_CODEC_UNAVAILABLE")
+	ErrProviderUnavailable = errors.New("TRANSLATION_PROVIDER_UNAVAILABLE")
+)
 
 type logIDError interface {
 	LogID() string
@@ -24,18 +27,41 @@ func ErrorLogID(err error) string {
 
 // StartRequest is the validated Browser-to-Agent session configuration.
 type StartRequest struct {
-	SessionID         string
-	Mode              string
-	SourceLanguage    string
-	TargetLanguage    string
-	TargetAudioFormat string
-	TargetAudioRate   int
+	SessionID          string
+	Mode               string
+	SourceLanguage     string
+	TargetLanguage     string
+	TargetAudioFormat  string
+	TargetAudioRate    int
+	Provider           string
+	CandidateLanguages []string
+	Voice              string
 }
 
 // Client starts an AST session. A production codec is deliberately absent until
 // official Volcengine AST protobuf definitions are integrated.
 type Client interface {
 	Start(context.Context, StartRequest, EventSink) (Session, error)
+}
+
+type providerRoutingClient struct {
+	volcengine Client
+	azure      Client
+}
+
+// NewProviderRoutingClient selects an upstream from a validated request provider.
+func NewProviderRoutingClient(volcengine, azure Client) Client {
+	return providerRoutingClient{volcengine: volcengine, azure: azure}
+}
+
+func (c providerRoutingClient) Start(ctx context.Context, request StartRequest, sink EventSink) (Session, error) {
+	if request.Provider == "azure" {
+		if c.azure == nil {
+			return nil, ErrProviderUnavailable
+		}
+		return c.azure.Start(ctx, request, sink)
+	}
+	return c.volcengine.Start(ctx, request, sink)
 }
 
 // Session accepts ordered audio and an idempotent finish request.

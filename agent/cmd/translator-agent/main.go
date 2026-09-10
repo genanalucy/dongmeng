@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"translator-agent/internal/ast"
+	"translator-agent/internal/azurespeech"
 	"translator-agent/internal/cloudauth"
 	"translator-agent/internal/config"
 	"translator-agent/internal/server"
@@ -75,7 +76,10 @@ func main() {
 	httpServer := &http.Server{
 		Addr: server.DefaultAddress,
 		Handler: server.New(server.Options{
-			ASTClient: ast.NewRoutingClient(ast.NewConfiguredClient(cfg), cfg), Origins: allowedOrigins(os.Getenv("TRANSLATOR_AGENT_EXTRA_ORIGINS")),
+			ASTClient: ast.NewProviderRoutingClient(
+				ast.NewRoutingClient(ast.NewConfiguredClient(cfg), cfg),
+				azurespeech.New(azurespeech.Config{Key: cfg.AzureSpeechKey, Region: cfg.AzureSpeechRegion}),
+			), Origins: allowedOrigins(os.Getenv("TRANSLATOR_AGENT_EXTRA_ORIGINS")),
 			Logger: logger, SessionVerifier: sessionVerifier,
 			CloudAuthorizer: cloudAuthorizer,
 			Governance: server.GovernanceTimings{

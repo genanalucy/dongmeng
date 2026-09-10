@@ -18,6 +18,19 @@ func TestLoadNewAPIKey(t *testing.T) {
 	}
 }
 
+func TestLoadReadsAzureSpeechConfiguration(t *testing.T) {
+	cfg, err := Load(func(name string) string {
+		return map[string]string{
+			"VOLCENGINE_API_KEY":  "test-key",
+			"AZURE_SPEECH_KEY":    "azure-key",
+			"AZURE_SPEECH_REGION": "japaneast",
+		}[name]
+	})
+	if err != nil || cfg.AzureSpeechKey != "azure-key" || cfg.AzureSpeechRegion != "japaneast" {
+		t.Fatalf("Load() = %#v, %v", cfg, err)
+	}
+}
+
 func TestLoadLegacyCredentials(t *testing.T) {
 	cfg, err := Load(func(name string) string {
 		return map[string]string{

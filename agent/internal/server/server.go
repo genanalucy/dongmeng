@@ -18,6 +18,7 @@ import (
 	"github.com/coder/websocket/wsjson"
 
 	"translator-agent/internal/ast"
+	"translator-agent/internal/azurespeech"
 	"translator-agent/internal/cloudauth"
 	"translator-agent/internal/sessionauth"
 )
@@ -195,15 +196,18 @@ func (s *Server) translate(w http.ResponseWriter, r *http.Request) {
 }
 
 type startMessage struct {
-	Type              string `json:"type"`
-	SessionID         string `json:"sessionId"`
-	UserID            string `json:"userId"`
-	InstallID         string `json:"installId"`
-	Mode              string `json:"mode"`
-	SourceLanguage    string `json:"sourceLanguage"`
-	TargetLanguage    string `json:"targetLanguage"`
-	TargetAudioFormat string `json:"targetAudioFormat"`
-	TargetAudioRate   int    `json:"targetAudioRate"`
+	Type               string   `json:"type"`
+	SessionID          string   `json:"sessionId"`
+	UserID             string   `json:"userId"`
+	InstallID          string   `json:"installId"`
+	Mode               string   `json:"mode"`
+	SourceLanguage     string   `json:"sourceLanguage"`
+	TargetLanguage     string   `json:"targetLanguage"`
+	TargetAudioFormat  string   `json:"targetAudioFormat"`
+	TargetAudioRate    int      `json:"targetAudioRate"`
+	Provider           string   `json:"provider"`
+	CandidateLanguages []string `json:"candidateLanguages"`
+	Voice              string   `json:"voice"`
 }
 
 type finishMessage struct {
@@ -473,6 +477,8 @@ func (s *Server) runConnection(parent context.Context, conn *websocket.Conn, ses
 			code = qwenError.Code
 		} else if errors.Is(err, ast.ErrCodecUnavailable) {
 			code = "AST_CODEC_UNAVAILABLE"
+		} else if errors.Is(err, ast.ErrProviderUnavailable) {
+			code = "TRANSLATION_PROVIDER_UNAVAILABLE"
 		}
 		logID := ast.ErrorLogID(err)
 		s.logError(start.SessionID, direction, "ast_start_failed", code, logID)
@@ -606,15 +612,20 @@ func parseStart(payload []byte, authRequired bool) (connectionStart, error) {
 	if err := decoder.Decode(&message); err != nil || decoder.Decode(&struct{}{}) != io.EOF {
 		return connectionStart{}, errors.New("INVALID_START")
 	}
+	if message.Provider == "" {
+		message.Provider = "volcengine"
+	}
 	if message.Type != "start" || !validUUID(message.SessionID) || message.Mode != "s2s" ||
 		!isSupportedLanguage(message.SourceLanguage) || !isSupportedLanguage(message.TargetLanguage) ||
 		message.SourceLanguage == message.TargetLanguage || message.TargetAudioFormat != "pcm" || message.TargetAudioRate != 16000 ||
+		(message.Provider != "volcengine" && message.Provider != "azure") ||
+		(message.Voice != "" && !azurespeech.IsVoiceAllowed(message.Voice, []string{message.TargetLanguage})) ||
 		(authRequired && (strings.TrimSpace(message.UserID) == "" || strings.TrimSpace(message.InstallID) == "")) ||
 		(!authRequired && (message.UserID != "" || message.InstallID != "")) {
 		return connectionStart{}, errors.New("INVALID_START")
 	}
 	return connectionStart{
-		StartRequest: ast.StartRequest{SessionID: message.SessionID, Mode: message.Mode, SourceLanguage: message.SourceLanguage, TargetLanguage: message.TargetLanguage, TargetAudioFormat: message.TargetAudioFormat, TargetAudioRate: message.TargetAudioRate},
+		StartRequest: ast.StartRequest{SessionID: message.SessionID, Mode: message.Mode, SourceLanguage: message.SourceLanguage, TargetLanguage: message.TargetLanguage, TargetAudioFormat: message.TargetAudioFormat, TargetAudioRate: message.TargetAudioRate, Provider: message.Provider, CandidateLanguages: append([]string(nil), message.CandidateLanguages...), Voice: message.Voice},
 		UserID:       message.UserID, InstallID: message.InstallID,
 	}, nil
 }

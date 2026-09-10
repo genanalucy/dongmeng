@@ -19,6 +19,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 
 	"translator-agent/internal/ast"
+	"translator-agent/internal/azurespeech"
 	"translator-agent/internal/sessionauth"
 )
 
@@ -37,6 +38,7 @@ type fakeClient struct {
 	startErr   error
 	session    *fakeSession
 	startCalls int
+	request    ast.StartRequest
 }
 
 type emittingClient struct{}
@@ -57,10 +59,11 @@ func (emittingClient) Start(_ context.Context, _ ast.StartRequest, sink ast.Even
 	return &fakeSession{}, nil
 }
 
-func (f *fakeClient) Start(_ context.Context, _ ast.StartRequest, _ ast.EventSink) (ast.Session, error) {
+func (f *fakeClient) Start(_ context.Context, request ast.StartRequest, _ ast.EventSink) (ast.Session, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.startCalls++
+	f.request = request
 	if f.startErr != nil {
 		return nil, f.startErr
 	}
@@ -594,6 +597,86 @@ func TestSessionTokenProtocolParsingIsStrict(t *testing.T) {
 	if token, ok := sessionTokenFromRequest(req); !ok || token != valid {
 		t.Fatalf("split header fields yielded token = %q, ok = %v", token, ok)
 	}
+}
+
+func TestProviderStartFieldsAreParsedAndForwarded(t *testing.T) {
+	volc := &fakeClient{}
+	azure := azurespeech.New(azurespeech.Config{Key: "key", Region: "japaneast"})
+	ts := testHTTPServer(ast.NewProviderRoutingClient(volc, azure))
+	defer ts.Close()
+
+	conn := dial(t, ts.URL, "http://localhost:5173")
+	defer conn.CloseNow()
+	start(t, conn, map[string]any{
+		"provider": "azure", "candidateLanguages": []string{"en", "fr"}, "voice": "en-US-JennyNeural",
+	})
+	if event := readEvent(t, conn); event.Type != "ready" {
+		t.Fatalf("event = %#v, want ready", event)
+	}
+	if volc.starts() != 0 {
+		t.Fatalf("Volcengine client started %d times, want 0", volc.starts())
+	}
+
+	payload, err := json.Marshal(map[string]any{
+		"type": "start", "sessionId": testSessionID, "mode": "s2s", "sourceLanguage": "zh", "targetLanguage": "en",
+		"targetAudioFormat": "pcm", "targetAudioRate": 16000, "provider": "volcengine",
+		"candidateLanguages": []string{"en", "fr"}, "voice": "en-US-GuyNeural",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := parseStart(payload, false)
+	if err != nil {
+		t.Fatalf("parseStart() error = %v", err)
+	}
+	if parsed.Provider != "volcengine" || !equalStrings(parsed.CandidateLanguages, []string{"en", "fr"}) || parsed.Voice != "en-US-GuyNeural" {
+		t.Fatalf("parsed request = %#v", parsed.StartRequest)
+	}
+}
+
+func TestAzureUnavailableProviderIsReported(t *testing.T) {
+	volc := &fakeClient{}
+	ts := testHTTPServer(ast.NewProviderRoutingClient(volc, azurespeech.New(azurespeech.Config{})))
+	defer ts.Close()
+
+	conn := dial(t, ts.URL, "http://localhost:5173")
+	defer conn.CloseNow()
+	start(t, conn, map[string]any{"provider": "azure"})
+	if event := readEvent(t, conn); event.Type != "error" || event.Code != "TRANSLATION_PROVIDER_UNAVAILABLE" {
+		t.Fatalf("event = %#v", event)
+	}
+	if volc.starts() != 0 {
+		t.Fatalf("Volcengine client started %d times, want 0", volc.starts())
+	}
+}
+
+func TestStartRejectsInvalidProviderAndVoice(t *testing.T) {
+	for _, updates := range []map[string]any{
+		{"provider": "unknown"},
+		{"voice": "zh-CN-XiaoxiaoNeural"},
+		{"voice": "zh-CN-NotAllowedNeural"},
+	} {
+		ts := testHTTPServer(&fakeClient{})
+		conn := dial(t, ts.URL, "http://localhost:5173")
+		start(t, conn, updates)
+		if event := readEvent(t, conn); event.Type != "error" || event.Code != "INVALID_START" {
+			t.Fatalf("updates %#v: event = %#v", updates, event)
+		}
+		_ = conn.CloseNow()
+		ts.Close()
+	}
+}
+
+func equalStrings(got, want []string) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	for i := range got {
+		if got[i] != want[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func TestStartParsingAndLanguageValidation(t *testing.T) {

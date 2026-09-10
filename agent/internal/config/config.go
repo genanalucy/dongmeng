@@ -14,15 +14,17 @@ import (
 
 const DefaultResourceID = "volc.service_type.10053"
 
-// Config contains only the credential form selected for the AST client.
-// Secret Key is intentionally not supported or read.
+// Config contains upstream configuration loaded from the local environment.
+// Credentials are passed only to their respective client constructors and never logged.
 type Config struct {
-	APIKey          string
-	AppID           string
-	AccessToken     string
-	ResourceID      string
-	DashScopeAPIKey string
-	QwenAPIHost     string
+	APIKey            string
+	AppID             string
+	AccessToken       string
+	ResourceID        string
+	DashScopeAPIKey   string
+	QwenAPIHost       string
+	AzureSpeechKey    string
+	AzureSpeechRegion string
 }
 
 // SessionAuth contains the caller-supplied trust contract for translation-session
@@ -91,12 +93,14 @@ func Load(getenv func(string) string) (Config, error) {
 	}
 
 	cfg := Config{
-		APIKey:          getenv("VOLCENGINE_API_KEY"),
-		AppID:           getenv("VOLCENGINE_APP_ID"),
-		AccessToken:     getenv("VOLCENGINE_ACCESS_TOKEN"),
-		ResourceID:      getenv("VOLCENGINE_RESOURCE_ID"),
-		DashScopeAPIKey: getenv("DASHSCOPE_API_KEY"),
-		QwenAPIHost:     getenv("QWEN_API_HOST"),
+		APIKey:            getenv("VOLCENGINE_API_KEY"),
+		AppID:             getenv("VOLCENGINE_APP_ID"),
+		AccessToken:       getenv("VOLCENGINE_ACCESS_TOKEN"),
+		ResourceID:        getenv("VOLCENGINE_RESOURCE_ID"),
+		DashScopeAPIKey:   getenv("DASHSCOPE_API_KEY"),
+		QwenAPIHost:       getenv("QWEN_API_HOST"),
+		AzureSpeechKey:    getenv("AZURE_SPEECH_KEY"),
+		AzureSpeechRegion: getenv("AZURE_SPEECH_REGION"),
 	}
 	if cfg.ResourceID == "" {
 		cfg.ResourceID = DefaultResourceID
