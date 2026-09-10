@@ -23,6 +23,7 @@ import com.verba.interpretation.history.LocalHistorySaveController
 import com.verba.interpretation.history.LocalHistoryTurnOwnership
 import com.verba.interpretation.history.LocalHistoryTurnSaver
 import com.verba.interpretation.protocol.TranslationSessionEndReason
+import com.verba.interpretation.protocol.TranslationSettingsStore
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -34,6 +35,7 @@ class InterpretationViewModel(application: Application) : AndroidViewModel(appli
     val state: StateFlow<InterpretationUiState> = mutableState.asStateFlow()
     private val microphone = MicrophoneCapture(application)
     private val endpointSettings = EndpointSettings(application)
+    private val translationSettings = TranslationSettingsStore(application)
     private val player = TtsPlayer()
     private val cloudSessions = TranslationSessionCoordinator(
         CloudApi(CloudEndpointSettings(application), KeystoreTokenStore(application), SharedPreferencesInstallationIdStore(application)),
@@ -193,6 +195,7 @@ class InterpretationViewModel(application: Application) : AndroidViewModel(appli
         lateinit var socket: AgentSocket
         socket = AgentSocket(
             endpointSettings = endpointSettings,
+            translationSettings = translationSettings::load,
             onEvent = { event -> handleEvent(turn.id, event) },
             onTts = { pcm -> playQueued(sessions.offerTts(turn.id, pcm)) },
             onFailure = { message -> handleSessionFailure(turn.id, message) },

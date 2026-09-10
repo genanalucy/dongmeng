@@ -22,6 +22,7 @@ enum class ProductScreen {
     HISTORY,
     PROFILE,
     ENDPOINT_SETTINGS,
+    TRANSLATION_SETTINGS,
     ACCOUNT,
     ACCOUNT_ENTITLEMENT,
     ACCOUNT_REDEMPTION,
@@ -98,6 +99,7 @@ object ProductNavigationPolicy {
         ProductScreen.HISTORY -> ProductDestination.HISTORY
         ProductScreen.PROFILE,
         ProductScreen.ENDPOINT_SETTINGS,
+        ProductScreen.TRANSLATION_SETTINGS,
         ProductScreen.ACCOUNT,
         ProductScreen.ACCOUNT_ENTITLEMENT,
         ProductScreen.ACCOUNT_REDEMPTION,
@@ -124,6 +126,8 @@ object ProductNavigationPolicy {
 /** Endpoint editing is a debug-only capability; release builds ship without any server-address UI. */
 object EndpointSettingsAccessPolicy {
     fun endpointEditingEnabled(debugBuild: Boolean): Boolean = debugBuild
+    fun translationSettingsVisible(debugBuild: Boolean): Boolean = debugBuild
+    fun automaticModeVisible(debugBuild: Boolean): Boolean = debugBuild
 
     fun adminTestSettingsVisible(mode: ProductNavigationMode, debugBuild: Boolean): Boolean =
         debugBuild && mode == ProductNavigationMode.ADMIN_TEST

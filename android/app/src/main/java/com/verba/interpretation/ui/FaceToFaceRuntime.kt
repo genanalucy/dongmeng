@@ -9,6 +9,7 @@ import com.verba.interpretation.cloud.TranslationSessionGrant
 import com.verba.interpretation.protocol.AgentEvent
 import com.verba.interpretation.protocol.AgentSocket
 import com.verba.interpretation.protocol.EndpointSettings
+import com.verba.interpretation.protocol.TranslationSettingsStore
 
 /** Device/network boundary; the ViewModel and coordinator retain all lifecycle decisions. */
 interface FaceToFaceSocket {
@@ -30,10 +31,17 @@ interface FaceToFaceRuntime {
 internal class AndroidFaceToFaceRuntime(application: Application) : FaceToFaceRuntime {
     private val microphone = MicrophoneCapture(application)
     private val endpointSettings = EndpointSettings(application)
+    private val translationSettings = TranslationSettingsStore(application)
     private val player = TtsPlayer()
 
     override fun createSocket(onEvent: (AgentEvent) -> Unit, onTts: (ByteArray) -> Unit, onFailure: (String) -> Unit): FaceToFaceSocket {
-        val socket = AgentSocket(endpointSettings, onEvent = onEvent, onTts = onTts, onFailure = onFailure)
+        val socket = AgentSocket(
+            endpointSettings = endpointSettings,
+            translationSettings = translationSettings::load,
+            onEvent = onEvent,
+            onTts = onTts,
+            onFailure = onFailure,
+        )
         return object : FaceToFaceSocket {
             override fun start(source: String, target: String, grant: TranslationSessionGrant) = socket.start(source, target, grant)
             override fun sendAudio(packet: ByteArray) = socket.sendAudio(packet)
