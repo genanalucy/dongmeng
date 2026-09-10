@@ -8,6 +8,7 @@ data class StartMessage(
     val targetLanguage: String,
     val userId: String? = null,
     val installId: String? = null,
+    val settings: TranslationSettings = TranslationSettings(),
 ) {
     fun toJson(): String = JSONObject()
         .put("type", "start").put("sessionId", sessionId).put("mode", "s2s")
@@ -16,6 +17,8 @@ data class StartMessage(
         .apply {
             userId?.let { put("userId", it) }
             installId?.let { put("installId", it) }
+            if (settings.provider == TranslationProvider.AZURE) put("provider", settings.provider.storedValue)
+            settings.voiceFor(targetLanguage).takeIf { it.isNotEmpty() }?.let { put("voice", it) }
         }.toString()
 }
 

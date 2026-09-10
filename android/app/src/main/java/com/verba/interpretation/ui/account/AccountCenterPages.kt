@@ -179,6 +179,8 @@ fun AccountIdentitySettingsScreen(
     identityProfile: AccountIdentityProfile? = null,
     showServiceSettings: Boolean = false,
     onServiceSettings: () -> Unit = {},
+    showTranslationSettings: Boolean = false,
+    onTranslationSettings: () -> Unit = {},
     themeMode: ThemeMode = ThemeMode.SYSTEM,
     onSelectThemeMode: (ThemeMode) -> Unit = {},
 ) {
@@ -243,6 +245,18 @@ fun AccountIdentitySettingsScreen(
                         color = MaterialTheme.colorScheme.surfaceContainerLow,
                     ) {
                         ServiceSettingsRow(onServiceSettings)
+                    }
+                }
+            }
+            if (showTranslationSettings) {
+                item {
+                    AccountSectionLabel("翻译测试")
+                    Surface(
+                        modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                        shape = MaterialTheme.shapes.medium,
+                        color = MaterialTheme.colorScheme.surfaceContainerLow,
+                    ) {
+                        TranslationSettingsRow(onTranslationSettings)
                     }
                 }
             }
@@ -328,6 +342,18 @@ private fun ServiceSettingsRow(onClick: () -> Unit) {
             .heightIn(min = 64.dp)
             .clickable(onClick = onClick)
             .semantics { contentDescription = "服务偏好设置，仅开发构建可用" },
+    )
+}
+
+@Composable
+private fun TranslationSettingsRow(onClick: () -> Unit) {
+    ListItem(
+        headlineContent = { Text("翻译引擎与声音", fontWeight = FontWeight.Medium) },
+        supportingContent = { Text("Azure 测试与目标语言合成声音") },
+        leadingContent = { Icon(Icons.Outlined.Settings, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
+        trailingContent = { Icon(Icons.Outlined.ChevronRight, contentDescription = null, tint = MaterialTheme.colorScheme.outlineVariant) },
+        colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+        modifier = Modifier.fillMaxWidth().heightIn(min = 64.dp).clickable(onClick = onClick),
     )
 }
 
