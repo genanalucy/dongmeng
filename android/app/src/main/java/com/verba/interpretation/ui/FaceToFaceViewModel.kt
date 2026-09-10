@@ -35,6 +35,11 @@ class FaceToFaceViewModel @JvmOverloads constructor(
     private val playbackExecutor: java.util.concurrent.ExecutorService = Executors.newSingleThreadExecutor { task ->
         Thread(task, "verba-face-tts").apply { isDaemon = true }
     },
+    /** Serializes capture/socket I/O side effects off actionLock so the playback pump
+     *  is never starved by a slow stopCapture (AudioRecord release can join ~1s). */
+    private val effectsExecutor: java.util.concurrent.ExecutorService = Executors.newSingleThreadExecutor { task ->
+        Thread(task, "verba-face-effects").apply { isDaemon = true }
+    },
 ) : AndroidViewModel(application) {
     internal val microphonePermissionPolicy = MicrophonePermissionPolicy()
     private val coordinator = FaceToFaceCoordinator<FaceToFaceSocket>()
@@ -270,13 +275,17 @@ class FaceToFaceViewModel @JvmOverloads constructor(
             timerJob?.cancel()
             timerJob = null
         }
-        transition.cancelSessions.forEach { it.cancel() }
-        transition.finishSessions.forEach { it.finish() }
-        if (transition.stopCapture) runtime.stopCapture()
-        if (transition.startCapture) startCapture()
         transition.timer?.let(::scheduleTimer)
         if (transition.closeCloudSession) endCloudSession()
         publishState()
+        // Socket/capture I/O can block (AudioRecord join, websocket teardown). Keeping it
+        // under actionLock starves the playback pump between chunks and audibly stalls TTS.
+        effectsExecutor.execute {
+            transition.cancelSessions.forEach { it.cancel() }
+            transition.finishSessions.forEach { it.finish() }
+            if (transition.stopCapture) runtime.stopCapture()
+            if (transition.startCapture) startCapture()
+        }
     }
 
     private fun startCapture() {

@@ -29,6 +29,7 @@ class FaceToFaceViewModelTest {
     private val runtime = RecordingRuntime()
     private val cloud = RecordingCloud()
     private val playback = QueuedExecutor()
+    private val effects = QueuedExecutor()
     private lateinit var vm: FaceToFaceViewModel
 
     @Before fun setUp() {
@@ -36,7 +37,7 @@ class FaceToFaceViewModelTest {
         vm = FaceToFaceViewModel(
             Application(), runtime,
             TranslationSessionCoordinator(cloud, CoroutineScope(dispatcher), { 0L }, dispatcher),
-            LocalHistoryTurnSaver { "saved" }, playback,
+            LocalHistoryTurnSaver { "saved" }, playback, effects,
         )
         vm.setMode(FaceToFaceMode.AUTO)
         vm.setView(FaceToFaceView.FACE_TO_FACE)
@@ -45,6 +46,7 @@ class FaceToFaceViewModelTest {
     @After fun tearDown() {
         vm.cancel()
         playback.shutdownNow()
+        effects.drain()
         dispatcher.scheduler.advanceUntilIdle()
         Dispatchers.resetMain()
     }
@@ -57,6 +59,7 @@ class FaceToFaceViewModelTest {
         leftClick()
         vm.microphonePermissionResult(true)
         dispatcher.scheduler.advanceUntilIdle()
+        effects.drain()
     }
 
     @Test fun manualModeStartsNextPressBeforePreviousTurnFinishes() {
@@ -73,6 +76,7 @@ class FaceToFaceViewModelTest {
         assertEquals(FaceToFacePhase.PROCESSING, vm.state.value.phase)
         vm.manualPress(FaceToFaceSide.RIGHT)
         dispatcher.scheduler.runCurrent()
+        effects.drain()
 
         assertEquals(FaceToFacePhase.LISTENING, vm.state.value.phase)
         assertEquals(FaceToFaceSide.RIGHT, vm.state.value.activeSide)
@@ -111,6 +115,7 @@ class FaceToFaceViewModelTest {
         vm.microphonePermissionResult(true)
         vm.microphonePermissionResult(true)
         dispatcher.scheduler.advanceUntilIdle()
+        effects.drain()
         assertEquals(2, runtime.sockets.size)
         assertEquals(2, runtime.captureStarts)
         assertEquals(FaceToFacePhase.LISTENING, vm.state.value.phase)
@@ -204,6 +209,7 @@ class FaceToFaceViewModelTest {
         restored.source("restored")
         restored.tts(byteArrayOf(2, 0))
         vm.stopAuto()
+        effects.drain()
         assertEquals(1, restored.finishes)
         restored.event(AgentEvent.Finished)
         dispatcher.scheduler.advanceUntilIdle()
@@ -225,6 +231,7 @@ class FaceToFaceViewModelTest {
         vm.pressRightAuto()
         runtime.onStart = vm::pauseAuto
         vm.cancelRightAuto()
+        effects.drain()
         val rejected = runtime.sockets.last()
         assertEquals(1, rejected.cancels)
         assertEquals(0, rejected.finishes)
@@ -239,6 +246,7 @@ class FaceToFaceViewModelTest {
         val socket = runtime.sockets.single()
         socket.tts(byteArrayOf(1, 0))
         vm.cancel()
+        effects.drain()
         socket.event(AgentEvent.Finished)
         playback.drain()
         dispatcher.scheduler.advanceUntilIdle()
@@ -247,6 +255,68 @@ class FaceToFaceViewModelTest {
         assertTrue(runtime.routes.isEmpty())
         assertEquals(1, cloud.ends)
         assertFalse(vm.state.value.captureActive)
+    }
+
+    /** Regression: 松开手动说话键期间（stopCapture 慢，如 AudioRecord join），
+     * 正在进行的 TTS 播放泵不得被 actionLock 饿死，否则真机上出现词中约 1 秒卡顿。 */
+    @Test fun manualReleaseDoesNotStarveOngoingTtsPlayback() {
+        val realPlayback = java.util.concurrent.Executors.newSingleThreadExecutor { thread ->
+            Thread(thread, "test-face-tts").apply { isDaemon = true }
+        }
+        val stallRuntime = RecordingRuntime()
+        val firstChunkPlaying = java.util.concurrent.CountDownLatch(1)
+        val letPumpContinue = java.util.concurrent.CountDownLatch(1)
+        val stopCaptureEntered = java.util.concurrent.CountDownLatch(1)
+        val allowStopCapture = java.util.concurrent.CountDownLatch(1)
+        val playedCount = java.util.concurrent.atomic.AtomicInteger()
+        stallRuntime.onPlay = {
+            if (playedCount.incrementAndGet() == 1) firstChunkPlaying.countDown()
+            check(letPumpContinue.await(5, TimeUnit.SECONDS)) { "pump gate timed out" }
+        }
+        stallRuntime.onStopCapture = {
+            stopCaptureEntered.countDown()
+            check(allowStopCapture.await(5, TimeUnit.SECONDS)) { "stopCapture gate timed out" }
+        }
+        val stallVm = FaceToFaceViewModel(
+            Application(), stallRuntime,
+            TranslationSessionCoordinator(cloud, CoroutineScope(dispatcher), { 0L }, dispatcher),
+            LocalHistoryTurnSaver { "saved" }, realPlayback,
+        )
+        try {
+            stallVm.setMode(FaceToFaceMode.MANUAL)
+            stallVm.manualPress(FaceToFaceSide.LEFT)
+            dispatcher.scheduler.runCurrent()
+            val socket = stallRuntime.sockets.single()
+            socket.source("going to school")
+            socket.tts(byteArrayOf(1))
+            check(firstChunkPlaying.await(5, TimeUnit.SECONDS)) { "first chunk never played" }
+            socket.tts(byteArrayOf(2))
+
+            val release = Thread { stallVm.manualRelease() }
+            release.start()
+            check(stopCaptureEntered.await(5, TimeUnit.SECONDS)) { "stopCapture never entered" }
+            letPumpContinue.countDown()
+
+            val secondChunkInTime = awaitTrue(250) { playedCount.get() >= 2 } != null
+            allowStopCapture.countDown()
+            release.join(5_000)
+            assertTrue("松开手动说话键时 stopCapture 阻塞了 TTS 播放泵，产生约 1 秒卡顿", secondChunkInTime)
+            assertTrue(awaitTrue(5_000) { socket.finishes == 1 } != null)
+            assertTrue(awaitTrue(5_000) { playedCount.get() >= 2 } != null)
+        } finally {
+            allowStopCapture.countDown()
+            stallVm.cancel()
+            realPlayback.shutdownNow()
+        }
+    }
+
+    private fun awaitTrue(timeoutMillis: Long, probe: () -> Boolean): Any? {
+        val deadline = System.nanoTime() + timeoutMillis * 1_000_000
+        while (true) {
+            if (probe()) return Unit
+            if (System.nanoTime() >= deadline) return null
+            Thread.sleep(10)
+        }
     }
 }
 
@@ -267,6 +337,8 @@ private class RecordingRuntime : FaceToFaceRuntime {
     var drains = 0
     var packet: ((ByteArray) -> Unit)? = null
     val routes = mutableListOf<PlaybackRoute>()
+    var onPlay: (ByteArray) -> Unit = {}
+    var onStopCapture: () -> Unit = { packet = null }
     override fun createSocket(onEvent: (AgentEvent) -> Unit, onTts: (ByteArray) -> Unit, onFailure: (String) -> Unit) =
         RecordingSocket(onEvent, onTts) { onStart() }.also { sockets += it }
     override fun startCapture(onPacket: (ByteArray) -> Unit, onError: (String) -> Unit, onLevel: (Float) -> Unit): CaptureResult {
@@ -274,8 +346,8 @@ private class RecordingRuntime : FaceToFaceRuntime {
         packet = onPacket
         return CaptureResult.Started
     }
-    override fun stopCapture() { packet = null }
-    override fun play(pcm: ByteArray, route: PlaybackRoute): Result<Unit> { routes += route; return Result.success(Unit) }
+    override fun stopCapture() { onStopCapture() }
+    override fun play(pcm: ByteArray, route: PlaybackRoute): Result<Unit> { routes += route; onPlay(pcm); return Result.success(Unit) }
     override fun awaitDrained(): Result<Unit> { drains++; return Result.success(Unit) }
     override fun stopPlayback() { playbackStops++ }
 }
