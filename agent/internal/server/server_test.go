@@ -601,7 +601,7 @@ func TestSessionTokenProtocolParsingIsStrict(t *testing.T) {
 
 func TestProviderStartFieldsAreParsedAndForwarded(t *testing.T) {
 	volc := &fakeClient{}
-	azure := azurespeech.New(azurespeech.Config{Key: "key", Region: "japaneast"})
+	azure := &fakeClient{}
 	ts := testHTTPServer(ast.NewProviderRoutingClient(volc, azure))
 	defer ts.Close()
 
@@ -613,8 +613,8 @@ func TestProviderStartFieldsAreParsedAndForwarded(t *testing.T) {
 	if event := readEvent(t, conn); event.Type != "ready" {
 		t.Fatalf("event = %#v, want ready", event)
 	}
-	if volc.starts() != 0 {
-		t.Fatalf("Volcengine client started %d times, want 0", volc.starts())
+	if volc.starts() != 0 || azure.starts() != 1 {
+		t.Fatalf("provider starts = volcengine %d, azure %d; want 0, 1", volc.starts(), azure.starts())
 	}
 
 	payload, err := json.Marshal(map[string]any{
