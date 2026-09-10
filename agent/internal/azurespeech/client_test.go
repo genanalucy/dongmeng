@@ -72,7 +72,7 @@ func TestTranslationWebSocketConfigAudioAndEventMapping(t *testing.T) {
 			t.Errorf("subscription header = %q", r.Header.Get("Ocp-Apim-Subscription-Key"))
 		}
 		query := r.URL.Query()
-		if query.Get("language") != "zh-CN" || query.Get("to") != "en-US" || query.Get("format") != "simple" {
+		if query.Get("from") != "zh-CN" || query.Get("to") != "en-US" || query.Get("format") != "simple" {
 			t.Errorf("query = %s", r.URL.RawQuery)
 		}
 		conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
@@ -87,9 +87,18 @@ func TestTranslationWebSocketConfigAudioAndEventMapping(t *testing.T) {
 			t.Errorf("config frame = (%v, %q, %v)", typ, payload, err)
 			return
 		}
+		configStr := string(payload)
+		if !strings.Contains(configStr, "Path:speech.config") {
+			t.Errorf("speech.config missing Path header: %q", configStr)
+		}
+		bodyIdx := strings.Index(configStr, "\r\n\r\n")
+		if bodyIdx < 0 {
+			t.Errorf("speech.config missing header/body separator: %q", configStr)
+			return
+		}
 		var config map[string]any
-		if err := json.Unmarshal(payload, &config); err != nil || config["context"] == nil {
-			t.Errorf("speech.config = %s (%v)", payload, err)
+		if err := json.Unmarshal([]byte(configStr[bodyIdx+4:]), &config); err != nil || config["context"] == nil {
+			t.Errorf("speech.config body = %s (%v)", configStr[bodyIdx+4:], err)
 		}
 		close(configReceived)
 		typ, payload, err = conn.Read(ctx)
@@ -98,9 +107,13 @@ func TestTranslationWebSocketConfigAudioAndEventMapping(t *testing.T) {
 			return
 		}
 		audioReceived <- payload
-		_ = conn.Write(ctx, websocket.MessageText, []byte(`{"type":"translation.hypothesis","text":"你好","translations":{"en-US":"hello"}}`))
-		_ = conn.Write(ctx, websocket.MessageText, []byte(`{"type":"translation.result","text":"你好。","translations":{"en-US":"hello."}}`))
-		_ = conn.Write(ctx, websocket.MessageText, []byte(`{"type":"turn.end"}`))
+		// Production-shaped messages: Path header + capitalized payload keys.
+		writeUpstream := func(path, body string) {
+			_ = conn.Write(ctx, websocket.MessageText, []byte("X-RequestId:test0000000000000000000000000000\r\nPath:"+path+"\r\nContent-Type:application/json; charset=utf-8\r\n\r\n"+body))
+		}
+		writeUpstream("translation.hypothesis", `{"Text":"你好","Translations":{"en-US":"hello"}}`)
+		writeUpstream("translation.result", `{"Text":"你好。","Translations":{"en-US":"hello."}}`)
+		writeUpstream("turn.end", `{}`)
 	}))
 	defer server.Close()
 
@@ -118,8 +131,17 @@ func TestTranslationWebSocketConfigAudioAndEventMapping(t *testing.T) {
 		t.Fatal("did not receive config")
 	}
 	frame := <-audioReceived
-	if got := binary.BigEndian.Uint16(frame[:2]); got != 4 || string(frame[2:]) != string([]byte{1, 2, 3, 4}) {
-		t.Fatalf("audio frame = %v", frame)
+	headerLen := int(binary.BigEndian.Uint16(frame[:2]))
+	header := string(frame[2 : 2+headerLen])
+	if !strings.Contains(header, "Path:audio") || !strings.Contains(header, "audio/x-wav") {
+		t.Fatalf("audio frame header = %q", header)
+	}
+	audio := frame[2+headerLen:]
+	if string(audio[:4]) != "RIFF" {
+		t.Fatalf("first frame must carry RIFF header, got %q", audio[:4])
+	}
+	if pcm := audio[44:]; string(pcm) != string([]byte{1, 2, 3, 4}) {
+		t.Fatalf("audio payload = %v", pcm)
 	}
 	assertEvent(t, sink.next(t), "source_partial", "你好")
 	assertEvent(t, sink.next(t), "translation_partial", "hello")

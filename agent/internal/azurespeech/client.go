@@ -2,8 +2,11 @@
 package azurespeech
 
 import (
+	"bytes"
 	"context"
+	"crypto/rand"
 	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,6 +15,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/coder/websocket"
 
@@ -99,7 +103,7 @@ func (c *client) Start(ctx context.Context, request ast.StartRequest, sink ast.E
 		return nil, fmt.Errorf("dial Azure Speech: %w", err)
 	}
 	session := newSession(ctx, conn, c, to, request.Voice, sink)
-	if err := session.send(ctx, websocket.MessageText, speechConfig); err != nil {
+	if err := session.send(ctx, websocket.MessageText, textFrame("speech.config", string(speechConfigJSON))); err != nil {
 		_ = session.Close()
 		return nil, fmt.Errorf("send Azure speech.config: %w", err)
 	}
@@ -114,14 +118,48 @@ func translationEndpoint(base, from, to string) (string, error) {
 		return "", err
 	}
 	q := u.Query()
-	q.Set("language", from)
+	q.Set("from", from)
 	q.Set("to", to)
 	q.Set("format", "simple")
 	u.RawQuery = q.Encode()
 	return u.String(), nil
 }
 
-var speechConfig = []byte(`{"context":{"system":{"name":"dngmeng-agent","version":"1.0.0"},"os":{"platform":"linux"},"device":{"manufacturer":"dngmeng"}}}`)
+var speechConfigJSON = []byte(`{"context":{"system":{"name":"dngmeng-agent","version":"1.0.0"},"os":{"platform":"linux"},"device":{"manufacturer":"dngmeng"}}}`)
+
+// Azure text frames carry `X-RequestId`/`Path` headers separated from the
+// JSON body by a blank line; a bare JSON payload is rejected with
+// "Text message contains no header separator".
+const headerBodySeparator = "\r\n\r\n"
+
+func textFrame(path, body string) []byte {
+	return []byte("X-RequestId:" + randomRequestID() + "\r\nPath:" + path + "\r\nContent-Type:application/json; charset=utf-8" + headerBodySeparator + body)
+}
+
+func randomRequestID() string {
+	var buf [16]byte
+	if _, err := rand.Read(buf[:]); err != nil {
+		return "00000000000000000000000000000000"
+	}
+	return hex.EncodeToString(buf[:])
+}
+
+// splitMessage separates the `X-RequestId:...\r\nPath:<path>\r\n...\r\n\r\n`
+// header block Azure prefixes to every text message, returning the Path value
+// and the JSON body. Headerless messages fall back to a "" path (fake
+// upstreams) and the JSON `type` field.
+func splitMessage(data []byte) (path string, body []byte) {
+	idx := bytes.Index(data, []byte(headerBodySeparator))
+	if idx < 0 {
+		return "", data
+	}
+	for _, line := range strings.Split(string(data[:idx]), "\r\n") {
+		if strings.HasPrefix(line, "Path:") {
+			path = strings.TrimSpace(strings.TrimPrefix(line, "Path:"))
+		}
+	}
+	return path, data[idx+len(headerBodySeparator):]
+}
 
 type writeRequest struct {
 	typ     websocket.MessageType
@@ -147,6 +185,7 @@ type session struct {
 	commandMu                                    sync.Mutex
 	stateMu                                      sync.Mutex
 	accepting, active, finishRequested, terminal bool
+	riffSent                                     bool
 	// eventMu serializes text, synchronous TTS, errors, and finished.
 	eventMu sync.Mutex
 	errMu   sync.Mutex
@@ -173,10 +212,43 @@ func (s *session) SendAudio(ctx context.Context, pcm []byte) error {
 	if len(pcm) > 65535 {
 		return fmt.Errorf("Azure audio chunk exceeds 65535 bytes")
 	}
-	frame := make([]byte, len(pcm)+2)
-	binary.BigEndian.PutUint16(frame, uint16(len(pcm)))
-	copy(frame[2:], pcm)
+	// Unified Speech Protocol audio frame: [2-byte BE header length][header
+	// block (Path:audio, Content-Type:audio/x-wav)][payload]; the first frame
+	// prepends a 44-byte RIFF header declaring 16k/mono/16-bit PCM.
+	payload := pcm
+	if !s.riffSent {
+		payload = append(riffHeaderPCM16k(), pcm...)
+		s.riffSent = true
+	}
+	header := "X-RequestId:" + randomRequestID() + "\r\nPath:audio\r\nContent-Type:audio/x-wav\r\nX-Timestamp:" + azureTimestamp() + "\r\n\r\n"
+	frame := make([]byte, 2+len(header)+len(payload))
+	binary.BigEndian.PutUint16(frame, uint16(len(header)))
+	copy(frame[2:], header)
+	copy(frame[2+len(header):], payload)
 	return s.send(ctx, websocket.MessageBinary, frame)
+}
+
+// riffHeaderPCM16k declares the stream format once, in the first audio frame.
+func riffHeaderPCM16k() []byte {
+	h := make([]byte, 44)
+	copy(h[0:4], "RIFF")
+	binary.LittleEndian.PutUint32(h[4:8], 0xffffffff)
+	copy(h[8:12], "WAVE")
+	copy(h[12:16], "fmt ")
+	binary.LittleEndian.PutUint32(h[16:20], 16)
+	binary.LittleEndian.PutUint16(h[20:22], 1)
+	binary.LittleEndian.PutUint16(h[22:24], 1)
+	binary.LittleEndian.PutUint32(h[24:28], 16000)
+	binary.LittleEndian.PutUint32(h[28:32], 32000)
+	binary.LittleEndian.PutUint16(h[32:34], 2)
+	binary.LittleEndian.PutUint16(h[34:36], 16)
+	copy(h[36:40], "data")
+	binary.LittleEndian.PutUint32(h[40:44], 0xffffffff)
+	return h
+}
+
+func azureTimestamp() string {
+	return time.Now().UTC().Format("2006-01-02T15:04:05.0000000Z")
 }
 
 func (s *session) Finish(context.Context) error {
@@ -263,31 +335,55 @@ func (s *session) readLoop() {
 }
 
 type upstreamMessage struct {
-	Type         string            `json:"type"`
-	Text         string            `json:"text"`
-	Translations map[string]string `json:"translations"`
-	Signal       struct {
+	Type string `json:"type"` // fallback for headerless (fake upstream) messages
+	Text string `json:"text"`
+	// Azure production payloads use capitalized keys.
+	TextCapital         string            `json:"Text"`
+	Translations        map[string]string `json:"translations"`
+	TranslationsCapital map[string]string `json:"Translations"`
+	Signal              struct {
 		Name string `json:"name"`
 	} `json:"signal"`
 }
 
+func (m *upstreamMessage) text() string {
+	if m.Text != "" {
+		return m.Text
+	}
+	return m.TextCapital
+}
+
+func (m *upstreamMessage) translation(locale string) string {
+	if v, ok := m.Translations[locale]; ok && v != "" {
+		return v
+	}
+	return m.TranslationsCapital[locale]
+}
+
 func (s *session) handleMessage(data []byte) error {
+	path, body := splitMessage(data)
 	var message upstreamMessage
-	if err := json.Unmarshal(data, &message); err != nil {
+	if err := json.Unmarshal(body, &message); err != nil {
 		return fmt.Errorf("decode Azure message: %w", err)
 	}
-	if message.Type == "speech.event" && message.Signal.Name == "telemetry" {
-		return s.send(s.ctx, websocket.MessageText, []byte(`{"type":"telemetry","receivedMessages":[]}`))
+	// Production messages carry the message type in the Path header; the JSON
+	// `type` field is only a fallback for headerless fakes.
+	kind := path
+	if kind == "" {
+		kind = message.Type
+	}
+	if kind == "speech.event" && message.Signal.Name == "telemetry" {
+		return s.send(s.ctx, websocket.MessageText, textFrame("telemetry", `{"type":"telemetry","receivedMessages":[]}`))
 	}
 	s.eventMu.Lock()
 	defer s.eventMu.Unlock()
-	switch message.Type {
+	switch kind {
 	case "translation.hypothesis":
-		s.sink.Emit(ast.Event{Type: "source_partial", Message: message.Text})
-		s.sink.Emit(ast.Event{Type: "translation_partial", Message: message.Translations[s.to]})
+		s.sink.Emit(ast.Event{Type: "source_partial", Message: message.text()})
+		s.sink.Emit(ast.Event{Type: "translation_partial", Message: message.translation(s.to)})
 	case "translation.result":
-		s.sink.Emit(ast.Event{Type: "source_final", Message: message.Text})
-		translation := message.Translations[s.to]
+		s.sink.Emit(ast.Event{Type: "source_final", Message: message.text()})
+		translation := message.translation(s.to)
 		s.sink.Emit(ast.Event{Type: "translation_final", Message: translation})
 		if err := s.synthesizeLocked(translation); err != nil {
 			return azureTTSError{err}
