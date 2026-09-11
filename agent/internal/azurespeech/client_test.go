@@ -70,15 +70,26 @@ func TestAutomaticCandidateLanguagesUseAzureUniversalV2AndExposeDetectedLanguage
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(endpoint, "/stt/speech/universal/v2") {
-		t.Fatalf("automatic endpoint = %q", endpoint)
-	}
 	url, err := neturl.Parse(endpoint)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := url.Query().Get("to"); got != "zh-Hans,en" {
-		t.Fatalf("automatic targets = %q", got)
+	if url.Path != "/stt/speech/universal/v2" {
+		t.Fatalf("automatic endpoint path = %q", url.Path)
+	}
+	if got, want := url.RawQuery, "format=simple&from=zh-CN&scenario=conversation&to=zh-Hans%2Cen"; got != want {
+		t.Fatalf("automatic endpoint query = %q, want %q", got, want)
+	}
+	legacyEndpoint, err := translationEndpoint("wss://japaneast.stt.speech.microsoft.com", "zh-CN", "en-US", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacyURL, err := neturl.Parse(legacyEndpoint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if legacyURL.Path != "/speech/translation/cognitiveservices/v1" || legacyURL.Query().Has("scenario") {
+		t.Fatalf("legacy endpoint = %q", legacyEndpoint)
 	}
 	config, err := automaticSpeechContext([]string{"zh", "en"})
 	if err != nil {

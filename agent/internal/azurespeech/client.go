@@ -176,7 +176,7 @@ func translationEndpoint(base, from, to string, candidates []string) (string, er
 	q.Set("to", strings.Join(translationTargets, ","))
 	q.Set("format", "simple")
 	if len(candidates) != 0 {
-		q.Set("scenario", "interactive")
+		q.Set("scenario", "conversation")
 	}
 	u.RawQuery = q.Encode()
 	return u.String(), nil
