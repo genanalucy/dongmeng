@@ -66,6 +66,7 @@ func TestVoiceAllowlistUsesTargetLanguageLocale(t *testing.T) {
 
 func TestTranslationWebSocketConfigAudioAndEventMapping(t *testing.T) {
 	configReceived := make(chan struct{})
+	configRequestID := make(chan string, 1)
 	audioReceived := make(chan []byte, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Ocp-Apim-Subscription-Key") != "secret" {
@@ -100,6 +101,7 @@ func TestTranslationWebSocketConfigAudioAndEventMapping(t *testing.T) {
 		if err := json.Unmarshal([]byte(configStr[bodyIdx+4:]), &config); err != nil || config["context"] == nil {
 			t.Errorf("speech.config body = %s (%v)", configStr[bodyIdx+4:], err)
 		}
+		configRequestID <- headerValue(t, configStr, "X-RequestId")
 		close(configReceived)
 		typ, payload, err = conn.Read(ctx)
 		if err != nil || typ != websocket.MessageBinary {
@@ -112,7 +114,7 @@ func TestTranslationWebSocketConfigAudioAndEventMapping(t *testing.T) {
 			_ = conn.Write(ctx, websocket.MessageText, []byte("X-RequestId:test0000000000000000000000000000\r\nPath:"+path+"\r\nContent-Type:application/json; charset=utf-8\r\n\r\n"+body))
 		}
 		writeUpstream("translation.hypothesis", `{"Text":"你好","Translations":{"en-US":"hello"}}`)
-		writeUpstream("translation.result", `{"Text":"你好。","Translations":{"en-US":"hello."}}`)
+		writeUpstream("translation.phrase", `{"Text":"你好。","Translation":{"Translations":[{"Language":"en","Text":"hello."}]}}`)
 		writeUpstream("turn.end", `{}`)
 	}))
 	defer server.Close()
@@ -135,6 +137,9 @@ func TestTranslationWebSocketConfigAudioAndEventMapping(t *testing.T) {
 	header := string(frame[2 : 2+headerLen])
 	if !strings.Contains(header, "Path:audio") || !strings.Contains(header, "audio/x-wav") {
 		t.Fatalf("audio frame header = %q", header)
+	}
+	if audioRequestID := headerValue(t, header, "X-RequestId"); audioRequestID != <-configRequestID {
+		t.Fatalf("audio request ID = %q, want config request ID", audioRequestID)
 	}
 	audio := frame[2+headerLen:]
 	if string(audio[:4]) != "RIFF" {
@@ -261,6 +266,17 @@ func readConfig(t *testing.T, ctx context.Context, conn *websocket.Conn) {
 		t.Errorf("config frame = %v, %v", typ, err)
 	}
 }
+func headerValue(t *testing.T, header, name string) string {
+	t.Helper()
+	for _, line := range strings.Split(header, "\r\n") {
+		if key, value, ok := strings.Cut(line, ":"); ok && key == name {
+			return value
+		}
+	}
+	t.Fatalf("header %q missing %s", header, name)
+	return ""
+}
+
 func assertEvent(t *testing.T, event ast.Event, typ, message string) {
 	t.Helper()
 	if event.Type != typ || event.Message != message {

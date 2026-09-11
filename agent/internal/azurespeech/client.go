@@ -103,7 +103,7 @@ func (c *client) Start(ctx context.Context, request ast.StartRequest, sink ast.E
 		return nil, fmt.Errorf("dial Azure Speech: %w", err)
 	}
 	session := newSession(ctx, conn, c, to, request.Voice, sink)
-	if err := session.send(ctx, websocket.MessageText, textFrame("speech.config", string(speechConfigJSON))); err != nil {
+	if err := session.send(ctx, websocket.MessageText, textFrameWithRequestID(session.requestID, "speech.config", string(speechConfigJSON))); err != nil {
 		_ = session.Close()
 		return nil, fmt.Errorf("send Azure speech.config: %w", err)
 	}
@@ -133,7 +133,11 @@ var speechConfigJSON = []byte(`{"context":{"system":{"name":"dngmeng-agent","ver
 const headerBodySeparator = "\r\n\r\n"
 
 func textFrame(path, body string) []byte {
-	return []byte("X-RequestId:" + randomRequestID() + "\r\nPath:" + path + "\r\nContent-Type:application/json; charset=utf-8" + headerBodySeparator + body)
+	return textFrameWithRequestID(randomRequestID(), path, body)
+}
+
+func textFrameWithRequestID(requestID, path, body string) []byte {
+	return []byte("X-RequestId:" + requestID + "\r\nPath:" + path + "\r\nContent-Type:application/json; charset=utf-8" + headerBodySeparator + body)
 }
 
 func randomRequestID() string {
@@ -173,6 +177,7 @@ type session struct {
 	conn       *websocket.Conn
 	client     *client
 	to, voice  string
+	requestID  string
 	sink       ast.EventSink
 	writes     chan writeRequest
 	wg         sync.WaitGroup
@@ -184,7 +189,7 @@ type session struct {
 	// a completed Finish call.
 	commandMu                                    sync.Mutex
 	stateMu                                      sync.Mutex
-	accepting, active, finishRequested, terminal bool
+	accepting, active, turnEnded, finishRequested, terminal bool
 	riffSent                                     bool
 	// eventMu serializes text, synchronous TTS, errors, and finished.
 	eventMu sync.Mutex
@@ -194,7 +199,7 @@ type session struct {
 
 func newSession(parent context.Context, conn *websocket.Conn, c *client, to, voice string, sink ast.EventSink) *session {
 	ctx, cancel := context.WithCancel(parent)
-	s := &session{ctx: ctx, cancel: cancel, conn: conn, client: c, to: to, voice: voice, sink: sink, writes: make(chan writeRequest), accepting: true}
+	s := &session{ctx: ctx, cancel: cancel, conn: conn, client: c, to: to, voice: voice, requestID: randomRequestID(), sink: sink, writes: make(chan writeRequest), accepting: true}
 	s.wg.Add(1)
 	go s.writeLoop()
 	return s
@@ -220,12 +225,18 @@ func (s *session) SendAudio(ctx context.Context, pcm []byte) error {
 		payload = append(riffHeaderPCM16k(), pcm...)
 		s.riffSent = true
 	}
-	header := "X-RequestId:" + randomRequestID() + "\r\nPath:audio\r\nContent-Type:audio/x-wav\r\nX-Timestamp:" + azureTimestamp() + "\r\n\r\n"
+	return s.send(ctx, websocket.MessageBinary, s.audioFrame(payload))
+}
+
+// audioFrame encodes an audio fragment. An empty payload marks end-of-stream
+// after the preceding PCM frames, so Azure commits the active recognition turn.
+func (s *session) audioFrame(payload []byte) []byte {
+	header := "X-RequestId:" + s.requestID + "\r\nPath:audio\r\nContent-Type:audio/x-wav\r\nX-Timestamp:" + azureTimestamp() + "\r\n\r\n"
 	frame := make([]byte, 2+len(header)+len(payload))
 	binary.BigEndian.PutUint16(frame, uint16(len(header)))
 	copy(frame[2:], header)
 	copy(frame[2+len(header):], payload)
-	return s.send(ctx, websocket.MessageBinary, frame)
+	return frame
 }
 
 // riffHeaderPCM16k declares the stream format once, in the first audio frame.
@@ -251,7 +262,7 @@ func azureTimestamp() string {
 	return time.Now().UTC().Format("2006-01-02T15:04:05.0000000Z")
 }
 
-func (s *session) Finish(context.Context) error {
+func (s *session) Finish(ctx context.Context) error {
 	s.finishOnce.Do(func() {
 		s.eventMu.Lock()
 		defer s.eventMu.Unlock()
@@ -260,10 +271,16 @@ func (s *session) Finish(context.Context) error {
 		s.stateMu.Lock()
 		s.accepting = false
 		s.finishRequested = true
+		hasAudio := s.riffSent
 		active := s.active
+		turnEnded := s.turnEnded
 		s.stateMu.Unlock()
-		if !active {
+		if (!hasAudio && !active) || turnEnded {
 			s.finishedLocked()
+			return
+		}
+		if err := s.send(ctx, websocket.MessageBinary, s.audioFrame(nil)); err != nil {
+			s.finishErr = err
 		}
 	})
 	return s.finishErr
@@ -341,6 +358,12 @@ type upstreamMessage struct {
 	TextCapital         string            `json:"Text"`
 	Translations        map[string]string `json:"translations"`
 	TranslationsCapital map[string]string `json:"Translations"`
+	Translation         struct {
+		Translations []struct {
+			Language string `json:"Language"`
+			Text     string `json:"Text"`
+		} `json:"Translations"`
+	} `json:"Translation"`
 	Signal              struct {
 		Name string `json:"name"`
 	} `json:"signal"`
@@ -357,7 +380,16 @@ func (m *upstreamMessage) translation(locale string) string {
 	if v, ok := m.Translations[locale]; ok && v != "" {
 		return v
 	}
-	return m.TranslationsCapital[locale]
+	if v, ok := m.TranslationsCapital[locale]; ok && v != "" {
+		return v
+	}
+	language := strings.SplitN(locale, "-", 2)[0]
+	for _, translation := range m.Translation.Translations {
+		if translation.Language == language && translation.Text != "" {
+			return translation.Text
+		}
+	}
+	return ""
 }
 
 func (s *session) handleMessage(data []byte) error {
@@ -381,7 +413,7 @@ func (s *session) handleMessage(data []byte) error {
 	case "translation.hypothesis":
 		s.sink.Emit(ast.Event{Type: "source_partial", Message: message.text()})
 		s.sink.Emit(ast.Event{Type: "translation_partial", Message: message.translation(s.to)})
-	case "translation.result":
+	case "translation.result", "translation.phrase":
 		s.sink.Emit(ast.Event{Type: "source_final", Message: message.text()})
 		translation := message.translation(s.to)
 		s.sink.Emit(ast.Event{Type: "translation_final", Message: translation})
@@ -395,6 +427,7 @@ func (s *session) handleMessage(data []byte) error {
 	case "turn.end":
 		s.stateMu.Lock()
 		s.active = false
+		s.turnEnded = true
 		finish := s.finishRequested
 		s.stateMu.Unlock()
 		if finish {

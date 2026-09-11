@@ -29,11 +29,9 @@ func (s *printSink) Emit(e ast.Event) {
 	} else {
 		fmt.Printf("  event=%s text=%q code=%s\n", e.Type, e.Message, e.Code)
 	}
-	if e.Type == "finished" || e.Type == "error" {
-		select {
-		case s.events <- e:
-		default:
-		}
+	select {
+	case s.events <- e:
+	default:
 	}
 }
 

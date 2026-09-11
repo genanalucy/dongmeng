@@ -45,8 +45,8 @@ func reqID() string {
 	return hex.EncodeToString(b[:])
 }
 
-func textFrame(path, body string) []byte {
-	return []byte("X-RequestId:" + reqID() + "\r\nPath:" + path + "\r\nContent-Type:application/json; charset=utf-8\r\n\r\n" + body)
+func textFrame(requestID, path, body string) []byte {
+	return []byte("X-RequestId:" + requestID + "\r\nPath:" + path + "\r\nContent-Type:application/json; charset=utf-8\r\n\r\n" + body)
 }
 
 func riffHeader() []byte {
@@ -67,8 +67,8 @@ func riffHeader() []byte {
 	return h
 }
 
-func audioFrame(pcm []byte) []byte {
-	header := "X-RequestId:" + reqID() + "\r\nPath:audio\r\nContent-Type:audio/x-wav\r\nX-Timestamp:" + time.Now().UTC().Format("2006-01-02T15:04:05.0000000Z") + "\r\n\r\n"
+func audioFrame(requestID string, pcm []byte) []byte {
+	header := "X-RequestId:" + requestID + "\r\nPath:audio\r\nContent-Type:audio/x-wav\r\nX-Timestamp:" + time.Now().UTC().Format("2006-01-02T15:04:05.0000000Z") + "\r\n\r\n"
 	hb := []byte(header)
 	frame := make([]byte, 2+len(hb)+len(pcm))
 	binary.BigEndian.PutUint16(frame[0:2], uint16(len(hb)))
@@ -97,8 +97,9 @@ func main() {
 		return
 	}
 	defer conn.CloseNow()
+	requestID := reqID()
 	cfg := `{"context":{"system":{"name":"dngmeng-agent","version":"1.0.0"},"os":{"platform":"linux"},"device":{"manufacturer":"dngmeng"}}}`
-	if err := conn.Write(ctx, websocket.MessageText, textFrame("speech.config", cfg)); err != nil {
+	if err := conn.Write(ctx, websocket.MessageText, textFrame(requestID, "speech.config", cfg)); err != nil {
 		fmt.Println("cfg write failed:", err)
 		return
 	}
@@ -122,14 +123,18 @@ func main() {
 				payload = merged
 				first = false
 			}
-			if err := conn.Write(ctx, websocket.MessageBinary, audioFrame(payload)); err != nil {
+			if err := conn.Write(ctx, websocket.MessageBinary, audioFrame(requestID, payload)); err != nil {
 				fmt.Println("audio write failed:", err)
 				return
 			}
 			sent++
 			time.Sleep(40 * time.Millisecond)
 		}
-		fmt.Printf("all %d frames sent; waiting\n", sent)
+		if err := conn.Write(ctx, websocket.MessageBinary, audioFrame(requestID, nil)); err != nil {
+			fmt.Println("end-of-stream write failed:", err)
+			return
+		}
+		fmt.Printf("all %d frames sent; end-of-stream sent; waiting\n", sent)
 	}()
 	for {
 		msgType, payload, err := conn.Read(ctx)
