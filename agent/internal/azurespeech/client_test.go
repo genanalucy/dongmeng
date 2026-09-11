@@ -177,6 +177,58 @@ func TestAutomaticEmptyFinalPairFailsClosedWithoutFinalsOrTTS(t *testing.T) {
 	}
 }
 
+func TestLegacyProductionChineseTranslationEmitsFinalsAndTTS(t *testing.T) {
+	ws := newWSServer(t, func(ctx context.Context, conn *websocket.Conn) {
+		readConfig(t, ctx, conn)
+		_ = conn.Write(ctx, websocket.MessageText, []byte(`{"type":"translation.phrase","Text":"hello","Translations":{"zh-Hans":"你好"}}`))
+	})
+	defer ws.Close()
+	tts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte{0, 1}) }))
+	defer tts.Close()
+	sink := newRecordingSink()
+	client := &client{configured: true, key: "secret", region: "japaneast", wsBase: strings.Replace(ws.URL, "http://", "ws://", 1), ttsBase: tts.URL, httpClient: http.DefaultClient}
+	session, err := client.Start(context.Background(), ast.StartRequest{SourceLanguage: "en", TargetLanguage: "zh"}, sink)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close()
+	assertEvent(t, sink.next(t), "source_final", "hello")
+	assertEvent(t, sink.next(t), "translation_final", "你好")
+	if event := sink.next(t); event.Type != "tts_audio" || string(event.Binary) != string([]byte{0, 1}) {
+		t.Fatalf("tts = %#v", event)
+	}
+}
+
+func TestLegacyFinalWithoutTargetTranslationFailsClosed(t *testing.T) {
+	ws := newWSServer(t, func(ctx context.Context, conn *websocket.Conn) {
+		readConfig(t, ctx, conn)
+		_ = conn.Write(ctx, websocket.MessageText, []byte(`{"type":"translation.phrase","Text":"hello","Translations":{"fr":"bonjour"}}`))
+		<-ctx.Done()
+	})
+	defer ws.Close()
+	ttsCalls := 0
+	tts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { ttsCalls++ }))
+	defer tts.Close()
+	sink := newRecordingSink()
+	client := &client{configured: true, key: "secret", region: "japaneast", wsBase: strings.Replace(ws.URL, "http://", "ws://", 1), ttsBase: tts.URL, httpClient: http.DefaultClient}
+	session, err := client.Start(context.Background(), ast.StartRequest{SourceLanguage: "en", TargetLanguage: "zh"}, sink)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close()
+	if event := sink.next(t); event.Type != "error" || event.Code != "AZURE_SESSION_FAILED" {
+		t.Fatalf("terminal event = %#v", event)
+	}
+	if ttsCalls != 0 {
+		t.Fatalf("TTS calls = %d, want 0", ttsCalls)
+	}
+	select {
+	case event := <-sink.events:
+		t.Fatalf("unexpected event after incomplete final: %#v", event)
+	default:
+	}
+}
+
 func TestTranslationWebSocketConfigAudioAndEventMapping(t *testing.T) {
 	configReceived := make(chan struct{})
 	configRequestID := make(chan string, 1)

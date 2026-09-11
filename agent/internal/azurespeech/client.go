@@ -13,6 +13,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -493,25 +494,72 @@ func (m *upstreamMessage) text() string {
 }
 
 func (m *upstreamMessage) translation(locale string) string {
-	keys := []string{locale, strings.SplitN(locale, "-", 2)[0]}
-	if language, ok := protocolLanguage(locale); ok {
-		if code, ok := translationLanguage(language); ok {
-			keys = append(keys, code)
+	language, ok := protocolLanguage(locale)
+	if !ok {
+		return ""
+	}
+	keys := translationKeys(locale, language)
+	for _, key := range keys {
+		for _, translations := range []map[string]string{m.Translations, m.TranslationsCapital} {
+			if text := strings.TrimSpace(translations[key]); text != "" {
+				return text
+			}
+		}
+	}
+	for _, translations := range []map[string]string{m.Translations, m.TranslationsCapital} {
+		if text := translationFromMap(translations, language); text != "" {
+			return text
 		}
 	}
 	for _, key := range keys {
-		if v, ok := m.Translations[key]; ok && v != "" {
-			return v
-		}
-		if v, ok := m.TranslationsCapital[key]; ok && v != "" {
-			return v
+		for _, translation := range m.Translation.Translations {
+			if translation.Language == key && strings.TrimSpace(translation.Text) != "" {
+				return translation.Text
+			}
 		}
 	}
-	language := strings.SplitN(locale, "-", 2)[0]
 	for _, translation := range m.Translation.Translations {
-		if translation.Language == language && translation.Text != "" {
+		if candidate, ok := protocolLanguage(translation.Language); ok && candidate == language && strings.TrimSpace(translation.Text) != "" {
 			return translation.Text
 		}
+	}
+	return ""
+}
+
+// translationKeys orders exact Azure aliases before the strict protocol-level
+// fallback. It intentionally recognizes only locales supported by this agent.
+func translationKeys(locale, language string) []string {
+	keys := []string{locale}
+	if code, ok := translationLanguage(language); ok {
+		keys = append(keys, code)
+	}
+	keys = append(keys, language)
+	if canonical, ok := LocaleForLanguage(language); ok {
+		keys = append(keys, canonical)
+	}
+	seen := make(map[string]struct{}, len(keys))
+	unique := keys[:0]
+	for _, key := range keys {
+		if _, exists := seen[key]; !exists {
+			seen[key] = struct{}{}
+			unique = append(unique, key)
+		}
+	}
+	return unique
+}
+
+func translationFromMap(translations map[string]string, language string) string {
+	// Azure can vary casing in locale keys. Restrict fallback to recognized
+	// aliases, and sort it so a malformed payload remains deterministic.
+	fallback := make([]string, 0, len(translations))
+	for key, text := range translations {
+		if candidate, ok := protocolLanguage(key); ok && candidate == language && strings.TrimSpace(text) != "" {
+			fallback = append(fallback, key)
+		}
+	}
+	sort.Strings(fallback)
+	if len(fallback) != 0 {
+		return translations[fallback[0]]
 	}
 	return ""
 }
@@ -565,6 +613,12 @@ func (s *session) handleMessage(data []byte) error {
 		// a turn.end that might never arrive.
 		if len(s.candidates) != 0 && (source == "" || translation == "") {
 			return errors.New("Azure returned an empty automatic final pair")
+		}
+		// The server intentionally ignores empty subtitles. A legacy final with
+		// source text but no target translation must therefore be terminal,
+		// before it can be persisted or trigger TTS.
+		if len(s.candidates) == 0 && source != "" && translation == "" {
+			return errors.New("Azure returned no target translation for final result")
 		}
 		s.sink.Emit(ast.Event{Type: "source_final", Message: source})
 		s.sink.Emit(ast.Event{Type: "translation_final", Message: translation})
