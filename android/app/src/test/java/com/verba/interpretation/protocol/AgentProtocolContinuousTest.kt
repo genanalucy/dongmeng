@@ -13,6 +13,10 @@ class AgentProtocolContinuousTest {
         val tts = AgentProtocol.parse("""{"type":"tts","segmentId":2,"targetLanguage":"zh"}""") as AgentEvent.TtsSegment
         assertEquals(2L, tts.segmentId)
         assertEquals("zh", tts.targetLanguage)
+        val prelude = AgentProtocol.parse("""{"type":"tts_start","segmentId":2,"targetLanguage":"zh"}""") as AgentEvent.TtsSegment
+        assertEquals(2L, prelude.segmentId)
+        assertEquals("zh", prelude.targetLanguage)
+        assertEquals(true, prelude.startsPlayback)
     }
 
     @Test fun rejectsInvalidContinuousSegmentBinding() {

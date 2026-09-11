@@ -37,7 +37,11 @@ sealed interface AgentEvent {
         val segmentId: Long? = null,
         val targetLanguage: String? = null,
     ) : AgentEvent
-    data class TtsSegment(val segmentId: Long, val targetLanguage: String) : AgentEvent
+    /**
+     * Binds the immediately following binary PCM frame to a logical turn. A tts_start prelude
+     * also marks playback as imminent, so capture pauses only then, never at a text final.
+     */
+    data class TtsSegment(val segmentId: Long, val targetLanguage: String, val startsPlayback: Boolean = false) : AgentEvent
     data class Subtitle(
         val kind: Kind,
         val text: String,
@@ -61,6 +65,7 @@ object AgentProtocol {
             "ready" -> AgentEvent.Ready
             "finished" -> AgentEvent.Finished
             "detected_language" -> detectedLanguage(json)
+            "tts_start" -> ttsSegment(json, startsPlayback = true)
             "tts" -> ttsSegment(json)
             "source_partial" -> subtitle(json, AgentEvent.Subtitle.Kind.SOURCE_PARTIAL)
             "source_final" -> subtitle(json, AgentEvent.Subtitle.Kind.SOURCE_FINAL)
@@ -78,10 +83,10 @@ object AgentProtocol {
         return AgentEvent.DetectedLanguage(language, binding?.first, binding?.second)
     }
 
-    private fun ttsSegment(json: JSONObject): AgentEvent.TtsSegment {
+    private fun ttsSegment(json: JSONObject, startsPlayback: Boolean = false): AgentEvent.TtsSegment {
         val segmentId = requiredSegmentId(json)
         val targetLanguage = optionalTargetLanguage(json) ?: throw ProtocolException("TTS 片段缺少 targetLanguage。")
-        return AgentEvent.TtsSegment(segmentId, targetLanguage)
+        return AgentEvent.TtsSegment(segmentId, targetLanguage, startsPlayback)
     }
 
     private fun subtitle(json: JSONObject, kind: AgentEvent.Subtitle.Kind): AgentEvent.Subtitle {

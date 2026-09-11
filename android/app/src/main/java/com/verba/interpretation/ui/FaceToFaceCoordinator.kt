@@ -268,20 +268,10 @@ class FaceToFaceCoordinator<S> {
             entry.transport.finishing || entry.transport.finished || turn.sourceFinals.isEmpty() || turn.translationFinals.isEmpty()
         ) return Transition(accepted = false)
         if (entry.continuousAutoSegment) {
-            // Azure remains live for the entire automatic conversation. This is
-            // only a logical-final boundary, never a socket finish.
-            entry.logicalComplete = true
-            activeTurnId = null
-            current = current.copy(
-                phase = FaceToFacePhase.PROCESSING,
-                activeSide = null,
-                captureActive = false,
-                captureLevel = 0f,
-                turns = current.turns.map { if (it.id == turnId) it.copy(finished = true) else it },
-            )
-            // Do not claim acoustic echo cancellation: stop capture, drain the
-            // target TTS, then explicitly resume this still-live transport.
-            return Transition(accepted = true, stopCapture = true)
+            // Final text may precede synchronous TTS synthesis by an unbounded
+            // interval. Keep capture running until the server's tts_start
+            // prelude confirms that feedback-producing PCM is imminent.
+            return Transition(accepted = true)
         }
         activeTurnId = null
         current = current.copy(
@@ -291,6 +281,29 @@ class FaceToFaceCoordinator<S> {
             captureLevel = 0f,
         )
         return Transition(accepted = true, finishSessions = finishTransportLocked(entry.transport), stopCapture = true)
+    }
+
+    /**
+     * Stops continuous capture only at the validated TTS prelude. Duplicate or stale preludes
+     * are no-ops, so a delayed metadata frame cannot stop a newly resumed segment.
+     */
+    @Synchronized
+    fun beginContinuousTtsPlayback(turnId: Long): Transition<S> {
+        val entry = entries[turnId] ?: return Transition(accepted = false)
+        val turn = current.turns.firstOrNull { it.id == turnId } ?: return Transition(accepted = false)
+        if (!entry.continuousAutoSegment || !entry.autoDirectionResolved || activeTurnId != turnId || !current.captureActive ||
+            entry.transport.finishing || entry.transport.finished || turn.sourceFinals.isEmpty() || turn.translationFinals.isEmpty()
+        ) return Transition(accepted = false)
+        entry.logicalComplete = true
+        activeTurnId = null
+        current = current.copy(
+            phase = FaceToFacePhase.PROCESSING,
+            activeSide = null,
+            captureActive = false,
+            captureLevel = 0f,
+            turns = current.turns.map { if (it.id == turnId) it.copy(finished = true) else it },
+        )
+        return Transition(accepted = true, stopCapture = true)
     }
 
     /** Installs a new logical Azure segment without opening another transport socket. */

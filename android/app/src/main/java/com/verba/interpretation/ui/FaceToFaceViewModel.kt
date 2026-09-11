@@ -372,7 +372,14 @@ class FaceToFaceViewModel @JvmOverloads constructor(
                 closeCloudSessionIfDrained()
                 publishState()
             }
-            is AgentEvent.TtsSegment -> Unit
+            is AgentEvent.TtsSegment -> {
+                if (event.startsPlayback) {
+                    val transition = coordinator.beginContinuousTtsPlayback(turnId)
+                    applyTransition(transition)
+                    if (transition.accepted) captureCompletedTurn(turnId)
+                }
+                publishState()
+            }
             is AgentEvent.Subtitle -> {
                 if (!coordinator.containsTurn(turnId)) return
                 val updated = coordinator.updateSubtitle(turnId, event.kind.toSubtitleKind(), event.text)

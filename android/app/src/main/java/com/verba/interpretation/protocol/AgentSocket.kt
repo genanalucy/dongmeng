@@ -75,7 +75,7 @@ class AgentSocket(
                         }
                         is AgentEvent.TtsSegment -> {
                             if (terminalDelivered) false else {
-                                pendingTtsSegments.addLast(event)
+                                if (!event.startsPlayback) pendingTtsSegments.addLast(event)
                                 true
                             }
                         }

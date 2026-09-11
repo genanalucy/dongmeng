@@ -445,9 +445,22 @@ func (s *Server) runConnection(parent context.Context, conn *websocket.Conn, ses
 			return
 		}
 		switch event.Type {
-		case "tts_start", "tts_end":
-			// Sentence boundaries are upstream implementation details. The Browser
-			// consumes one continuous PCM stream and must not validate them.
+		case "tts_start":
+			// Legacy sentence boundaries have no client-visible semantics.
+			if event.SegmentID == 0 {
+				return
+			}
+			// A validated prelude tells clients that PCM playback is imminent. It is
+			// deliberately relayed before the synchronous TTS result, rather than at
+			// translation_final, so capture remains live during slow synthesis.
+			if event.TargetLanguage == "" || !containsLanguage(start.CandidateLanguages, event.TargetLanguage) {
+				upstreamTerminal = true
+				emit(browserEvent{Type: "error", Code: "TRANSLATION_PROTOCOL_ERROR", Message: "translation service returned an invalid TTS segment"})
+				return
+			}
+			emit(browserEvent{Type: "tts_start", SegmentID: event.SegmentID, TargetLanguage: event.TargetLanguage})
+		case "tts_end":
+			// Sentence boundaries have no client-visible semantics.
 			return
 		case "tts_audio":
 			if len(event.Binary) == 0 || len(event.Binary)%2 != 0 {
@@ -455,9 +468,8 @@ func (s *Server) runConnection(parent context.Context, conn *websocket.Conn, ses
 				emit(browserEvent{Type: "error", Code: "TRANSLATION_PROTOCOL_ERROR", Message: "translation service returned invalid PCM"})
 				return
 			}
-			// Binary WebSocket frames have no metadata. Emit its validated logical
-			// segment binding immediately before PCM so Android can atomically route
-			// continuous Azure finals without inferring language from text.
+			// Legacy transports retain their existing binary framing. Continuous
+			// Azure transports must have emitted tts_start before this PCM frame.
 			if event.SegmentID != 0 {
 				if event.TargetLanguage == "" || !containsLanguage(start.CandidateLanguages, event.TargetLanguage) {
 					upstreamTerminal = true

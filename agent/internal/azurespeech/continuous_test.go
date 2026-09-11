@@ -40,7 +40,7 @@ func TestContinuousAutomaticSessionRoutesAlternatingFinalsWithoutReconnect(t *te
 	defer session.Close()
 
 	var finals []ast.Event
-	for len(finals) < 8 { // detection, source, translation and PCM per final
+	for len(finals) < 10 { // detection, source, translation, prelude and PCM per final
 		event := sink.next(t)
 		if event.Type != "source_partial" {
 			finals = append(finals, event)
@@ -54,8 +54,8 @@ func TestContinuousAutomaticSessionRoutesAlternatingFinalsWithoutReconnect(t *te
 		kind, language, target string
 		segment                int64
 	}{
-		{0, "detected_language", "en", "zh", 1}, {1, "source_final", "", "zh", 1}, {2, "translation_final", "", "zh", 1}, {3, "tts_audio", "", "zh", 1},
-		{4, "detected_language", "zh", "en", 2}, {5, "source_final", "", "en", 2}, {6, "translation_final", "", "en", 2}, {7, "tts_audio", "", "en", 2},
+		{0, "detected_language", "en", "zh", 1}, {1, "source_final", "", "zh", 1}, {2, "translation_final", "", "zh", 1}, {3, "tts_start", "", "zh", 1}, {4, "tts_audio", "", "zh", 1},
+		{5, "detected_language", "zh", "en", 2}, {6, "source_final", "", "en", 2}, {7, "translation_final", "", "en", 2}, {8, "tts_start", "", "en", 2}, {9, "tts_audio", "", "en", 2},
 	} {
 		event := finals[check.index]
 		if event.Type != check.kind || event.Language != check.language || event.TargetLanguage != check.target || event.SegmentID != check.segment {

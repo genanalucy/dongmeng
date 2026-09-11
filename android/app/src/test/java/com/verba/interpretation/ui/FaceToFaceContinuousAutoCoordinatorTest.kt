@@ -16,7 +16,11 @@ class FaceToFaceContinuousAutoCoordinatorTest {
         coordinator.updateSubtitle(1, SubtitleKind.TRANSLATION_FINAL, "你好")
         val firstFinal = coordinator.completeAutoSegmentAfterFinalPair(1)
         assertTrue(firstFinal.finishSessions.isEmpty())
-        assertTrue(firstFinal.stopCapture)
+        assertFalse(firstFinal.stopCapture)
+        // A text final alone is safe: capture remains active until the tts_start prelude.
+        assertTrue(coordinator.sendToActive { true })
+        val firstPrelude = coordinator.beginContinuousTtsPlayback(1)
+        assertTrue(firstPrelude.stopCapture)
         // Packet is dropped while capture is stopped; the callback must not run.
         assertTrue(coordinator.sendToActive { error("packet must not be sent during TTS") })
         val firstTts = coordinator.offerTts(1, byteArrayOf(1)) as FaceToFaceCoordinator.PlaybackWork.Chunk
@@ -29,7 +33,10 @@ class FaceToFaceContinuousAutoCoordinatorTest {
         assertTrue(coordinator.sendToActive { true })
         coordinator.updateSubtitle(2, SubtitleKind.SOURCE_FINAL, "你好")
         coordinator.updateSubtitle(2, SubtitleKind.TRANSLATION_FINAL, "hello")
-        assertTrue(coordinator.completeAutoSegmentAfterFinalPair(2).finishSessions.isEmpty())
+        val secondFinal = coordinator.completeAutoSegmentAfterFinalPair(2)
+        assertTrue(secondFinal.finishSessions.isEmpty())
+        assertFalse(secondFinal.stopCapture)
+        assertTrue(coordinator.beginContinuousTtsPlayback(2).stopCapture)
 
         val second = coordinator.offerTts(2, byteArrayOf(2)) as FaceToFaceCoordinator.PlaybackWork.Chunk
         assertEquals(PlaybackRoute.RIGHT, second.route)

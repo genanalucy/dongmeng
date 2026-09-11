@@ -126,21 +126,28 @@ func (c *client) Start(ctx context.Context, request ast.StartRequest, sink ast.E
 		return nil, fmt.Errorf("dial Azure Speech: %w", err)
 	}
 	session := newSession(ctx, conn, c, to, request.Voice, request.CandidateLanguages, sink)
+	// ServiceRecognizerBase.configureConnection sends speech.config before
+	// sendSpeechContext. Universal v2 needs both frames: its ordinary required
+	// configuration wrapper, then its unwrapped automatic-recognition context.
 	config, err := legacySpeechConfig()
-	configPath := "speech.config"
-	if automatic {
-		// Universal v2 requires the context object itself, unlike legacy
-		// speech.config which wraps that object in {"context": ...}.
-		config, err = automaticSpeechContext(request.CandidateLanguages)
-		configPath = "speech.context"
-	}
 	if err != nil {
 		_ = session.Close()
 		return nil, fmt.Errorf("build Azure speech configuration: %w", err)
 	}
-	if err := session.send(ctx, websocket.MessageText, textFrameWithRequestID(session.requestID, configPath, config)); err != nil {
+	if err := session.send(ctx, websocket.MessageText, textFrameWithRequestID(session.requestID, "speech.config", config)); err != nil {
 		_ = session.Close()
 		return nil, fmt.Errorf("send Azure speech.config: %w", err)
+	}
+	if automatic {
+		automaticContext, err := automaticSpeechContext(request.CandidateLanguages)
+		if err != nil {
+			_ = session.Close()
+			return nil, fmt.Errorf("build Azure automatic speech context: %w", err)
+		}
+		if err := session.send(ctx, websocket.MessageText, textFrameWithRequestID(session.requestID, "speech.context", automaticContext)); err != nil {
+			_ = session.Close()
+			return nil, fmt.Errorf("send Azure speech.context: %w", err)
+		}
 	}
 	session.wg.Add(1)
 	go session.readLoop()
@@ -207,9 +214,11 @@ func automaticSpeechContext(candidates []string) (string, error) {
 
 func speechContext(candidates []string) (map[string]any, error) {
 	context := map[string]any{
-		"system": map[string]string{"name": "dngmeng-agent", "version": "1.0.0"},
-		"os":     map[string]string{"platform": "linux"},
-		"device": map[string]string{"manufacturer": "dngmeng"},
+		// These sections follow the Speech SDK context schema. They identify this
+		// non-browser client without claiming browser or mobile device metadata.
+		"system": map[string]string{"name": "SpeechSDK", "version": "1.0.0", "build": "Go", "lang": "Go"},
+		"os":     map[string]string{"platform": "Linux", "name": "Linux", "version": "unknown"},
+		"device": map[string]string{"manufacturer": "dngmeng", "model": "agent", "version": "1.0.0"},
 	}
 	if len(candidates) != 0 {
 		locales := make([]string, 0, len(candidates))
@@ -234,6 +243,9 @@ func speechContext(candidates []string) (map[string]any, error) {
 			"targetLanguages": targets,
 		}
 		context["phraseDetection"] = map[string]any{
+			// RecognitionMode.Conversation is the official JS SDK value for
+			// phraseDetection.mode on V2 endpoints.
+			"mode":      "Conversation",
 			"onInterim": map[string]string{"action": "Translate"},
 			"onSuccess": map[string]string{"action": "Translate"},
 		}
@@ -751,6 +763,13 @@ func (s *session) synthesizeLocked(text, targetLocale string, segmentID int64, t
 	}
 	if len(pcm) == 0 || len(pcm)%2 != 0 {
 		return errors.New("Azure TTS returned invalid PCM")
+	}
+	// Do not pause capture when the final subtitle arrives: synchronous Azure
+	// synthesis may take time and has not produced feedback yet. Emit the
+	// prelude immediately before PCM so clients pause exactly when playback is
+	// about to begin; a synthesis failure emits only the terminal error.
+	if segmentID != 0 {
+		s.sink.Emit(ast.Event{Type: "tts_start", SegmentID: segmentID, TargetLanguage: targetLanguage})
 	}
 	s.sink.Emit(ast.Event{Type: "tts_audio", Binary: pcm, SegmentID: segmentID, TargetLanguage: targetLanguage})
 	return nil

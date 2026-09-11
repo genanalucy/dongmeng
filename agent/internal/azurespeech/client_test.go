@@ -141,6 +141,9 @@ func TestAutomaticFinalEmitsDetectedLanguageBeforeFinalsAndTTS(t *testing.T) {
 	if event := sink.next(t); event.Type != "translation_final" || event.Message != "你好" || event.TargetLanguage != "zh" {
 		t.Fatalf("translation final = %#v", event)
 	}
+	if event := sink.next(t); event.Type != "tts_start" || event.SegmentID != 1 || event.TargetLanguage != "zh" {
+		t.Fatalf("tts prelude = %#v", event)
+	}
 	if event := sink.next(t); event.Type != "tts_audio" || event.SegmentID != 1 || event.TargetLanguage != "zh" {
 		t.Fatalf("tts = %#v", event)
 	}
@@ -170,6 +173,9 @@ func TestAutomaticTranslationResponseSpeechPhraseUsesOfficialWrapperSchema(t *te
 	}
 	assertEvent(t, sink.next(t), "source_final", "hello")
 	assertEvent(t, sink.next(t), "translation_final", "你好")
+	if event := sink.next(t); event.Type != "tts_start" || event.SegmentID != 1 {
+		t.Fatalf("tts prelude = %#v", event)
+	}
 	if event := sink.next(t); event.Type != "tts_audio" || event.SegmentID != 1 {
 		t.Fatalf("tts = %#v", event)
 	}
@@ -475,24 +481,56 @@ func newWSServer(t *testing.T, handler func(context.Context, *websocket.Conn)) *
 }
 func readContext(t *testing.T, ctx context.Context, conn *websocket.Conn) {
 	t.Helper()
-	typ, payload, err := conn.Read(ctx)
-	if err != nil || typ != websocket.MessageText {
-		t.Fatalf("speech.context frame = (%v, %q, %v)", typ, payload, err)
+	readText := func(wantPath string) (string, map[string]any) {
+		typ, payload, err := conn.Read(ctx)
+		if err != nil || typ != websocket.MessageText {
+			t.Fatalf("%s frame = (%v, %q, %v)", wantPath, typ, payload, err)
+		}
+		frame := string(payload)
+		path, body := splitMessage(payload)
+		if path != wantPath {
+			t.Fatalf("frame path = %q, want %q: %q", path, wantPath, frame)
+		}
+		var decoded map[string]any
+		if err := json.Unmarshal(body, &decoded); err != nil {
+			t.Fatalf("%s body: %v", wantPath, err)
+		}
+		return headerValue(t, frame, "X-RequestId"), decoded
 	}
-	frame := string(payload)
-	if !strings.Contains(frame, "Path:speech.context") {
-		t.Fatalf("speech.context path missing: %q", frame)
+	configRequestID, config := readText("speech.config")
+	configContext, ok := config["context"].(map[string]any)
+	if !ok || len(config) != 1 || len(configContext) != 3 {
+		t.Fatalf("speech.config must be the legacy required context wrapper: %#v", config)
 	}
-	bodyIndex := strings.Index(frame, headerBodySeparator)
-	if bodyIndex < 0 {
-		t.Fatalf("speech.context separator missing: %q", frame)
+	contextRequestID, body := readText("speech.context")
+	if contextRequestID != configRequestID {
+		t.Fatalf("speech.context request ID = %q, want speech.config request ID %q", contextRequestID, configRequestID)
 	}
-	var body map[string]any
-	if err := json.Unmarshal([]byte(frame[bodyIndex+len(headerBodySeparator):]), &body); err != nil {
-		t.Fatalf("speech.context body: %v", err)
+	if _, wrapped := body["context"]; wrapped || len(body) != 6 {
+		t.Fatalf("speech.context must be an exact unwrapped V2 context: %#v", body)
 	}
-	if _, wrapped := body["context"]; wrapped {
-		t.Fatalf("speech.context must not have context wrapper: %s", frame[bodyIndex+len(headerBodySeparator):])
+	languageID, ok := body["languageId"].(map[string]any)
+	if !ok || len(languageID) != 5 || languageID["mode"] != "DetectContinuous" || languageID["priority"] != "PrioritizeLatency" {
+		t.Fatalf("speech.context languageId = %#v", languageID)
+	}
+	if languages, ok := languageID["languages"].([]any); !ok || len(languages) != 2 || languages[0] != "zh-CN" || languages[1] != "en-US" {
+		t.Fatalf("speech.context candidate locales = %#v", languageID["languages"])
+	}
+	translation, ok := body["translation"].(map[string]any)
+	if !ok || len(translation) != 4 {
+		t.Fatalf("speech.context translation = %#v", translation)
+	}
+	if targets, ok := translation["targetLanguages"].([]any); !ok || len(targets) != 2 || targets[0] != "zh-Hans" || targets[1] != "en" {
+		t.Fatalf("speech.context translation targets = %#v", translation["targetLanguages"])
+	}
+	phraseDetection, ok := body["phraseDetection"].(map[string]any)
+	if !ok || len(phraseDetection) != 3 || phraseDetection["mode"] != "Conversation" {
+		t.Fatalf("speech.context phraseDetection = %#v", phraseDetection)
+	}
+	for _, section := range []string{"system", "os", "device"} {
+		if value, ok := body[section].(map[string]any); !ok || len(value) == 0 {
+			t.Fatalf("speech.context %s = %#v", section, body[section])
+		}
 	}
 }
 
