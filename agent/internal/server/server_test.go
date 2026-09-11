@@ -44,6 +44,7 @@ type fakeClient struct {
 type emittingClient struct{}
 type detectedLanguageClient struct{ language string }
 type zeroTTSClient struct{}
+type interleavedTTSClient struct{}
 
 func (zeroTTSClient) Start(_ context.Context, _ ast.StartRequest, sink ast.EventSink) (ast.Session, error) {
 	sink.Emit(ast.Event{Type: "finished"})
@@ -52,6 +53,13 @@ func (zeroTTSClient) Start(_ context.Context, _ ast.StartRequest, sink ast.Event
 
 func (detectedLanguageClient) Start(_ context.Context, _ ast.StartRequest, sink ast.EventSink) (ast.Session, error) {
 	sink.Emit(ast.Event{Type: "detected_language", Language: "fr"})
+	return &fakeSession{}, nil
+}
+
+func (interleavedTTSClient) Start(_ context.Context, _ ast.StartRequest, sink ast.EventSink) (ast.Session, error) {
+	sink.Emit(ast.Event{Type: "tts_audio", Binary: []byte{1, 2}, SegmentID: 1, TargetLanguage: "en"})
+	sink.Emit(ast.Event{Type: "tts_audio", Binary: []byte{3, 4}, SegmentID: 2, TargetLanguage: "zh"})
+	sink.Emit(ast.Event{Type: "finished"})
 	return &fakeSession{}, nil
 }
 
@@ -849,6 +857,35 @@ func TestUpstreamEventsUseOneOrderedTextAndBinaryWriterAndSkipEmptySubtitles(t *
 	}
 	if event := readEvent(t, conn); event.Type != "finished" {
 		t.Fatalf("third event = %#v, want finished", event)
+	}
+}
+
+func TestAutomaticTTSMetadataAndBinaryArePairedFIFO(t *testing.T) {
+	ts := testHTTPServer(interleavedTTSClient{})
+	defer ts.Close()
+	conn := dial(t, ts.URL, "http://localhost:5173")
+	defer conn.CloseNow()
+	start(t, conn, map[string]any{"provider": "azure", "candidateLanguages": []string{"zh", "en"}})
+	if event := readEvent(t, conn); event.Type != "ready" {
+		t.Fatalf("ready = %#v", event)
+	}
+	for _, want := range []struct {
+		id       int64
+		language string
+		pcm      []byte
+	}{{1, "en", []byte{1, 2}}, {2, "zh", []byte{3, 4}}} {
+		if event := readEvent(t, conn); event.Type != "tts" || event.SegmentID != want.id || event.TargetLanguage != want.language {
+			t.Fatalf("metadata = %#v", event)
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		messageType, payload, err := conn.Read(ctx)
+		cancel()
+		if err != nil || messageType != websocket.MessageBinary || !bytes.Equal(payload, want.pcm) {
+			t.Fatalf("binary = (%v, %v, %v)", messageType, payload, err)
+		}
+	}
+	if event := readEvent(t, conn); event.Type != "finished" {
+		t.Fatalf("finished = %#v", event)
 	}
 }
 

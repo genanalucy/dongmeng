@@ -245,14 +245,19 @@ class FaceToFaceViewModelTest {
             first.event(AgentEvent.Subtitle(AgentEvent.Subtitle.Kind.TRANSLATION_FINAL, "你好", segmentId = 1, targetLanguage = "zh"))
             effects.drain()
             assertEquals(0, first.finishes)
-            assertEquals(0, azureRuntime.captureStops)
-            first.tts(byteArrayOf(1, 0))
+            assertEquals(1, azureRuntime.captureStops)
+            azureRuntime.packet?.invoke(ByteArray(2_560))
+            first.tts(byteArrayOf(1, 0), 1, "zh")
+            playback.drain()
+            effects.drain()
+            assertEquals(2, azureRuntime.captureStarts)
             first.event(AgentEvent.DetectedLanguage("zh", segmentId = 2, targetLanguage = "en"))
             assertEquals(FaceToFaceSide.LEFT, azureVm.state.value.activeSide)
             first.event(AgentEvent.Subtitle(AgentEvent.Subtitle.Kind.SOURCE_FINAL, "你好", segmentId = 2, targetLanguage = "en"))
             first.event(AgentEvent.Subtitle(AgentEvent.Subtitle.Kind.TRANSLATION_FINAL, "hello", segmentId = 2, targetLanguage = "en"))
             first.tts(byteArrayOf(2, 0), 2, "en")
             playback.drain()
+            effects.drain()
             assertEquals(listOf(PlaybackRoute.LEFT, PlaybackRoute.RIGHT), azureRuntime.routes)
             assertEquals(1, azureRuntime.sockets.size)
 
@@ -265,6 +270,33 @@ class FaceToFaceViewModelTest {
         } finally {
             azureVm.cancel()
         }
+    }
+
+    @Test fun azureSegmentsPersistExactlyOnceAtFinalPairNotTransportFinished() {
+        val azureRuntime = RecordingRuntime().also { it.autoDetection = true }
+        val saved = mutableListOf<com.verba.interpretation.history.CompletedTurn>()
+        val azureVm = FaceToFaceViewModel(
+            Application(), azureRuntime,
+            TranslationSessionCoordinator(cloud, CoroutineScope(dispatcher), { 0L }, dispatcher),
+            LocalHistoryTurnSaver { saved += it; "saved" }, playback, effects,
+        )
+        try {
+            azureVm.setMode(FaceToFaceMode.AUTO)
+            azureVm.startAuto(); dispatcher.scheduler.advanceUntilIdle(); effects.drain()
+            val socket = azureRuntime.sockets.single()
+            socket.event(AgentEvent.DetectedLanguage("en", 1, "zh"))
+            socket.event(AgentEvent.Subtitle(AgentEvent.Subtitle.Kind.SOURCE_FINAL, "one", 1, "zh"))
+            socket.event(AgentEvent.Subtitle(AgentEvent.Subtitle.Kind.TRANSLATION_FINAL, "一", 1, "zh"))
+            socket.tts(byteArrayOf(1, 0), 1, "zh"); playback.drain(); effects.drain()
+            socket.event(AgentEvent.DetectedLanguage("zh", 2, "en"))
+            socket.event(AgentEvent.Subtitle(AgentEvent.Subtitle.Kind.SOURCE_FINAL, "二", 2, "en"))
+            socket.event(AgentEvent.Subtitle(AgentEvent.Subtitle.Kind.TRANSLATION_FINAL, "two", 2, "en"))
+            socket.tts(byteArrayOf(2, 0), 2, "en"); playback.drain(); effects.drain()
+            socket.event(AgentEvent.Finished)
+            dispatcher.scheduler.advanceUntilIdle()
+            assertEquals(listOf("one" to "一", "二" to "two"), saved.map { it.sourceText to it.translatedText })
+            assertEquals(listOf("en" to "zh", "zh" to "en"), saved.map { it.sourceLanguage to it.targetLanguage })
+        } finally { azureVm.cancel() }
     }
 
     @Test fun azurePauseResumeKeepsLidRoutingForTheNewSegment() {

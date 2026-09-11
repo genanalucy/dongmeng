@@ -265,12 +265,14 @@ internal fun EarMicControls(
                 side = FaceToFaceSide.RIGHT,
                 language = state.rightLanguage,
                 otherLanguage = state.leftLanguage,
-                pointerEnabled = if (manual) state.phase in setOf(FaceToFacePhase.IDLE, FaceToFacePhase.PROCESSING) else state.phase == FaceToFacePhase.LISTENING,
-                actionEnabled = if (manual) state.phase in setOf(FaceToFacePhase.IDLE, FaceToFacePhase.PROCESSING) || activeSide == FaceToFaceSide.RIGHT else state.phase == FaceToFacePhase.LISTENING,
+                // Azure continuous LID routes both speakers automatically. Disable the
+                // legacy takeover instead of presenting a control that intentionally no-ops.
+                pointerEnabled = if (manual) state.phase in setOf(FaceToFacePhase.IDLE, FaceToFacePhase.PROCESSING) else !state.automaticLanguageDetection && state.phase == FaceToFacePhase.LISTENING,
+                actionEnabled = if (manual) state.phase in setOf(FaceToFacePhase.IDLE, FaceToFacePhase.PROCESSING) || activeSide == FaceToFaceSide.RIGHT else !state.automaticLanguageDetection && state.phase == FaceToFacePhase.LISTENING,
                 active = activeSide == FaceToFaceSide.RIGHT,
                 activeSide = activeSide,
                 phase = state.phase,
-                stateLabel = if (manual) "按住说话" else if (activeSide == FaceToFaceSide.RIGHT) "结束右侧临时接话" else "开始右侧临时接话",
+                stateLabel = if (manual) "按住说话" else if (state.automaticLanguageDetection) "自动识别双方语言" else if (activeSide == FaceToFaceSide.RIGHT) "结束右侧临时接话" else "开始右侧临时接话",
                 onPress = {
                     if (manual) requestMicrophone(MicrophonePermissionAction.Manual(FaceToFaceSide.RIGHT)) else onPressRightAuto()
                 },

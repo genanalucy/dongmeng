@@ -122,34 +122,6 @@ class FaceToFaceCoordinatorTest {
         assertEquals(PlaybackRoute.LEFT, playback.route)
     }
 
-    @Test fun azureAutoSegmentsCanAlternateWhileOlderTtsDrains() {
-        val coordinator = FaceToFaceCoordinator<String>()
-        coordinator.setMode(FaceToFaceMode.AUTO)
-        assertTrue(coordinator.startAuto(1, "a-to-b", requiresDetection = true).accepted)
-        assertTrue(coordinator.resolveAutoDirection(1, "zh"))
-        coordinator.updateSubtitle(1, SubtitleKind.SOURCE_FINAL, "你好")
-        coordinator.updateSubtitle(1, SubtitleKind.TRANSLATION_FINAL, "hello")
-        val complete = coordinator.completeAutoSegmentAfterFinalPair(1)
-        assertTrue(complete.accepted)
-        assertTrue(complete.stopCapture)
-        assertEquals(listOf("a-to-b"), complete.finishSessions)
-        val oldAudio = coordinator.offerTts(1, byteArrayOf(1)) as FaceToFaceCoordinator.PlaybackWork.Chunk
-        coordinator.sessionFinished(1)
-
-        assertTrue(coordinator.startNextAutoSegment(2, "b-to-a", requiresDetection = true).accepted)
-        assertTrue(coordinator.resolveAutoDirection(2, "en"))
-        assertEquals(PlaybackRoute.RIGHT, oldAudio.route)
-        assertEquals(2L, coordinator.state().activeTurnId)
-        assertEquals(FaceToFaceSide.RIGHT, coordinator.state().activeSide)
-        assertTrue(coordinator.sendToActive { it == "b-to-a" })
-        val newAudio = coordinator.playbackWorkFinished(1, drained = false)
-        assertTrue(newAudio is FaceToFaceCoordinator.PlaybackWork.Drain)
-        coordinator.playbackWorkFinished(1, drained = true)
-        coordinator.updateSubtitle(2, SubtitleKind.SOURCE_FINAL, "hello")
-        coordinator.updateSubtitle(2, SubtitleKind.TRANSLATION_FINAL, "你好")
-        assertEquals(PlaybackRoute.LEFT, coordinator.state().turns.last().route)
-    }
-
     @Test fun autoInvalidDetectedLanguageDiscardsTheIncompleteTurnSilently() {
         val coordinator = FaceToFaceCoordinator<String>()
         assertTrue(coordinator.setMode(FaceToFaceMode.AUTO))
@@ -176,13 +148,13 @@ class FaceToFaceCoordinatorTest {
         assertTrue(paused.pauseAuto().finishSessions.isEmpty())
         paused.sessionFinished(1)
         assertEquals(FaceToFacePhase.PAUSED, paused.state().phase)
-        assertFalse(paused.startNextAutoSegment(2, "unexpected", requiresDetection = true).accepted)
+        assertFalse(paused.beginContinuousAutoSegment(2, "unexpected"))
 
         val stopped = completedCoordinator()
         assertTrue(stopped.stopAuto().accepted)
         assertTrue(stopped.stopAuto().finishSessions.isEmpty())
         stopped.sessionFinished(1)
-        assertFalse(stopped.startNextAutoSegment(2, "unexpected", requiresDetection = true).accepted)
+        assertFalse(stopped.beginContinuousAutoSegment(2, "unexpected"))
     }
 
     @Test fun autoRightBargeInFinishesLeftAndReleaseRestoresLeftWithoutRestartingCapture() {

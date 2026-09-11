@@ -70,7 +70,7 @@ func TestAutomaticCandidateLanguagesUseAzureUniversalV2AndExposeDetectedLanguage
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(endpoint, "/speech/universal/v2") {
+	if !strings.Contains(endpoint, "/stt/speech/universal/v2") {
 		t.Fatalf("automatic endpoint = %q", endpoint)
 	}
 	url, err := neturl.Parse(endpoint)
@@ -143,6 +143,56 @@ func TestAutomaticFinalEmitsDetectedLanguageBeforeFinalsAndTTS(t *testing.T) {
 	}
 	if event := sink.next(t); event.Type != "tts_audio" || event.SegmentID != 1 || event.TargetLanguage != "zh" {
 		t.Fatalf("tts = %#v", event)
+	}
+}
+
+func TestAutomaticTranslationResponseSpeechPhraseUsesOfficialWrapperSchema(t *testing.T) {
+	ws := newWSServer(t, func(ctx context.Context, conn *websocket.Conn) {
+		readContext(t, ctx, conn)
+		// Azure Speech SDK JS TranslationPhrase.fromTranslationResponse maps this
+		// header-framed production wrapper's SpeechPhrase.DisplayText and root
+		// Translations array into the final translation phrase.
+		_ = conn.Write(ctx, websocket.MessageText, []byte("X-RequestId:test\r\nPath:translation.response\r\nContent-Type:application/json; charset=utf-8\r\n\r\n"+`{"SpeechPhrase":{"RecognitionStatus":"Success","DisplayText":"hello","PrimaryLanguage":{"Language":"en-US"}},"Translations":[{"Language":"zh-Hans","DisplayText":"你好"}]}`))
+		<-ctx.Done()
+	})
+	defer ws.Close()
+	tts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte{0, 1}) }))
+	defer tts.Close()
+	sink := newRecordingSink()
+	client := &client{configured: true, key: "secret", region: "japaneast", wsBase: strings.Replace(ws.URL, "http://", "ws://", 1), ttsBase: tts.URL, httpClient: http.DefaultClient}
+	session, err := client.Start(context.Background(), ast.StartRequest{SourceLanguage: "zh", TargetLanguage: "en", CandidateLanguages: []string{"zh", "en"}}, sink)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close()
+	if event := sink.next(t); event.Type != "detected_language" || event.Language != "en" || event.TargetLanguage != "zh" {
+		t.Fatalf("detected = %#v", event)
+	}
+	assertEvent(t, sink.next(t), "source_final", "hello")
+	assertEvent(t, sink.next(t), "translation_final", "你好")
+	if event := sink.next(t); event.Type != "tts_audio" || event.SegmentID != 1 {
+		t.Fatalf("tts = %#v", event)
+	}
+}
+
+func TestAutomaticTranslationResponseIgnoresUnsuccessfulSpeechPhrase(t *testing.T) {
+	ws := newWSServer(t, func(ctx context.Context, conn *websocket.Conn) {
+		readContext(t, ctx, conn)
+		_ = conn.Write(ctx, websocket.MessageText, []byte("X-RequestId:test\r\nPath:translation.response\r\n\r\n"+`{"SpeechPhrase":{"RecognitionStatus":"NoMatch","DisplayText":"ignored","PrimaryLanguage":{"Language":"en-US"}},"Translations":[{"Language":"zh-Hans","DisplayText":"忽略"}]}`))
+		<-ctx.Done()
+	})
+	defer ws.Close()
+	sink := newRecordingSink()
+	client := &client{configured: true, key: "secret", region: "japaneast", wsBase: strings.Replace(ws.URL, "http://", "ws://", 1), httpClient: http.DefaultClient}
+	session, err := client.Start(context.Background(), ast.StartRequest{SourceLanguage: "zh", TargetLanguage: "en", CandidateLanguages: []string{"zh", "en"}}, sink)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close()
+	select {
+	case event := <-sink.events:
+		t.Fatalf("unexpected event: %#v", event)
+	case <-time.After(100 * time.Millisecond):
 	}
 }
 

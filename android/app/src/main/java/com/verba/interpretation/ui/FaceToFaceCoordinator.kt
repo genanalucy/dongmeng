@@ -61,6 +61,8 @@ data class FaceToFaceState(
     val activeTurnId: Long? = null,
     val captureActive: Boolean = false,
     val captureLevel: Float = 0f,
+    /** Azure continuous LID owns side selection; manual right-side takeover is unavailable. */
+    val automaticLanguageDetection: Boolean = false,
     val turns: List<FaceToFaceTurn> = emptyList(),
     val error: String? = null,
     val sessionEndReason: TranslationSessionEndReason? = null,
@@ -138,6 +140,13 @@ class FaceToFaceCoordinator<S> {
         if (!transition.accepted) return transition
         current = current.copy(view = view)
         return transition
+    }
+
+    @Synchronized
+    fun setAutomaticLanguageDetection(enabled: Boolean): Boolean {
+        if (current.phase != FaceToFacePhase.IDLE || entries.isNotEmpty()) return false
+        current = current.copy(automaticLanguageDetection = enabled)
+        return true
     }
 
     @Synchronized
@@ -250,17 +259,6 @@ class FaceToFaceCoordinator<S> {
         return beginAutoSegmentLocked(turnId, session, requiresDetection, continuousSession)
     }
 
-    /** Begins the next Azure AtStart-LID segment after its predecessor emitted Finished.
-     * Older, terminal entries intentionally stay queued so their TTS can drain. */
-    @Synchronized
-    fun startNextAutoSegment(turnId: Long, session: S, requiresDetection: Boolean): Transition<S> {
-        if (!requiresDetection || current.mode != FaceToFaceMode.AUTO ||
-            current.phase != FaceToFacePhase.PROCESSING || current.captureActive || activeTurnId != null ||
-            transports.values.any { !it.finished }
-        ) return Transition(accepted = false, cancelSessions = listOf(session))
-        return beginAutoSegmentLocked(turnId, session, requiresDetection = true, continuousSession = false)
-    }
-
     /** Stops capture at a complete final pair, before the socket can receive another speaker. */
     @Synchronized
     fun completeAutoSegmentAfterFinalPair(turnId: Long): Transition<S> {
@@ -275,10 +273,15 @@ class FaceToFaceCoordinator<S> {
             entry.logicalComplete = true
             activeTurnId = null
             current = current.copy(
+                phase = FaceToFacePhase.PROCESSING,
                 activeSide = null,
+                captureActive = false,
+                captureLevel = 0f,
                 turns = current.turns.map { if (it.id == turnId) it.copy(finished = true) else it },
             )
-            return Transition(accepted = true)
+            // Do not claim acoustic echo cancellation: stop capture, drain the
+            // target TTS, then explicitly resume this still-live transport.
+            return Transition(accepted = true, stopCapture = true)
         }
         activeTurnId = null
         current = current.copy(
@@ -531,12 +534,36 @@ class FaceToFaceCoordinator<S> {
         val firstId = entries.entries.firstOrNull()?.key
         if (firstId != turnId) return null
         playbackInProgress = false
+        val first = entries[turnId]
         if (drained) {
-            val first = entries[turnId]
             if (first?.transport?.finished == true && first.tts.isEmpty()) entries.remove(turnId)
+            if (first?.continuousAutoSegment == true && first.logicalComplete && !first.transport.finished && first.tts.isEmpty()) {
+                return null
+            }
+        } else if (first?.continuousAutoSegment == true && first.logicalComplete && !first.transport.finished && first.tts.isEmpty()) {
+            // The just-played chunk is the final TTS for this logical segment.
+            // Do not reopen capture until AudioTrack confirms it rendered.
+            playbackInProgress = true
+            return PlaybackWork.Drain(turnId)
         }
         settleIfDrainedLocked()
         return claimPlaybackLocked()
+    }
+
+    /** Resumes microphone capture only after the completed segment's TTS is audibly drained. */
+    @Synchronized
+    fun resumeContinuousCaptureAfterDrain(turnId: Long): Transition<S> {
+        val entry = entries[turnId] ?: return Transition(accepted = false)
+        if (!entry.continuousAutoSegment || !entry.logicalComplete || entry.transport.finished ||
+            current.mode != FaceToFaceMode.AUTO || current.captureActive || activeTurnId != null || playbackInProgress
+        ) return Transition(accepted = false)
+        current = current.copy(
+            phase = FaceToFacePhase.LISTENING,
+            activeSide = FaceToFaceSide.LEFT,
+            captureActive = true,
+            captureLevel = 0f,
+        )
+        return Transition(accepted = true, startCapture = true)
     }
 
     @Synchronized
@@ -678,6 +705,12 @@ class FaceToFaceCoordinator<S> {
         if (entry.tts.isNotEmpty()) {
             playbackInProgress = true
             return PlaybackWork.Chunk(turnId, entry.tts.removeFirst(), entry.route)
+        }
+        // Azure synthesis emits one validated PCM event for each logical final.
+        // Drain it before reopening capture on the same live transport.
+        if (entry.continuousAutoSegment && entry.logicalComplete && !entry.transport.finished) {
+            playbackInProgress = true
+            return PlaybackWork.Drain(turnId)
         }
         if (!entry.transport.finished) return null
         playbackInProgress = true

@@ -24,7 +24,9 @@ class AgentSocket(
     private var ready = false
     private var finishing = false
     private var terminalDelivered = false
-    private var pendingTtsSegment: AgentEvent.TtsSegment? = null
+    // Metadata is FIFO because text and binary WebSocket callbacks can be
+    // interleaved; one slot can bind an older PCM packet to a newer segment.
+    private val pendingTtsSegments = ArrayDeque<AgentEvent.TtsSegment>()
     private val pendingAudio = ArrayDeque<ByteArray>()
 
     fun start(
@@ -73,7 +75,7 @@ class AgentSocket(
                         }
                         is AgentEvent.TtsSegment -> {
                             if (terminalDelivered) false else {
-                                pendingTtsSegment = event
+                                pendingTtsSegments.addLast(event)
                                 true
                             }
                         }
@@ -89,11 +91,10 @@ class AgentSocket(
             override fun onMessage(webSocket: WebSocket, bytes: ByteString) {
                 val segment = synchronized(lock) {
                     if (!ready || socket !== webSocket) null
-                    else pendingTtsSegment.also { pendingTtsSegment = null }
+                    else pendingTtsSegments.removeFirstOrNull()
                 }
                 if (segment != null && bytes.size > 0 && bytes.size % 2 == 0) onTts(bytes.toByteArray(), segment.segmentId, segment.targetLanguage)
-                else if (segment == null && bytes.size > 0 && bytes.size % 2 == 0) onTts(bytes.toByteArray(), null, null)
-                else fail("TTS PCM16 音频包顺序或长度无效。")
+                else fail("TTS PCM16 音频包缺少匹配元数据或长度无效。")
             }
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
@@ -164,6 +165,6 @@ class AgentSocket(
         ready = false
         finishing = false
         pendingAudio.clear()
-        pendingTtsSegment = null
+        pendingTtsSegments.clear()
     }
 }

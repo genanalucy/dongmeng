@@ -151,7 +151,9 @@ func translationEndpoint(base, from, to string, candidates []string) (string, er
 	path := "/speech/translation/cognitiveservices/v1"
 	translationTargets := []string{to}
 	if len(candidates) != 0 {
-		path = "/speech/universal/v2"
+		// The official Azure Speech SDK's TranslationConnectionFactory uses
+		// /stt/speech/universal/v2 for V2 translation (not /speech/universal/v2).
+		path = "/stt/speech/universal/v2"
 		translationTargets = make([]string, 0, len(candidates))
 		for _, candidate := range candidates {
 			code, _ := translationLanguage(candidate)
@@ -465,6 +467,31 @@ func (s *session) readLoop() {
 	}
 }
 
+type translation struct {
+	Language    string `json:"Language"`
+	Text        string `json:"Text"`
+	DisplayText string `json:"DisplayText"`
+}
+
+func (translation translation) text() string {
+	if translation.DisplayText != "" {
+		return translation.DisplayText
+	}
+	return translation.Text
+}
+
+type translationResponse struct {
+	SpeechPhrase struct {
+		DisplayText       string `json:"DisplayText"`
+		Text              string `json:"Text"`
+		RecognitionStatus string `json:"RecognitionStatus"`
+		PrimaryLanguage   struct {
+			Language string `json:"Language"`
+		} `json:"PrimaryLanguage"`
+	} `json:"SpeechPhrase"`
+	Translations []translation `json:"Translations"`
+}
+
 type upstreamMessage struct {
 	Type              string `json:"type"` // fallback for headerless (fake upstream) messages
 	Text              string `json:"text"`
@@ -479,10 +506,7 @@ type upstreamMessage struct {
 	Translations        map[string]string `json:"translations"`
 	TranslationsCapital map[string]string `json:"Translations"`
 	Translation         struct {
-		Translations []struct {
-			Language string `json:"Language"`
-			Text     string `json:"Text"`
-		} `json:"Translations"`
+		Translations []translation `json:"Translations"`
 	} `json:"Translation"`
 	Signal struct {
 		Name string `json:"name"`
@@ -516,14 +540,14 @@ func (m *upstreamMessage) translation(locale string) string {
 	}
 	for _, key := range keys {
 		for _, translation := range m.Translation.Translations {
-			if translation.Language == key && strings.TrimSpace(translation.Text) != "" {
-				return translation.Text
+			if translation.Language == key && strings.TrimSpace(translation.text()) != "" {
+				return translation.text()
 			}
 		}
 	}
 	for _, translation := range m.Translation.Translations {
-		if candidate, ok := protocolLanguage(translation.Language); ok && candidate == language && strings.TrimSpace(translation.Text) != "" {
-			return translation.Text
+		if candidate, ok := protocolLanguage(translation.Language); ok && candidate == language && strings.TrimSpace(translation.text()) != "" {
+			return translation.text()
 		}
 	}
 	return ""
@@ -579,15 +603,36 @@ func (m *upstreamMessage) detectedLanguage() string {
 
 func (s *session) handleMessage(data []byte) error {
 	path, body := splitMessage(data)
-	var message upstreamMessage
-	if err := json.Unmarshal(body, &message); err != nil {
-		return fmt.Errorf("decode Azure message: %w", err)
-	}
 	// Production messages carry the message type in the Path header; the JSON
 	// `type` field is only a fallback for headerless fakes.
 	kind := path
-	if kind == "" {
-		kind = message.Type
+	var message upstreamMessage
+	if kind == "translation.response" {
+		var response translationResponse
+		if err := json.Unmarshal(body, &response); err != nil {
+			return fmt.Errorf("decode Azure translation.response: %w", err)
+		}
+		if response.SpeechPhrase.RecognitionStatus != "" && !strings.EqualFold(response.SpeechPhrase.RecognitionStatus, "Success") {
+			return nil
+		}
+		// Azure's official JS SDK maps translation.response by moving the root
+		// Translations array into SpeechPhrase.Translation, then uses DisplayText
+		// as Text (TranslationPhrase.fromTranslationResponse).
+		message.TextCapital = response.SpeechPhrase.DisplayText
+		if message.TextCapital == "" {
+			message.TextCapital = response.SpeechPhrase.Text
+		}
+		message.RecognitionStatus = response.SpeechPhrase.RecognitionStatus
+		message.PrimaryLanguage = response.SpeechPhrase.PrimaryLanguage
+		message.Translation.Translations = response.Translations
+		kind = "translation.phrase"
+	} else {
+		if err := json.Unmarshal(body, &message); err != nil {
+			return fmt.Errorf("decode Azure message: %w", err)
+		}
+		if kind == "" {
+			kind = message.Type
+		}
 	}
 	if kind == "speech.event" && message.Signal.Name == "telemetry" {
 		return s.send(s.ctx, websocket.MessageText, textFrame("telemetry", `{"type":"telemetry","receivedMessages":[]}`))

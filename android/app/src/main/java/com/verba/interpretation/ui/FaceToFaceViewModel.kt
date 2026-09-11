@@ -123,10 +123,13 @@ class FaceToFaceViewModel @JvmOverloads constructor(
         startAuto()
     }
 
-    fun startAuto() = startWithCloudGrant(
-        side = FaceToFaceSide.LEFT,
-        canStart = { coordinator.state().mode == FaceToFaceMode.AUTO && coordinator.state().phase == FaceToFacePhase.IDLE },
-    ) { created -> applyTransition(coordinator.startAuto(created.turnId, created.socket, runtime.requiresAutoDetection(), runtime.requiresAutoDetection())) }
+    fun startAuto() {
+        synchronized(actionLock) { coordinator.setAutomaticLanguageDetection(runtime.requiresAutoDetection()) }
+        startWithCloudGrant(
+            side = FaceToFaceSide.LEFT,
+            canStart = { coordinator.state().mode == FaceToFaceMode.AUTO && coordinator.state().phase == FaceToFacePhase.IDLE },
+        ) { created -> applyTransition(coordinator.startAuto(created.turnId, created.socket, runtime.requiresAutoDetection(), runtime.requiresAutoDetection())) }
+    }
 
     // Azure AUTO determines the side only from each segment's AtStart LID result;
     // legacy providers retain the explicit accessibility/takeover controls.
@@ -363,8 +366,9 @@ class FaceToFaceViewModel @JvmOverloads constructor(
                 publishState()
             }
             AgentEvent.Finished -> {
+                // A continuous transport owns many logical turns. They are persisted
+                // only at their final-pair boundary, never again at transport finish.
                 queuePlayback(coordinator.transportFinished(socket ?: return))
-                captureCompletedTurn(turnId)
                 closeCloudSessionIfDrained()
                 publishState()
             }
@@ -433,6 +437,7 @@ class FaceToFaceViewModel @JvmOverloads constructor(
                         return@execute
                     }
                     work = coordinator.playbackWorkFinished(current.turnId, drained)
+                    if (drained) applyTransition(coordinator.resumeContinuousCaptureAfterDrain(current.turnId))
                     closeCloudSessionIfDrained()
                     publishState()
                 }
