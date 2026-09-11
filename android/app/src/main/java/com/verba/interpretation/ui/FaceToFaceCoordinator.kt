@@ -91,17 +91,25 @@ class FaceToFaceCoordinator<S> {
         data class Drain(override val turnId: Long) : PlaybackWork
     }
 
-    private data class Entry<S>(
+    /** A transport owns exactly one socket; logical turns merely reference it. */
+    private data class Transport<S>(
         val session: S,
+        var finishing: Boolean = false,
+        var finished: Boolean = false,
+    )
+
+    private data class Entry<S>(
+        val transport: Transport<S>,
         var route: PlaybackRoute,
         var autoDirectionResolved: Boolean = true,
+        var continuousAutoSegment: Boolean = false,
+        var logicalComplete: Boolean = false,
         val tts: ArrayDeque<ByteArray> = ArrayDeque(),
-        // Finish was requested, but the socket has not emitted Finished yet.
-        var finishing: Boolean = false,
-        var sessionFinished: Boolean = false,
     )
 
     private val entries = linkedMapOf<Long, Entry<S>>()
+    private val transports = linkedMapOf<S, Transport<S>>()
+    private var continuousTransport: Transport<S>? = null
     private var current = FaceToFaceState()
     private var activeTurnId: Long? = null
     private var playbackInProgress = false
@@ -169,7 +177,7 @@ class FaceToFaceCoordinator<S> {
         val turn = current.turns.firstOrNull { it.id == activeId } ?: return Transition(accepted = false)
         // Finished is terminal at the socket. Keep the entry so queued TTS can drain; the
         // release must not send a second finish or discard the terminal session.
-        val terminal = entry.finishing || entry.sessionFinished || turn.finished
+        val terminal = entry.transport.finishing || entry.transport.finished || turn.finished
         val discard = !terminal && shouldDiscardTurnLocked(activeId)
         if (discard) entries.remove(activeId)
         activeTurnId = null
@@ -182,8 +190,8 @@ class FaceToFaceCoordinator<S> {
         )
         return Transition(
             accepted = true,
-            finishSessions = if (discard || terminal) emptyList() else listOf(entry.session),
-            cancelSessions = if (discard) listOf(entry.session) else emptyList(),
+            finishSessions = if (discard || terminal) emptyList() else finishTransportLocked(entry.transport),
+            cancelSessions = if (discard) listOf(entry.transport.session) else emptyList(),
             stopCapture = true,
             cancelTimer = true,
             closeCloudSession = discard,
@@ -222,7 +230,7 @@ class FaceToFaceCoordinator<S> {
         )
         return Transition(
             accepted = true,
-            cancelSessions = listOf(entry.session),
+            cancelSessions = listOf(entry.transport.session),
             stopCapture = true,
             cancelTimer = true,
             closeCloudSession = entries.isEmpty(),
@@ -230,11 +238,16 @@ class FaceToFaceCoordinator<S> {
     }
 
     @Synchronized
-    fun startAuto(turnId: Long, session: S, requiresDetection: Boolean = false): Transition<S> {
+    fun startAuto(
+        turnId: Long,
+        session: S,
+        requiresDetection: Boolean = false,
+        continuousSession: Boolean = false,
+    ): Transition<S> {
         if (current.mode != FaceToFaceMode.AUTO || current.phase != FaceToFacePhase.IDLE || entries.isNotEmpty()) {
             return Transition(accepted = false, cancelSessions = listOf(session))
         }
-        return beginAutoSegmentLocked(turnId, session, requiresDetection)
+        return beginAutoSegmentLocked(turnId, session, requiresDetection, continuousSession)
     }
 
     /** Begins the next Azure AtStart-LID segment after its predecessor emitted Finished.
@@ -243,9 +256,9 @@ class FaceToFaceCoordinator<S> {
     fun startNextAutoSegment(turnId: Long, session: S, requiresDetection: Boolean): Transition<S> {
         if (!requiresDetection || current.mode != FaceToFaceMode.AUTO ||
             current.phase != FaceToFacePhase.PROCESSING || current.captureActive || activeTurnId != null ||
-            entries.values.any { !it.sessionFinished }
+            transports.values.any { !it.finished }
         ) return Transition(accepted = false, cancelSessions = listOf(session))
-        return beginAutoSegmentLocked(turnId, session, requiresDetection = true)
+        return beginAutoSegmentLocked(turnId, session, requiresDetection = true, continuousSession = false)
     }
 
     /** Stops capture at a complete final pair, before the socket can receive another speaker. */
@@ -254,9 +267,19 @@ class FaceToFaceCoordinator<S> {
         val entry = entries[turnId] ?: return Transition(accepted = false)
         val turn = current.turns.firstOrNull { it.id == turnId } ?: return Transition(accepted = false)
         if (current.mode != FaceToFaceMode.AUTO || activeTurnId != turnId || !current.captureActive ||
-            entry.finishing || entry.sessionFinished || turn.sourceFinals.isEmpty() || turn.translationFinals.isEmpty()
+            entry.transport.finishing || entry.transport.finished || turn.sourceFinals.isEmpty() || turn.translationFinals.isEmpty()
         ) return Transition(accepted = false)
-        entry.finishing = true
+        if (entry.continuousAutoSegment) {
+            // Azure remains live for the entire automatic conversation. This is
+            // only a logical-final boundary, never a socket finish.
+            entry.logicalComplete = true
+            activeTurnId = null
+            current = current.copy(
+                activeSide = null,
+                turns = current.turns.map { if (it.id == turnId) it.copy(finished = true) else it },
+            )
+            return Transition(accepted = true)
+        }
         activeTurnId = null
         current = current.copy(
             phase = FaceToFacePhase.PROCESSING,
@@ -264,7 +287,19 @@ class FaceToFaceCoordinator<S> {
             captureActive = false,
             captureLevel = 0f,
         )
-        return Transition(accepted = true, finishSessions = listOf(entry.session), stopCapture = true)
+        return Transition(accepted = true, finishSessions = finishTransportLocked(entry.transport), stopCapture = true)
+    }
+
+    /** Installs a new logical Azure segment without opening another transport socket. */
+    @Synchronized
+    fun beginContinuousAutoSegment(turnId: Long, session: S): Boolean {
+        val transport = continuousTransport
+        if (current.mode != FaceToFaceMode.AUTO || !current.captureActive || activeTurnId != null || entries.containsKey(turnId) ||
+            transport == null || transport.session != session || transport.finishing || transport.finished
+        ) return false
+        addTurnLocked(turnId, FaceToFaceSide.LEFT, session, requiresDetection = true, continuousAutoSegment = true)
+        activeTurnId = turnId
+        return true
     }
 
     @Synchronized
@@ -290,7 +325,7 @@ class FaceToFaceCoordinator<S> {
         // A terminal Finished event belongs to playback drain; never cancel that socket here.
         // The entry may already have drained and been removed while activeTurnId/side still
         // points at RIGHT. The finished turn in the transcript is the durable terminal marker.
-        val preserveFinished = previousEntry?.sessionFinished == true || previousTurn.finished
+        val preserveFinished = previousEntry?.transport?.finished == true || previousTurn.finished
         if (!preserveFinished) {
             if (previousEntry == null) return Transition(accepted = false, cancelSessions = listOf(session))
             entries.remove(previousId)
@@ -301,7 +336,7 @@ class FaceToFaceCoordinator<S> {
         current = current.copy(activeSide = FaceToFaceSide.LEFT, captureLevel = 0f)
         return Transition(
             accepted = true,
-            cancelSessions = if (preserveFinished) emptyList() else listOfNotNull(previousEntry?.session),
+            cancelSessions = if (preserveFinished) emptyList() else listOfNotNull(previousEntry?.transport?.session),
             cancelTimer = true,
         )
     }
@@ -309,10 +344,16 @@ class FaceToFaceCoordinator<S> {
     @Synchronized
     fun pauseAuto(): Transition<S> {
         if (current.mode != FaceToFaceMode.AUTO || current.phase !in setOf(FaceToFacePhase.LISTENING, FaceToFacePhase.PROCESSING)) return Transition(accepted = false)
+        val activeContinuousTransport = continuousTransport
+        if (activeContinuousTransport != null && !activeContinuousTransport.finished) {
+            activeTurnId = null
+            current = current.copy(phase = FaceToFacePhase.PAUSED, activeSide = null, captureActive = false, captureLevel = 0f)
+            return Transition(accepted = true, finishSessions = finishTransportLocked(activeContinuousTransport), stopCapture = true)
+        }
         val turnId = activeTurnId
         val entry = turnId?.let { entries[it] }
         val turn = turnId?.let { id -> current.turns.firstOrNull { it.id == id } }
-        val terminal = entry?.finishing == true || entry?.sessionFinished == true || turn?.finished == true
+        val terminal = entry?.transport?.finishing == true || entry?.transport?.finished == true || turn?.finished == true
         val discard = turnId != null && !terminal && shouldDiscardTurnLocked(turnId)
         if (discard) entries.remove(turnId)
         activeTurnId = null
@@ -325,18 +366,23 @@ class FaceToFaceCoordinator<S> {
         )
         return Transition(
             accepted = true,
-            finishSessions = if (discard || terminal) emptyList() else listOfNotNull(entry?.session),
-            cancelSessions = if (discard) listOfNotNull(entry?.session) else emptyList(),
+            finishSessions = if (discard || terminal || entry == null) emptyList() else finishTransportLocked(entry.transport),
+            cancelSessions = if (discard) listOfNotNull(entry?.transport?.session) else emptyList(),
             stopCapture = true,
         )
     }
 
     @Synchronized
-    fun resumeAuto(turnId: Long, session: S, requiresDetection: Boolean = false): Transition<S> {
+    fun resumeAuto(
+        turnId: Long,
+        session: S,
+        requiresDetection: Boolean = false,
+        continuousSession: Boolean = false,
+    ): Transition<S> {
         if (current.mode != FaceToFaceMode.AUTO || current.phase != FaceToFacePhase.PAUSED) {
             return Transition(accepted = false, cancelSessions = listOf(session))
         }
-        addTurnLocked(turnId, FaceToFaceSide.LEFT, session, requiresDetection)
+        addTurnLocked(turnId, FaceToFaceSide.LEFT, session, requiresDetection, continuousAutoSegment = continuousSession)
         activeTurnId = turnId
         current = current.copy(phase = FaceToFacePhase.LISTENING, activeSide = FaceToFaceSide.LEFT, captureActive = true, captureLevel = 0f)
         return Transition(accepted = true, startCapture = true)
@@ -345,10 +391,16 @@ class FaceToFaceCoordinator<S> {
     @Synchronized
     fun stopAuto(): Transition<S> {
         if (current.mode != FaceToFaceMode.AUTO || current.phase !in setOf(FaceToFacePhase.LISTENING, FaceToFacePhase.PAUSED, FaceToFacePhase.PROCESSING)) return Transition(accepted = false)
+        val activeContinuousTransport = continuousTransport
+        if (activeContinuousTransport != null && !activeContinuousTransport.finished) {
+            activeTurnId = null
+            current = current.copy(phase = FaceToFacePhase.STOPPING, activeSide = null, captureActive = false, captureLevel = 0f)
+            return Transition(accepted = true, finishSessions = finishTransportLocked(activeContinuousTransport), stopCapture = true, cancelTimer = true)
+        }
         val turnId = activeTurnId
         val entry = turnId?.let { entries[it] }
         val turn = turnId?.let { id -> current.turns.firstOrNull { it.id == id } }
-        val terminal = entry?.finishing == true || entry?.sessionFinished == true || turn?.finished == true
+        val terminal = entry?.transport?.finishing == true || entry?.transport?.finished == true || turn?.finished == true
         val discard = turnId != null && !terminal && shouldDiscardTurnLocked(turnId)
         if (discard) entries.remove(turnId)
         activeTurnId = null
@@ -362,8 +414,8 @@ class FaceToFaceCoordinator<S> {
         settleIfDrainedLocked()
         return Transition(
             accepted = true,
-            finishSessions = if (discard || terminal) emptyList() else listOfNotNull(entry?.session),
-            cancelSessions = if (discard) listOfNotNull(entry?.session) else emptyList(),
+            finishSessions = if (discard || terminal || entry == null) emptyList() else finishTransportLocked(entry.transport),
+            cancelSessions = if (discard) listOfNotNull(entry?.transport?.session) else emptyList(),
             stopCapture = true,
             cancelTimer = true,
             closeCloudSession = entries.isEmpty() && !playbackInProgress,
@@ -376,8 +428,8 @@ class FaceToFaceCoordinator<S> {
         val entry = activeTurnId?.let { entries[it] }
         // Finished can precede the pointer release/cancel. Drop packets until the new turn
         // is installed instead of treating a normally closed socket as a capture failure.
-        if (entry?.finishing == true || entry?.sessionFinished == true || current.turns.any { it.id == activeTurnId && it.finished }) return true
-        return entry?.let { send(it.session) } ?: false
+        if (entry?.transport?.finishing == true || entry?.transport?.finished == true || current.turns.any { it.id == activeTurnId && it.finished }) return true
+        return entry?.let { send(it.transport.session) } ?: false
     }
 
     /** True only when a requested automatic stop has reached terminal turn and playback drain. */
@@ -400,7 +452,7 @@ class FaceToFaceCoordinator<S> {
     }
 
     @Synchronized
-    fun resolveAutoDirection(turnId: Long, sourceLanguage: String): Boolean {
+    fun resolveAutoDirection(turnId: Long, sourceLanguage: String, declaredTargetLanguage: String? = null): Boolean {
         val entry = entries[turnId] ?: return false
         if (current.mode != FaceToFaceMode.AUTO || activeTurnId != turnId || entry.autoDirectionResolved) return false
         val state = current
@@ -420,6 +472,8 @@ class FaceToFaceCoordinator<S> {
                 return false
             }
         }
+        val target = if (side == FaceToFaceSide.LEFT) state.rightLanguage else state.leftLanguage
+        if (declaredTargetLanguage != null && declaredTargetLanguage != target) return false
         entry.route = faceToFacePlaybackRoute(side)
         entry.autoDirectionResolved = true
         current = state.copy(
@@ -428,7 +482,7 @@ class FaceToFaceCoordinator<S> {
                 if (turn.id == turnId) turn.copy(
                     side = side,
                     sourceLanguage = sourceLanguage,
-                    targetLanguage = if (side == FaceToFaceSide.LEFT) state.rightLanguage else state.leftLanguage,
+                    targetLanguage = target,
                     route = entry.route,
                 ) else turn
             },
@@ -447,7 +501,7 @@ class FaceToFaceCoordinator<S> {
     @Synchronized
     fun offerTts(turnId: Long, pcm: ByteArray): PlaybackWork? {
         val entry = entries[turnId] ?: return null
-        if (!entry.autoDirectionResolved || entry.sessionFinished) return null
+        if (!entry.autoDirectionResolved || (entry.transport.finished && !entry.continuousAutoSegment)) return null
         entry.tts.addLast(pcm.copyOf())
         return claimPlaybackLocked()
     }
@@ -455,9 +509,19 @@ class FaceToFaceCoordinator<S> {
     @Synchronized
     fun sessionFinished(turnId: Long): PlaybackWork? {
         val entry = entries[turnId] ?: return null
-        entry.finishing = true
-        entry.sessionFinished = true
-        current = current.copy(turns = current.turns.map { if (it.id == turnId) it.copy(finished = true) else it })
+        return transportFinishedLocked(entry.transport)
+    }
+
+    @Synchronized
+    fun transportFinished(session: S): PlaybackWork? = transports[session]?.let(::transportFinishedLocked)
+
+    private fun transportFinishedLocked(transport: Transport<S>): PlaybackWork? {
+        transport.finishing = true
+        transport.finished = true
+        if (continuousTransport == transport) continuousTransport = null
+        current = current.copy(turns = current.turns.map { turn ->
+            if (entries[turn.id]?.transport == transport) turn.copy(finished = true) else turn
+        })
         return claimPlaybackLocked()
     }
 
@@ -469,7 +533,7 @@ class FaceToFaceCoordinator<S> {
         playbackInProgress = false
         if (drained) {
             val first = entries[turnId]
-            if (first?.sessionFinished == true && first.tts.isEmpty()) entries.remove(turnId)
+            if (first?.transport?.finished == true && first.tts.isEmpty()) entries.remove(turnId)
         }
         settleIfDrainedLocked()
         return claimPlaybackLocked()
@@ -478,8 +542,10 @@ class FaceToFaceCoordinator<S> {
     @Synchronized
     fun terminateAll(reason: TranslationSessionEndReason): Transition<S> {
         if (current.sessionEndReason != null) return Transition(accepted = false)
-        val sessions = entries.values.map { it.session }
+        val sessions = transports.keys.toList()
         entries.clear()
+        transports.clear()
+        continuousTransport = null
         activeTurnId = null
         playbackInProgress = false
         current = current.copy(
@@ -496,8 +562,10 @@ class FaceToFaceCoordinator<S> {
 
     @Synchronized
     fun cancelAll(error: String? = null): Transition<S> {
-        val sessions = entries.values.map { it.session }
+        val sessions = transports.keys.toList()
         entries.clear()
+        transports.clear()
+        continuousTransport = null
         activeTurnId = null
         playbackInProgress = false
         current = current.copy(
@@ -518,8 +586,13 @@ class FaceToFaceCoordinator<S> {
         }
     }
 
-    private fun beginAutoSegmentLocked(turnId: Long, session: S, requiresDetection: Boolean): Transition<S> {
-        addTurnLocked(turnId, FaceToFaceSide.LEFT, session, requiresDetection)
+    private fun beginAutoSegmentLocked(
+        turnId: Long,
+        session: S,
+        requiresDetection: Boolean,
+        continuousSession: Boolean,
+    ): Transition<S> {
+        addTurnLocked(turnId, FaceToFaceSide.LEFT, session, requiresDetection, continuousAutoSegment = continuousSession)
         activeTurnId = turnId
         current = current.copy(
             phase = FaceToFacePhase.LISTENING,
@@ -539,9 +612,9 @@ class FaceToFaceCoordinator<S> {
     ): Transition<S> {
         val previousId = activeTurnId
         val previousEntry = previousId?.let { entries[it] }
-        val previous = previousEntry?.session
+        val previous = previousEntry?.transport?.session
         val previousTurn = previousId?.let { id -> current.turns.firstOrNull { it.id == id } }
-        val previousFinished = previousEntry?.finishing == true || previousEntry?.sessionFinished == true || previousTurn?.finished == true
+        val previousFinished = previousEntry?.transport?.finishing == true || previousEntry?.transport?.finished == true || previousTurn?.finished == true
         // A terminal socket must remain in the playback queue even when it has no source text.
         val discard = !previousFinished && (discardPrevious || (previousId != null && shouldDiscardTurnLocked(previousId)))
         if (previousId != null) {
@@ -567,30 +640,48 @@ class FaceToFaceCoordinator<S> {
 
     private fun shouldDiscardTurnLocked(turnId: Long): Boolean = current.turns.firstOrNull { it.id == turnId }?.hasSourceText == false
 
-    private fun addTurnLocked(turnId: Long, side: FaceToFaceSide, session: S, requiresDetection: Boolean = false) {
+    private fun addTurnLocked(
+        turnId: Long,
+        side: FaceToFaceSide,
+        session: S,
+        requiresDetection: Boolean = false,
+        continuousAutoSegment: Boolean = false,
+    ) {
         check(!entries.containsKey(turnId)) { "Turn $turnId already exists." }
         val source = if (side == FaceToFaceSide.LEFT) current.leftLanguage else current.rightLanguage
         val target = if (side == FaceToFaceSide.LEFT) current.rightLanguage else current.leftLanguage
         val route = faceToFacePlaybackRoute(side)
-        entries[turnId] = Entry(session, route, autoDirectionResolved = !requiresDetection)
+        val transport = transports.getOrPut(session) { Transport(session) }
+        if (continuousAutoSegment) continuousTransport = transport
+        entries[turnId] = Entry(transport, route, autoDirectionResolved = !requiresDetection, continuousAutoSegment = continuousAutoSegment)
         current = current.copy(turns = current.turns + FaceToFaceTurn(turnId, side, source, target, route))
+    }
+
+    private fun finishTransportLocked(transport: Transport<S>): List<S> {
+        if (transport.finishing || transport.finished) return emptyList()
+        transport.finishing = true
+        return listOf(transport.session)
     }
 
     private fun claimPlaybackLocked(): PlaybackWork? {
         if (playbackInProgress) return null
-        val (turnId, entry) = entries.entries.firstOrNull() ?: run {
+        // Preserve FIFO across independent sockets. A completed continuous Azure
+        // segment is the sole exception: its live transport may carry a later
+        // segment's PCM, so it must not block that logical turn.
+        val ready = entries.entries.firstOrNull { (_, entry) ->
+            !(entry.continuousAutoSegment && !entry.transport.finished && entry.tts.isEmpty())
+        } ?: run {
             settleIfDrainedLocked()
             return null
         }
+        val (turnId, entry) = ready
         if (entry.tts.isNotEmpty()) {
             playbackInProgress = true
             return PlaybackWork.Chunk(turnId, entry.tts.removeFirst(), entry.route)
         }
-        if (entry.sessionFinished) {
-            playbackInProgress = true
-            return PlaybackWork.Drain(turnId)
-        }
-        return null
+        if (!entry.transport.finished) return null
+        playbackInProgress = true
+        return PlaybackWork.Drain(turnId)
     }
 
     private fun settleIfDrainedLocked() {

@@ -215,11 +215,13 @@ type finishMessage struct {
 }
 
 type browserEvent struct {
-	Type     string `json:"type"`
-	Code     string `json:"code,omitempty"`
-	Message  string `json:"message,omitempty"`
-	LogID    string `json:"logId,omitempty"`
-	Language string `json:"language,omitempty"`
+	Type           string `json:"type"`
+	Code           string `json:"code,omitempty"`
+	Message        string `json:"message,omitempty"`
+	LogID          string `json:"logId,omitempty"`
+	Language       string `json:"language,omitempty"`
+	SegmentID      int64  `json:"segmentId,omitempty"`
+	TargetLanguage string `json:"targetLanguage,omitempty"`
 }
 
 type outgoingMessage struct {
@@ -453,6 +455,17 @@ func (s *Server) runConnection(parent context.Context, conn *websocket.Conn, ses
 				emit(browserEvent{Type: "error", Code: "TRANSLATION_PROTOCOL_ERROR", Message: "translation service returned invalid PCM"})
 				return
 			}
+			// Binary WebSocket frames have no metadata. Emit its validated logical
+			// segment binding immediately before PCM so Android can atomically route
+			// continuous Azure finals without inferring language from text.
+			if event.SegmentID != 0 {
+				if event.TargetLanguage == "" || !containsLanguage(start.CandidateLanguages, event.TargetLanguage) {
+					upstreamTerminal = true
+					emit(browserEvent{Type: "error", Code: "TRANSLATION_PROTOCOL_ERROR", Message: "translation service returned invalid TTS segment"})
+					return
+				}
+				emit(browserEvent{Type: "tts", SegmentID: event.SegmentID, TargetLanguage: event.TargetLanguage})
+			}
 			emitMessage(outgoingMessage{binary: append([]byte(nil), event.Binary...)})
 		case "detected_language":
 			// Only Azure AUTO sessions may report LID, and its result must stay
@@ -462,12 +475,18 @@ func (s *Server) runConnection(parent context.Context, conn *websocket.Conn, ses
 				emit(browserEvent{Type: "error", Code: "TRANSLATION_PROTOCOL_ERROR", Message: "translation service returned an invalid detected language"})
 				return
 			}
-			emit(browserEvent{Type: event.Type, Language: event.Language, LogID: event.LogID})
+			emit(browserEvent{Type: event.Type, Language: event.Language, LogID: event.LogID, SegmentID: event.SegmentID, TargetLanguage: event.TargetLanguage})
 		case "source_partial", "source_final", "translation_partial", "translation_final":
+			if event.SegmentID != 0 && (event.TargetLanguage == "" || !containsLanguage(start.CandidateLanguages, event.TargetLanguage)) {
+				upstreamTerminal = true
+				emit(browserEvent{Type: "error", Code: "TRANSLATION_PROTOCOL_ERROR", Message: "translation service returned an invalid final segment"})
+				return
+			}
+
 			if strings.TrimSpace(event.Message) == "" {
 				return
 			}
-			emit(browserEvent{Type: event.Type, Message: event.Message, LogID: event.LogID})
+			emit(browserEvent{Type: event.Type, Message: event.Message, LogID: event.LogID, SegmentID: event.SegmentID, TargetLanguage: event.TargetLanguage})
 		case "finished":
 			upstreamTerminal = true
 			emit(browserEvent{Type: "finished"})

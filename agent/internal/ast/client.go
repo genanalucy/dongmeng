@@ -79,11 +79,15 @@ type EventSink interface {
 // Event is a browser-safe AST outcome. Binary carries TTS PCM and is never
 // JSON-serialized. Details must never include credentials.
 type Event struct {
-	Type           string `json:"type"`
-	Code           string `json:"code,omitempty"`
-	Message        string `json:"message,omitempty"`
-	LogID          string `json:"logId,omitempty"`
-	Language       string `json:"language,omitempty"`
+	Type     string `json:"type"`
+	Code     string `json:"code,omitempty"`
+	Message  string `json:"message,omitempty"`
+	LogID    string `json:"logId,omitempty"`
+	Language string `json:"language,omitempty"`
+	// SegmentID and TargetLanguage bind continuous-provider final text and PCM
+	// to one logical face-to-face turn. Empty values retain legacy compatibility.
+	SegmentID      int64  `json:"segmentId,omitempty"`
+	TargetLanguage string `json:"targetLanguage,omitempty"`
 	Binary         []byte `json:"-"`
 	UpstreamStatus int32  `json:"-"`
 }

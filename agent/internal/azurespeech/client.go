@@ -219,7 +219,9 @@ func speechContext(candidates []string) (map[string]any, error) {
 			targets = append(targets, target)
 		}
 		context["languageId"] = map[string]any{
-			"languages": locales, "mode": "DetectAtAudioStart",
+			// Universal v2 continuous recognition uses the exact value emitted by
+			// the official JS SDK when LanguageIdMode.Continuous is selected.
+			"languages": locales, "mode": "DetectContinuous",
 			"onSuccess": map[string]string{"action": "Recognize"},
 			"onUnknown": map[string]string{"action": "None"}, "priority": "PrioritizeLatency",
 		}
@@ -302,6 +304,7 @@ type session struct {
 	stateMu                                                 sync.Mutex
 	accepting, active, turnEnded, finishRequested, terminal bool
 	riffSent                                                bool
+	segmentID                                               int64
 	// eventMu serializes text, synchronous TTS, errors, and finished.
 	eventMu sync.Mutex
 	errMu   sync.Mutex
@@ -593,36 +596,48 @@ func (s *session) handleMessage(data []byte) error {
 	defer s.eventMu.Unlock()
 	switch kind {
 	case "translation.hypothesis":
-		// At-start LID is only authoritative with the final phrase. Suppress
-		// automatic hypotheses until the direction and playback route are safe.
-		if len(s.candidates) != 0 {
-			return nil
+		// Hypotheses are display-only. Continuous LID is authoritative only for
+		// finals, so neither routing nor synthesis may happen here.
+		source := strings.TrimSpace(message.text())
+		if source != "" {
+			s.sink.Emit(ast.Event{Type: "source_partial", Message: source})
 		}
-		s.sink.Emit(ast.Event{Type: "source_partial", Message: message.text()})
-		s.sink.Emit(ast.Event{Type: "translation_partial", Message: message.translation(s.to)})
+		if len(s.candidates) == 0 {
+			if translation := strings.TrimSpace(message.translation(s.to)); translation != "" {
+				s.sink.Emit(ast.Event{Type: "translation_partial", Message: translation})
+			}
+		}
 	case "translation.result", "translation.phrase":
+		targetLocale := s.to
+		language := ""
 		if len(s.candidates) != 0 {
-			if err := s.resolveDetectedLanguage(&message); err != nil {
+			var err error
+			language, targetLocale, err = s.resolveDetectedLanguage(&message)
+			if err != nil {
 				return err
 			}
 		}
 		source := strings.TrimSpace(message.text())
-		translation := strings.TrimSpace(message.translation(s.to))
-		// An automatic segment without a complete final pair cannot safely be
-		// routed or persisted. Make it terminal rather than waiting forever for
-		// a turn.end that might never arrive.
+		translation := strings.TrimSpace(message.translation(targetLocale))
+		// A continuous automatic final is independently routable only when it
+		// has source, candidate LID, and the opposite-target translation.
 		if len(s.candidates) != 0 && (source == "" || translation == "") {
 			return errors.New("Azure returned an empty automatic final pair")
 		}
-		// The server intentionally ignores empty subtitles. A legacy final with
-		// source text but no target translation must therefore be terminal,
-		// before it can be persisted or trigger TTS.
 		if len(s.candidates) == 0 && source != "" && translation == "" {
 			return errors.New("Azure returned no target translation for final result")
 		}
-		s.sink.Emit(ast.Event{Type: "source_final", Message: source})
-		s.sink.Emit(ast.Event{Type: "translation_final", Message: translation})
-		if err := s.synthesizeLocked(translation); err != nil {
+		segmentID := int64(0)
+		targetLanguage := ""
+		if len(s.candidates) != 0 {
+			s.segmentID++
+			segmentID = s.segmentID
+			targetLanguage, _ = protocolLanguage(targetLocale)
+			s.sink.Emit(ast.Event{Type: "detected_language", Language: language, SegmentID: segmentID, TargetLanguage: targetLanguage})
+		}
+		s.sink.Emit(ast.Event{Type: "source_final", Message: source, SegmentID: segmentID, TargetLanguage: targetLanguage})
+		s.sink.Emit(ast.Event{Type: "translation_final", Message: translation, SegmentID: segmentID, TargetLanguage: targetLanguage})
+		if err := s.synthesizeLocked(translation, targetLocale, segmentID, targetLanguage); err != nil {
 			return azureTTSError{err}
 		}
 	case "speech.startDetected":
@@ -642,35 +657,33 @@ func (s *session) handleMessage(data []byte) error {
 	return nil
 }
 
-func (s *session) resolveDetectedLanguage(message *upstreamMessage) error {
+func (s *session) resolveDetectedLanguage(message *upstreamMessage) (string, string, error) {
 	if status := strings.TrimSpace(message.RecognitionStatus); status != "" && !strings.EqualFold(status, "Success") {
-		return fmt.Errorf("Azure recognition status %q", status)
+		return "", "", fmt.Errorf("Azure recognition status %q", status)
 	}
 	language, ok := protocolLanguage(message.detectedLanguage())
 	if !ok || (language != s.candidates[0] && language != s.candidates[1]) {
-		return errors.New("Azure did not return a candidate detected language")
+		return "", "", errors.New("Azure did not return a candidate detected language")
 	}
 	target := s.candidates[0]
 	if language == target {
 		target = s.candidates[1]
 	}
 	targetLocale, _ := LocaleForLanguage(target)
-	s.to = targetLocale
-	s.sink.Emit(ast.Event{Type: "detected_language", Language: language})
-	return nil
+	return language, targetLocale, nil
 }
 
 type azureTTSError struct{ error }
 
-func (s *session) synthesizeLocked(text string) error {
+func (s *session) synthesizeLocked(text, targetLocale string, segmentID int64, targetLanguage string) error {
 	if strings.TrimSpace(text) == "" {
 		return nil
 	}
 	voice := s.voice
-	if voice == "" {
-		voice = defaultVoice[s.to]
+	if voice == "" || !IsVoiceAllowed(voice, []string{targetLanguage}) {
+		voice = defaultVoice[targetLocale]
 	}
-	ssml := "<speak version='1.0' xml:lang='" + s.to + "'><voice name='" + xmlEscape(voice) + "'>" + xmlEscape(text) + "</voice></speak>"
+	ssml := "<speak version='1.0' xml:lang='" + targetLocale + "'><voice name='" + xmlEscape(voice) + "'>" + xmlEscape(text) + "</voice></speak>"
 	req, err := http.NewRequestWithContext(s.ctx, http.MethodPost, strings.TrimRight(s.client.ttsBase, "/")+"/cognitiveservices/v1", strings.NewReader(ssml))
 	if err != nil {
 		return err
@@ -694,7 +707,7 @@ func (s *session) synthesizeLocked(text string) error {
 	if len(pcm) == 0 || len(pcm)%2 != 0 {
 		return errors.New("Azure TTS returned invalid PCM")
 	}
-	s.sink.Emit(ast.Event{Type: "tts_audio", Binary: pcm})
+	s.sink.Emit(ast.Event{Type: "tts_audio", Binary: pcm, SegmentID: segmentID, TargetLanguage: targetLanguage})
 	return nil
 }
 func xmlEscape(value string) string {

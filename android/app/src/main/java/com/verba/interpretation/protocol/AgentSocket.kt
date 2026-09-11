@@ -15,7 +15,7 @@ class AgentSocket(
     private val translationSettings: () -> TranslationSettings = { TranslationSettings() },
     private val client: OkHttpClient = OkHttpClient(),
     private val onEvent: (AgentEvent) -> Unit,
-    private val onTts: (ByteArray) -> Unit,
+    private val onTts: (ByteArray, Long?, String?) -> Unit,
     private val onFailure: (String) -> Unit,
     private val onClosed: () -> Unit = {},
 ) {
@@ -24,6 +24,7 @@ class AgentSocket(
     private var ready = false
     private var finishing = false
     private var terminalDelivered = false
+    private var pendingTtsSegment: AgentEvent.TtsSegment? = null
     private val pendingAudio = ArrayDeque<ByteArray>()
 
     fun start(
@@ -70,6 +71,12 @@ class AgentSocket(
                             webSocket.close(1000, "finished")
                             true
                         }
+                        is AgentEvent.TtsSegment -> {
+                            if (terminalDelivered) false else {
+                                pendingTtsSegment = event
+                                true
+                            }
+                        }
                         is AgentEvent.Subtitle, is AgentEvent.DetectedLanguage -> !terminalDelivered
                     }
                 }
@@ -80,8 +87,12 @@ class AgentSocket(
             }
 
             override fun onMessage(webSocket: WebSocket, bytes: ByteString) {
-                val accepted = synchronized(lock) { ready && socket === webSocket }
-                if (accepted && bytes.size > 0 && bytes.size % 2 == 0) onTts(bytes.toByteArray())
+                val segment = synchronized(lock) {
+                    if (!ready || socket !== webSocket) null
+                    else pendingTtsSegment.also { pendingTtsSegment = null }
+                }
+                if (segment != null && bytes.size > 0 && bytes.size % 2 == 0) onTts(bytes.toByteArray(), segment.segmentId, segment.targetLanguage)
+                else if (segment == null && bytes.size > 0 && bytes.size % 2 == 0) onTts(bytes.toByteArray(), null, null)
                 else fail("TTS PCM16 音频包顺序或长度无效。")
             }
 
@@ -153,5 +164,6 @@ class AgentSocket(
         ready = false
         finishing = false
         pendingAudio.clear()
+        pendingTtsSegment = null
     }
 }

@@ -21,7 +21,7 @@ interface FaceToFaceSocket {
 
 interface FaceToFaceRuntime {
     fun requiresAutoDetection(): Boolean = false
-    fun createSocket(onEvent: (AgentEvent) -> Unit, onTts: (ByteArray) -> Unit, onFailure: (String) -> Unit): FaceToFaceSocket
+    fun createSocket(onEvent: (AgentEvent) -> Unit, onTts: (ByteArray, Long?, String?) -> Unit, onFailure: (String) -> Unit): FaceToFaceSocket
     fun startCapture(onPacket: (ByteArray) -> Unit, onError: (String) -> Unit, onLevel: (Float) -> Unit): CaptureResult
     fun stopCapture()
     fun play(pcm: ByteArray, route: PlaybackRoute): Result<Unit>
@@ -38,7 +38,7 @@ internal class AndroidFaceToFaceRuntime(application: Application) : FaceToFaceRu
     override fun requiresAutoDetection(): Boolean =
         translationSettings.load().provider == com.verba.interpretation.protocol.TranslationProvider.AZURE
 
-    override fun createSocket(onEvent: (AgentEvent) -> Unit, onTts: (ByteArray) -> Unit, onFailure: (String) -> Unit): FaceToFaceSocket {
+    override fun createSocket(onEvent: (AgentEvent) -> Unit, onTts: (ByteArray, Long?, String?) -> Unit, onFailure: (String) -> Unit): FaceToFaceSocket {
         val socket = AgentSocket(
             endpointSettings = endpointSettings,
             translationSettings = translationSettings::load,

@@ -91,13 +91,10 @@ func TestAutomaticCandidateLanguagesUseAzureUniversalV2AndExposeDetectedLanguage
 	if _, wrapped := context["context"]; wrapped {
 		t.Fatalf("speech.context must be the context object, got %s", config)
 	}
-	for _, wanted := range []string{"DetectAtAudioStart", "PrioritizeLatency", "Recognize", "zh-CN", "en-US", "zh-Hans"} {
+	for _, wanted := range []string{"DetectContinuous", "PrioritizeLatency", "Recognize", "zh-CN", "en-US", "zh-Hans"} {
 		if !strings.Contains(config, wanted) {
 			t.Fatalf("automatic context missing %q: %s", wanted, config)
 		}
-	}
-	if strings.Contains(config, "Continuous") {
-		t.Fatalf("automatic context must not enable Continuous LID: %s", config)
 	}
 	legacy, err := legacySpeechConfig()
 	if err != nil {
@@ -132,14 +129,19 @@ func TestAutomaticFinalEmitsDetectedLanguageBeforeFinalsAndTTS(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer session.Close()
-	assertEvent(t, sink.next(t), "detected_language", "")
-	if event := sink.next(t); event.Type != "source_final" || event.Message != "hello" {
+	if event := sink.next(t); event.Type != "source_partial" || event.Message != "hello" {
+		t.Fatalf("hypothesis must be display-only partial = %#v", event)
+	}
+	if event := sink.next(t); event.Type != "detected_language" || event.Language != "en" || event.SegmentID != 1 || event.TargetLanguage != "zh" {
+		t.Fatalf("detected final direction = %#v", event)
+	}
+	if event := sink.next(t); event.Type != "source_final" || event.Message != "hello" || event.SegmentID != 1 {
 		t.Fatalf("source final = %#v", event)
 	}
-	if event := sink.next(t); event.Type != "translation_final" || event.Message != "你好" {
+	if event := sink.next(t); event.Type != "translation_final" || event.Message != "你好" || event.TargetLanguage != "zh" {
 		t.Fatalf("translation final = %#v", event)
 	}
-	if event := sink.next(t); event.Type != "tts_audio" {
+	if event := sink.next(t); event.Type != "tts_audio" || event.SegmentID != 1 || event.TargetLanguage != "zh" {
 		t.Fatalf("tts = %#v", event)
 	}
 }
@@ -161,9 +163,6 @@ func TestAutomaticEmptyFinalPairFailsClosedWithoutFinalsOrTTS(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer session.Close()
-	if event := sink.next(t); event.Type != "detected_language" {
-		t.Fatalf("first event = %#v", event)
-	}
 	if event := sink.next(t); event.Type != "error" || event.Code != "AZURE_SESSION_FAILED" {
 		t.Fatalf("terminal event = %#v", event)
 	}

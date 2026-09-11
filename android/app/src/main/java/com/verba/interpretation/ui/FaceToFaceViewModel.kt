@@ -126,7 +126,7 @@ class FaceToFaceViewModel @JvmOverloads constructor(
     fun startAuto() = startWithCloudGrant(
         side = FaceToFaceSide.LEFT,
         canStart = { coordinator.state().mode == FaceToFaceMode.AUTO && coordinator.state().phase == FaceToFacePhase.IDLE },
-    ) { created -> applyTransition(coordinator.startAuto(created.turnId, created.socket, runtime.requiresAutoDetection())) }
+    ) { created -> applyTransition(coordinator.startAuto(created.turnId, created.socket, runtime.requiresAutoDetection(), runtime.requiresAutoDetection())) }
 
     // Azure AUTO determines the side only from each segment's AtStart LID result;
     // legacy providers retain the explicit accessibility/takeover controls.
@@ -158,7 +158,7 @@ class FaceToFaceViewModel @JvmOverloads constructor(
     fun resumeAuto() = startWithCloudGrant(
         side = FaceToFaceSide.LEFT,
         canStart = { coordinator.state().mode == FaceToFaceMode.AUTO && coordinator.state().phase == FaceToFacePhase.PAUSED },
-    ) { created -> applyTransition(coordinator.resumeAuto(created.turnId, created.socket, runtime.requiresAutoDetection())) }
+    ) { created -> applyTransition(coordinator.resumeAuto(created.turnId, created.socket, runtime.requiresAutoDetection(), runtime.requiresAutoDetection())) }
 
     fun stopAuto() = synchronized(actionLock) {
         localHistory.finishConversation()
@@ -262,9 +262,21 @@ class FaceToFaceViewModel @JvmOverloads constructor(
             localHistory.startConversation(userId, "face_to_face")
             localTurnOwnership.clear()
         }
-        val socket = runtime.createSocket(
-            onEvent = { event -> synchronized(actionLock) { handleEvent(turnId, event) } },
-            onTts = { pcm -> synchronized(actionLock) { queuePlayback(coordinator.offerTts(turnId, pcm)) } },
+        val segmentTurns = mutableMapOf<Long, Long>()
+        fun logicalTurnId(segmentId: Long?): Long {
+            if (segmentId == null) return turnId
+            return segmentTurns.getOrPut(segmentId) {
+                if (segmentId == 1L) turnId else nextTurnId++
+            }
+        }
+        lateinit var socket: FaceToFaceSocket
+        socket = runtime.createSocket(
+            onEvent = { event -> synchronized(actionLock) {
+                handleEvent(logicalTurnId(event.segmentIdOrNull()), event, socket)
+            } },
+            onTts = { pcm, segmentId, _ -> synchronized(actionLock) {
+                queuePlayback(coordinator.offerTts(logicalTurnId(segmentId), pcm))
+            } },
             onFailure = { message -> synchronized(actionLock) { handleSessionFailure(turnId, message) } },
         )
         return CreatedSession(turnId, side, socket)
@@ -334,30 +346,36 @@ class FaceToFaceViewModel @JvmOverloads constructor(
         }
     }
 
-    private fun handleEvent(turnId: Long, event: AgentEvent) {
-        if (!coordinator.containsTurn(turnId)) return
+    private fun handleEvent(turnId: Long, event: AgentEvent, socket: FaceToFaceSocket?) {
         when (event) {
             AgentEvent.Ready -> Unit
             is AgentEvent.DetectedLanguage -> {
-                if (!coordinator.resolveAutoDirection(turnId, event.language)) {
-                    runtime.stopCapture()
+                // Continuous Azure events name a logical segment. It is never
+                // inferred from subtitle text; one transport can create many turns.
+                val transport = socket ?: return
+                val isNewSegment = !coordinator.containsTurn(turnId)
+                if (isNewSegment && !coordinator.beginContinuousAutoSegment(turnId, transport)) return
+                if (isNewSegment) {
+                    localHistory.bindTurn(turnId.toString())?.let { localTurnOwnership[turnId] = it }
                 }
+                nextTurnId = maxOf(nextTurnId, turnId + 1)
+                if (!coordinator.resolveAutoDirection(turnId, event.language, event.targetLanguage)) runtime.stopCapture()
                 publishState()
             }
             AgentEvent.Finished -> {
-                queuePlayback(coordinator.sessionFinished(turnId))
+                queuePlayback(coordinator.transportFinished(socket ?: return))
                 captureCompletedTurn(turnId)
-                continueAzureAutoAfterFinished()
                 closeCloudSessionIfDrained()
                 publishState()
             }
+            is AgentEvent.TtsSegment -> Unit
             is AgentEvent.Subtitle -> {
+                if (!coordinator.containsTurn(turnId)) return
                 val updated = coordinator.updateSubtitle(turnId, event.kind.toSubtitleKind(), event.text)
                 if (updated && event.kind == AgentEvent.Subtitle.Kind.TRANSLATION_FINAL) {
                     applyTransition(coordinator.completeAutoSegmentAfterFinalPair(turnId))
-                } else {
-                    publishState()
-                }
+                    captureCompletedTurn(turnId)
+                } else publishState()
             }
             is AgentEvent.SessionTerminated -> terminateSession(event.reason)
             is AgentEvent.Error -> handleSessionFailure(turnId, "${event.code}: ${event.message}")
@@ -385,32 +403,6 @@ class FaceToFaceViewModel @JvmOverloads constructor(
         mutableState.value = mutableState.value.copy(localHistorySave = localHistory.state.value)
     }
 
-    /**
-     * Azure universal v2 uses DetectAtAudioStart, so every completed phrase must get a
-     * fresh socket. Terminal predecessors stay in the coordinator queue for TTS, while
-     * only this new entry receives microphone frames.
-     */
-    private fun continueAzureAutoAfterFinished() {
-        if (!runtime.requiresAutoDetection()) return
-        val grant = cloudGrant ?: return
-        val snapshot = coordinator.state()
-        if (snapshot.mode != FaceToFaceMode.AUTO || snapshot.phase != FaceToFacePhase.PROCESSING ||
-            snapshot.captureActive || snapshot.activeTurnId != null
-        ) return
-        val created = createSession(FaceToFaceSide.LEFT)
-        val transition = coordinator.startNextAutoSegment(created.turnId, created.socket, requiresDetection = true)
-        if (!transition.accepted) {
-            created.socket.cancel()
-            return
-        }
-        if (!startSocket(created, grant)) {
-            created.socket.cancel()
-            // startSocket has already issued the terminal failure transition.
-            return
-        }
-        localHistory.bindTurn(created.turnId.toString())?.let { localTurnOwnership[created.turnId] = it }
-        applyTransition(transition)
-    }
 
     private fun handleSessionFailure(turnId: Long, message: String) {
         if (coordinator.isActiveTurn(turnId)) {
@@ -495,6 +487,13 @@ class FaceToFaceViewModel @JvmOverloads constructor(
         playbackExecutor.shutdownNow()
         super.onCleared()
     }
+}
+
+private fun AgentEvent.segmentIdOrNull(): Long? = when (this) {
+    is AgentEvent.DetectedLanguage -> segmentId
+    is AgentEvent.Subtitle -> segmentId
+    is AgentEvent.TtsSegment -> segmentId
+    else -> null
 }
 
 private fun AgentEvent.Subtitle.Kind.toSubtitleKind(): SubtitleKind = when (this) {

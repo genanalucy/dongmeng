@@ -32,8 +32,18 @@ enum class TranslationSessionEndReason {
 sealed interface AgentEvent {
     data object Ready : AgentEvent
     data object Finished : AgentEvent
-    data class DetectedLanguage(val language: String) : AgentEvent
-    data class Subtitle(val kind: Kind, val text: String) : AgentEvent {
+    data class DetectedLanguage(
+        val language: String,
+        val segmentId: Long? = null,
+        val targetLanguage: String? = null,
+    ) : AgentEvent
+    data class TtsSegment(val segmentId: Long, val targetLanguage: String) : AgentEvent
+    data class Subtitle(
+        val kind: Kind,
+        val text: String,
+        val segmentId: Long? = null,
+        val targetLanguage: String? = null,
+    ) : AgentEvent {
         enum class Kind { SOURCE_PARTIAL, SOURCE_FINAL, TRANSLATION_PARTIAL, TRANSLATION_FINAL }
     }
     data class SessionTerminated(val reason: TranslationSessionEndReason) : AgentEvent
@@ -51,6 +61,7 @@ object AgentProtocol {
             "ready" -> AgentEvent.Ready
             "finished" -> AgentEvent.Finished
             "detected_language" -> detectedLanguage(json)
+            "tts" -> ttsSegment(json)
             "source_partial" -> subtitle(json, AgentEvent.Subtitle.Kind.SOURCE_PARTIAL)
             "source_final" -> subtitle(json, AgentEvent.Subtitle.Kind.SOURCE_FINAL)
             "translation_partial" -> subtitle(json, AgentEvent.Subtitle.Kind.TRANSLATION_PARTIAL)
@@ -63,14 +74,40 @@ object AgentProtocol {
     private fun detectedLanguage(json: JSONObject): AgentEvent.DetectedLanguage {
         val language = json.optString("language").trim()
         if (language.isEmpty()) throw ProtocolException("检测语言事件缺少 language。")
-        return AgentEvent.DetectedLanguage(language)
+        val binding = optionalSegmentBinding(json)
+        return AgentEvent.DetectedLanguage(language, binding?.first, binding?.second)
+    }
+
+    private fun ttsSegment(json: JSONObject): AgentEvent.TtsSegment {
+        val segmentId = requiredSegmentId(json)
+        val targetLanguage = optionalTargetLanguage(json) ?: throw ProtocolException("TTS 片段缺少 targetLanguage。")
+        return AgentEvent.TtsSegment(segmentId, targetLanguage)
     }
 
     private fun subtitle(json: JSONObject, kind: AgentEvent.Subtitle.Kind): AgentEvent.Subtitle {
         val message = json.optString("message").trim()
         if (message.isEmpty()) throw ProtocolException("字幕事件缺少 message。")
-        return AgentEvent.Subtitle(kind, message)
+        val binding = optionalSegmentBinding(json)
+        return AgentEvent.Subtitle(kind, message, binding?.first, binding?.second)
     }
+
+    /** Segment metadata is all-or-nothing so a binary TTS frame cannot be misrouted. */
+    private fun optionalSegmentBinding(json: JSONObject): Pair<Long, String>? {
+        val hasSegmentId = json.has("segmentId")
+        val targetLanguage = optionalTargetLanguage(json)
+        if (!hasSegmentId && targetLanguage == null) return null
+        if (!hasSegmentId || targetLanguage == null) throw ProtocolException("片段事件必须同时包含 segmentId 和 targetLanguage。")
+        return requiredSegmentId(json) to targetLanguage
+    }
+
+    private fun requiredSegmentId(json: JSONObject): Long {
+        val value = json.optLong("segmentId", 0L)
+        if (value <= 0L) throw ProtocolException("片段事件缺少有效 segmentId。")
+        return value
+    }
+
+    private fun optionalTargetLanguage(json: JSONObject): String? =
+        json.optString("targetLanguage").trim().takeIf { it.isNotEmpty() }
 
     private fun error(json: JSONObject): AgentEvent {
         // Terminal UX is selected only from an exact, typed code. Agent-provided message text is

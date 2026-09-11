@@ -197,7 +197,7 @@ class InterpretationViewModel(application: Application) : AndroidViewModel(appli
             endpointSettings = endpointSettings,
             translationSettings = translationSettings::load,
             onEvent = { event -> handleEvent(turn.id, event) },
-            onTts = { pcm -> playQueued(sessions.offerTts(turn.id, pcm)) },
+            onTts = { pcm, _, _ -> playQueued(sessions.offerTts(turn.id, pcm)) },
             onFailure = { message -> handleSessionFailure(turn.id, message) },
         )
         sessions.add(turn.id, socket)
@@ -221,7 +221,7 @@ class InterpretationViewModel(application: Application) : AndroidViewModel(appli
         if (!sessions.contains(turnId)) return
         when (event) {
             AgentEvent.Ready -> if (sessions.markReady(turnId)) markRunningIfStarting()
-            is AgentEvent.DetectedLanguage -> Unit
+            is AgentEvent.DetectedLanguage, is AgentEvent.TtsSegment -> Unit
             AgentEvent.Finished -> {
                 captureCompletedTurn(turnId)
                 markTurnFinished(turnId)
