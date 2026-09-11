@@ -126,20 +126,29 @@ class FaceToFaceViewModel @JvmOverloads constructor(
     fun startAuto() = startWithCloudGrant(
         side = FaceToFaceSide.LEFT,
         canStart = { coordinator.state().mode == FaceToFaceMode.AUTO && coordinator.state().phase == FaceToFacePhase.IDLE },
-    ) { created -> applyTransition(coordinator.startAuto(created.turnId, created.socket)) }
+    ) { created -> applyTransition(coordinator.startAuto(created.turnId, created.socket, runtime.requiresAutoDetection())) }
 
-    fun pressRightAuto() = switchAuto(FaceToFaceSide.RIGHT)
+    // Azure AUTO determines the side only from each segment's AtStart LID result;
+    // legacy providers retain the explicit accessibility/takeover controls.
+    fun pressRightAuto() {
+        if (!runtime.requiresAutoDetection()) switchAuto(FaceToFaceSide.RIGHT)
+    }
 
-    fun releaseRightAuto() = switchAuto(FaceToFaceSide.LEFT)
+    fun releaseRightAuto() {
+        if (!runtime.requiresAutoDetection()) switchAuto(FaceToFaceSide.LEFT)
+    }
 
-    fun cancelRightAuto() = startWithCloudGrant(
-        side = FaceToFaceSide.LEFT,
-        canStart = {
-            val snapshot = coordinator.state()
-            snapshot.mode == FaceToFaceMode.AUTO && snapshot.phase == FaceToFacePhase.LISTENING &&
-                snapshot.captureActive && snapshot.activeSide == FaceToFaceSide.RIGHT
-        },
-    ) { created -> applyTransition(coordinator.cancelAutoTakeover(created.turnId, created.socket)) }
+    fun cancelRightAuto() {
+        if (runtime.requiresAutoDetection()) return
+        startWithCloudGrant(
+            side = FaceToFaceSide.LEFT,
+            canStart = {
+                val snapshot = coordinator.state()
+                snapshot.mode == FaceToFaceMode.AUTO && snapshot.phase == FaceToFacePhase.LISTENING &&
+                    snapshot.captureActive && snapshot.activeSide == FaceToFaceSide.RIGHT
+            },
+        ) { created -> applyTransition(coordinator.cancelAutoTakeover(created.turnId, created.socket)) }
+    }
 
     fun pauseAuto() = synchronized(actionLock) {
         invalidatePendingGrantOpen()
@@ -149,7 +158,7 @@ class FaceToFaceViewModel @JvmOverloads constructor(
     fun resumeAuto() = startWithCloudGrant(
         side = FaceToFaceSide.LEFT,
         canStart = { coordinator.state().mode == FaceToFaceMode.AUTO && coordinator.state().phase == FaceToFacePhase.PAUSED },
-    ) { created -> applyTransition(coordinator.resumeAuto(created.turnId, created.socket)) }
+    ) { created -> applyTransition(coordinator.resumeAuto(created.turnId, created.socket, runtime.requiresAutoDetection())) }
 
     fun stopAuto() = synchronized(actionLock) {
         localHistory.finishConversation()
@@ -265,7 +274,12 @@ class FaceToFaceViewModel @JvmOverloads constructor(
         val state = coordinator.state()
         val source = if (created.side == FaceToFaceSide.LEFT) state.leftLanguage else state.rightLanguage
         val target = if (created.side == FaceToFaceSide.LEFT) state.rightLanguage else state.leftLanguage
-        if (created.socket.start(source, target, grant)) return true
+        val candidates = if (coordinator.state().mode == FaceToFaceMode.AUTO && runtime.requiresAutoDetection()) {
+            listOf(state.leftLanguage, state.rightLanguage)
+        } else {
+            emptyList()
+        }
+        if (created.socket.start(source, target, grant, candidates)) return true
         fail("无法创建翻译会话。")
         return false
     }
@@ -281,10 +295,12 @@ class FaceToFaceViewModel @JvmOverloads constructor(
         // Socket/capture I/O can block (AudioRecord join, websocket teardown). Keeping it
         // under actionLock starves the playback pump between chunks and audibly stalls TTS.
         effectsExecutor.execute {
+            // Segment boundaries must stop the microphone before Finish so a frame from
+            // the next speaker cannot be queued on the direction that just completed.
+            if (transition.stopCapture) runtime.stopCapture()
             transition.cancelSessions.forEach { it.cancel() }
             transition.finishSessions.forEach { it.finish() }
-            if (transition.stopCapture) runtime.stopCapture()
-            if (transition.startCapture) startCapture()
+            if (transition.startCapture && coordinator.state().captureActive) startCapture()
         }
     }
 
@@ -322,25 +338,40 @@ class FaceToFaceViewModel @JvmOverloads constructor(
         if (!coordinator.containsTurn(turnId)) return
         when (event) {
             AgentEvent.Ready -> Unit
+            is AgentEvent.DetectedLanguage -> {
+                if (!coordinator.resolveAutoDirection(turnId, event.language)) {
+                    runtime.stopCapture()
+                }
+                publishState()
+            }
             AgentEvent.Finished -> {
-                captureCompletedTurn(turnId)
                 queuePlayback(coordinator.sessionFinished(turnId))
+                captureCompletedTurn(turnId)
+                continueAzureAutoAfterFinished()
                 closeCloudSessionIfDrained()
                 publishState()
             }
             is AgentEvent.Subtitle -> {
-                coordinator.updateSubtitle(turnId, event.kind.toSubtitleKind(), event.text)
-                publishState()
+                val updated = coordinator.updateSubtitle(turnId, event.kind.toSubtitleKind(), event.text)
+                if (updated && event.kind == AgentEvent.Subtitle.Kind.TRANSLATION_FINAL) {
+                    applyTransition(coordinator.completeAutoSegmentAfterFinalPair(turnId))
+                } else {
+                    publishState()
+                }
             }
             is AgentEvent.SessionTerminated -> terminateSession(event.reason)
             is AgentEvent.Error -> handleSessionFailure(turnId, "${event.code}: ${event.message}")
         }
     }
 
+    /** Finished is the durable boundary: never persist a partial or unmatched final pair. */
     private fun captureCompletedTurn(turnId: Long) {
         val turn = coordinator.state().turns.firstOrNull { it.id == turnId } ?: return
-        val sourceText = turn.sourceFinals.joinToString(" ").trim()
-        val translatedText = turn.translationFinals.joinToString(" ").trim()
+        if (!turn.finished) return
+        val completedCount = minOf(turn.sourceFinals.size, turn.translationFinals.size)
+        if (completedCount == 0) return
+        val sourceText = turn.sourceFinals.take(completedCount).joinToString(" ").trim()
+        val translatedText = turn.translationFinals.take(completedCount).joinToString(" ").trim()
         if (sourceText.isBlank() || translatedText.isBlank()) return
         val ownership = localTurnOwnership[turnId] ?: return
         localHistory.saveTurn(
@@ -352,6 +383,33 @@ class FaceToFaceViewModel @JvmOverloads constructor(
             System.currentTimeMillis(),
         )
         mutableState.value = mutableState.value.copy(localHistorySave = localHistory.state.value)
+    }
+
+    /**
+     * Azure universal v2 uses DetectAtAudioStart, so every completed phrase must get a
+     * fresh socket. Terminal predecessors stay in the coordinator queue for TTS, while
+     * only this new entry receives microphone frames.
+     */
+    private fun continueAzureAutoAfterFinished() {
+        if (!runtime.requiresAutoDetection()) return
+        val grant = cloudGrant ?: return
+        val snapshot = coordinator.state()
+        if (snapshot.mode != FaceToFaceMode.AUTO || snapshot.phase != FaceToFacePhase.PROCESSING ||
+            snapshot.captureActive || snapshot.activeTurnId != null
+        ) return
+        val created = createSession(FaceToFaceSide.LEFT)
+        val transition = coordinator.startNextAutoSegment(created.turnId, created.socket, requiresDetection = true)
+        if (!transition.accepted) {
+            created.socket.cancel()
+            return
+        }
+        if (!startSocket(created, grant)) {
+            created.socket.cancel()
+            // startSocket has already issued the terminal failure transition.
+            return
+        }
+        localHistory.bindTurn(created.turnId.toString())?.let { localTurnOwnership[created.turnId] = it }
+        applyTransition(transition)
     }
 
     private fun handleSessionFailure(turnId: Long, message: String) {

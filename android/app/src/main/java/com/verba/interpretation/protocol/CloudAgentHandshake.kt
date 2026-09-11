@@ -11,6 +11,7 @@ object CloudAgentHandshake {
         sourceLanguage: String,
         targetLanguage: String,
         settings: TranslationSettings = TranslationSettings(),
+        candidateLanguages: List<String> = emptyList(),
     ): StartMessage = StartMessage(
         sessionId = grant.sessionId,
         sourceLanguage = sourceLanguage,
@@ -18,5 +19,6 @@ object CloudAgentHandshake {
         userId = grant.userId,
         installId = grant.installId,
         settings = settings,
+        candidateLanguages = candidateLanguages,
     )
 }

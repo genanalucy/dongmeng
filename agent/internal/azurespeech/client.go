@@ -33,6 +33,24 @@ func LocaleForLanguage(language string) (string, bool) {
 	return locale, ok
 }
 
+func translationLanguage(language string) (string, bool) {
+	code, ok := map[string]string{"zh": "zh-Hans", "en": "en", "fr": "fr", "vi": "vi"}[language]
+	return code, ok
+}
+
+func protocolLanguage(locale string) (string, bool) {
+	language := strings.ToLower(strings.TrimSpace(locale))
+	if code, ok := map[string]string{
+		"zh": "zh", "zh-cn": "zh", "zh-hans": "zh",
+		"en": "en", "en-us": "en",
+		"fr": "fr", "fr-fr": "fr",
+		"vi": "vi", "vi-vn": "vi",
+	}[language]; ok {
+		return code, true
+	}
+	return "", false
+}
+
 func IsVoiceAllowed(voice string, candidateLanguages []string) bool {
 	for _, language := range candidateLanguages {
 		locale, ok := LocaleForLanguage(language)
@@ -92,7 +110,11 @@ func (c *client) Start(ctx context.Context, request ast.StartRequest, sink ast.E
 	if sink == nil {
 		return nil, errors.New("Azure Speech event sink is required")
 	}
-	endpoint, err := translationEndpoint(c.wsBase, from, to)
+	automatic := len(request.CandidateLanguages) != 0
+	if automatic && !validCandidates(request.CandidateLanguages) {
+		return nil, ErrUnavailable
+	}
+	endpoint, err := translationEndpoint(c.wsBase, from, to, request.CandidateLanguages)
 	if err != nil {
 		return nil, fmt.Errorf("build Azure endpoint: %w", err)
 	}
@@ -102,8 +124,20 @@ func (c *client) Start(ctx context.Context, request ast.StartRequest, sink ast.E
 	if err != nil {
 		return nil, fmt.Errorf("dial Azure Speech: %w", err)
 	}
-	session := newSession(ctx, conn, c, to, request.Voice, sink)
-	if err := session.send(ctx, websocket.MessageText, textFrameWithRequestID(session.requestID, "speech.config", string(speechConfigJSON))); err != nil {
+	session := newSession(ctx, conn, c, to, request.Voice, request.CandidateLanguages, sink)
+	config, err := legacySpeechConfig()
+	configPath := "speech.config"
+	if automatic {
+		// Universal v2 requires the context object itself, unlike legacy
+		// speech.config which wraps that object in {"context": ...}.
+		config, err = automaticSpeechContext(request.CandidateLanguages)
+		configPath = "speech.context"
+	}
+	if err != nil {
+		_ = session.Close()
+		return nil, fmt.Errorf("build Azure speech configuration: %w", err)
+	}
+	if err := session.send(ctx, websocket.MessageText, textFrameWithRequestID(session.requestID, configPath, config)); err != nil {
 		_ = session.Close()
 		return nil, fmt.Errorf("send Azure speech.config: %w", err)
 	}
@@ -112,20 +146,95 @@ func (c *client) Start(ctx context.Context, request ast.StartRequest, sink ast.E
 	return session, nil
 }
 
-func translationEndpoint(base, from, to string) (string, error) {
-	u, err := url.Parse(strings.TrimRight(base, "/") + "/speech/translation/cognitiveservices/v1")
+func translationEndpoint(base, from, to string, candidates []string) (string, error) {
+	path := "/speech/translation/cognitiveservices/v1"
+	translationTargets := []string{to}
+	if len(candidates) != 0 {
+		path = "/speech/universal/v2"
+		translationTargets = make([]string, 0, len(candidates))
+		for _, candidate := range candidates {
+			code, _ := translationLanguage(candidate)
+			translationTargets = append(translationTargets, code)
+		}
+	}
+	u, err := url.Parse(strings.TrimRight(base, "/") + path)
 	if err != nil {
 		return "", err
 	}
 	q := u.Query()
 	q.Set("from", from)
-	q.Set("to", to)
+	q.Set("to", strings.Join(translationTargets, ","))
 	q.Set("format", "simple")
+	if len(candidates) != 0 {
+		q.Set("scenario", "interactive")
+	}
 	u.RawQuery = q.Encode()
 	return u.String(), nil
 }
 
-var speechConfigJSON = []byte(`{"context":{"system":{"name":"dngmeng-agent","version":"1.0.0"},"os":{"platform":"linux"},"device":{"manufacturer":"dngmeng"}}}`)
+func validCandidates(candidates []string) bool {
+	if len(candidates) != 2 || candidates[0] == candidates[1] {
+		return false
+	}
+	for _, candidate := range candidates {
+		if _, ok := LocaleForLanguage(candidate); !ok {
+			return false
+		}
+	}
+	return true
+}
+
+func legacySpeechConfig() (string, error) {
+	context, err := speechContext(nil)
+	if err != nil {
+		return "", err
+	}
+	body, err := json.Marshal(map[string]any{"context": context})
+	return string(body), err
+}
+
+func automaticSpeechContext(candidates []string) (string, error) {
+	context, err := speechContext(candidates)
+	if err != nil {
+		return "", err
+	}
+	body, err := json.Marshal(context)
+	return string(body), err
+}
+
+func speechContext(candidates []string) (map[string]any, error) {
+	context := map[string]any{
+		"system": map[string]string{"name": "dngmeng-agent", "version": "1.0.0"},
+		"os":     map[string]string{"platform": "linux"},
+		"device": map[string]string{"manufacturer": "dngmeng"},
+	}
+	if len(candidates) != 0 {
+		locales := make([]string, 0, len(candidates))
+		targets := make([]string, 0, len(candidates))
+		for _, candidate := range candidates {
+			locale, _ := LocaleForLanguage(candidate)
+			target, _ := translationLanguage(candidate)
+			locales = append(locales, locale)
+			targets = append(targets, target)
+		}
+		context["languageId"] = map[string]any{
+			"languages": locales, "mode": "DetectAtAudioStart",
+			"onSuccess": map[string]string{"action": "Recognize"},
+			"onUnknown": map[string]string{"action": "None"}, "priority": "PrioritizeLatency",
+		}
+		context["translation"] = map[string]any{
+			"onPassthrough":   map[string]string{"action": "None"},
+			"onSuccess":       map[string]string{"action": "None"},
+			"output":          map[string]any{"includePassThroughResults": true, "interimResults": map[string]string{"mode": "Always"}},
+			"targetLanguages": targets,
+		}
+		context["phraseDetection"] = map[string]any{
+			"onInterim": map[string]string{"action": "Translate"},
+			"onSuccess": map[string]string{"action": "Translate"},
+		}
+	}
+	return context, nil
+}
 
 // Azure text frames carry `X-RequestId`/`Path` headers separated from the
 // JSON body by a blank line; a bare JSON payload is rejected with
@@ -177,6 +286,7 @@ type session struct {
 	conn       *websocket.Conn
 	client     *client
 	to, voice  string
+	candidates []string
 	requestID  string
 	sink       ast.EventSink
 	writes     chan writeRequest
@@ -187,19 +297,19 @@ type session struct {
 
 	// commandMu orders SendAudio and Finish, so no audio can be submitted after
 	// a completed Finish call.
-	commandMu                                    sync.Mutex
-	stateMu                                      sync.Mutex
+	commandMu                                               sync.Mutex
+	stateMu                                                 sync.Mutex
 	accepting, active, turnEnded, finishRequested, terminal bool
-	riffSent                                     bool
+	riffSent                                                bool
 	// eventMu serializes text, synchronous TTS, errors, and finished.
 	eventMu sync.Mutex
 	errMu   sync.Mutex
 	err     error
 }
 
-func newSession(parent context.Context, conn *websocket.Conn, c *client, to, voice string, sink ast.EventSink) *session {
+func newSession(parent context.Context, conn *websocket.Conn, c *client, to, voice string, candidates []string, sink ast.EventSink) *session {
 	ctx, cancel := context.WithCancel(parent)
-	s := &session{ctx: ctx, cancel: cancel, conn: conn, client: c, to: to, voice: voice, requestID: randomRequestID(), sink: sink, writes: make(chan writeRequest), accepting: true}
+	s := &session{ctx: ctx, cancel: cancel, conn: conn, client: c, to: to, voice: voice, candidates: append([]string(nil), candidates...), requestID: randomRequestID(), sink: sink, writes: make(chan writeRequest), accepting: true}
 	s.wg.Add(1)
 	go s.writeLoop()
 	return s
@@ -352,8 +462,14 @@ func (s *session) readLoop() {
 }
 
 type upstreamMessage struct {
-	Type string `json:"type"` // fallback for headerless (fake upstream) messages
-	Text string `json:"text"`
+	Type              string `json:"type"` // fallback for headerless (fake upstream) messages
+	Text              string `json:"text"`
+	Language          string `json:"Language"`
+	LanguageLower     string `json:"language"`
+	RecognitionStatus string `json:"RecognitionStatus"`
+	PrimaryLanguage   struct {
+		Language string `json:"Language"`
+	} `json:"PrimaryLanguage"`
 	// Azure production payloads use capitalized keys.
 	TextCapital         string            `json:"Text"`
 	Translations        map[string]string `json:"translations"`
@@ -364,7 +480,7 @@ type upstreamMessage struct {
 			Text     string `json:"Text"`
 		} `json:"Translations"`
 	} `json:"Translation"`
-	Signal              struct {
+	Signal struct {
 		Name string `json:"name"`
 	} `json:"signal"`
 }
@@ -377,11 +493,19 @@ func (m *upstreamMessage) text() string {
 }
 
 func (m *upstreamMessage) translation(locale string) string {
-	if v, ok := m.Translations[locale]; ok && v != "" {
-		return v
+	keys := []string{locale, strings.SplitN(locale, "-", 2)[0]}
+	if language, ok := protocolLanguage(locale); ok {
+		if code, ok := translationLanguage(language); ok {
+			keys = append(keys, code)
+		}
 	}
-	if v, ok := m.TranslationsCapital[locale]; ok && v != "" {
-		return v
+	for _, key := range keys {
+		if v, ok := m.Translations[key]; ok && v != "" {
+			return v
+		}
+		if v, ok := m.TranslationsCapital[key]; ok && v != "" {
+			return v
+		}
 	}
 	language := strings.SplitN(locale, "-", 2)[0]
 	for _, translation := range m.Translation.Translations {
@@ -390,6 +514,16 @@ func (m *upstreamMessage) translation(locale string) string {
 		}
 	}
 	return ""
+}
+
+func (m *upstreamMessage) detectedLanguage() string {
+	if m.PrimaryLanguage.Language != "" {
+		return m.PrimaryLanguage.Language
+	}
+	if m.Language != "" {
+		return m.Language
+	}
+	return m.LanguageLower
 }
 
 func (s *session) handleMessage(data []byte) error {
@@ -411,11 +545,28 @@ func (s *session) handleMessage(data []byte) error {
 	defer s.eventMu.Unlock()
 	switch kind {
 	case "translation.hypothesis":
+		// At-start LID is only authoritative with the final phrase. Suppress
+		// automatic hypotheses until the direction and playback route are safe.
+		if len(s.candidates) != 0 {
+			return nil
+		}
 		s.sink.Emit(ast.Event{Type: "source_partial", Message: message.text()})
 		s.sink.Emit(ast.Event{Type: "translation_partial", Message: message.translation(s.to)})
 	case "translation.result", "translation.phrase":
-		s.sink.Emit(ast.Event{Type: "source_final", Message: message.text()})
-		translation := message.translation(s.to)
+		if len(s.candidates) != 0 {
+			if err := s.resolveDetectedLanguage(&message); err != nil {
+				return err
+			}
+		}
+		source := strings.TrimSpace(message.text())
+		translation := strings.TrimSpace(message.translation(s.to))
+		// An automatic segment without a complete final pair cannot safely be
+		// routed or persisted. Make it terminal rather than waiting forever for
+		// a turn.end that might never arrive.
+		if len(s.candidates) != 0 && (source == "" || translation == "") {
+			return errors.New("Azure returned an empty automatic final pair")
+		}
+		s.sink.Emit(ast.Event{Type: "source_final", Message: source})
 		s.sink.Emit(ast.Event{Type: "translation_final", Message: translation})
 		if err := s.synthesizeLocked(translation); err != nil {
 			return azureTTSError{err}
@@ -434,6 +585,24 @@ func (s *session) handleMessage(data []byte) error {
 			s.finishedLocked()
 		}
 	}
+	return nil
+}
+
+func (s *session) resolveDetectedLanguage(message *upstreamMessage) error {
+	if status := strings.TrimSpace(message.RecognitionStatus); status != "" && !strings.EqualFold(status, "Success") {
+		return fmt.Errorf("Azure recognition status %q", status)
+	}
+	language, ok := protocolLanguage(message.detectedLanguage())
+	if !ok || (language != s.candidates[0] && language != s.candidates[1]) {
+		return errors.New("Azure did not return a candidate detected language")
+	}
+	target := s.candidates[0]
+	if language == target {
+		target = s.candidates[1]
+	}
+	targetLocale, _ := LocaleForLanguage(target)
+	s.to = targetLocale
+	s.sink.Emit(ast.Event{Type: "detected_language", Language: language})
 	return nil
 }
 

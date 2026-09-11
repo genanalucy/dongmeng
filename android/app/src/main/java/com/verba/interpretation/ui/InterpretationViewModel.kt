@@ -221,6 +221,7 @@ class InterpretationViewModel(application: Application) : AndroidViewModel(appli
         if (!sessions.contains(turnId)) return
         when (event) {
             AgentEvent.Ready -> if (sessions.markReady(turnId)) markRunningIfStarting()
+            is AgentEvent.DetectedLanguage -> Unit
             AgentEvent.Finished -> {
                 captureCompletedTurn(turnId)
                 markTurnFinished(turnId)

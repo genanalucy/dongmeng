@@ -83,6 +83,7 @@ type Event struct {
 	Code           string `json:"code,omitempty"`
 	Message        string `json:"message,omitempty"`
 	LogID          string `json:"logId,omitempty"`
+	Language       string `json:"language,omitempty"`
 	Binary         []byte `json:"-"`
 	UpstreamStatus int32  `json:"-"`
 }

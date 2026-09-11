@@ -215,10 +215,11 @@ type finishMessage struct {
 }
 
 type browserEvent struct {
-	Type    string `json:"type"`
-	Code    string `json:"code,omitempty"`
-	Message string `json:"message,omitempty"`
-	LogID   string `json:"logId,omitempty"`
+	Type     string `json:"type"`
+	Code     string `json:"code,omitempty"`
+	Message  string `json:"message,omitempty"`
+	LogID    string `json:"logId,omitempty"`
+	Language string `json:"language,omitempty"`
 }
 
 type outgoingMessage struct {
@@ -453,6 +454,15 @@ func (s *Server) runConnection(parent context.Context, conn *websocket.Conn, ses
 				return
 			}
 			emitMessage(outgoingMessage{binary: append([]byte(nil), event.Binary...)})
+		case "detected_language":
+			// Only Azure AUTO sessions may report LID, and its result must stay
+			// within the exact pair negotiated at start.
+			if len(start.CandidateLanguages) == 0 || !containsLanguage(start.CandidateLanguages, event.Language) {
+				upstreamTerminal = true
+				emit(browserEvent{Type: "error", Code: "TRANSLATION_PROTOCOL_ERROR", Message: "translation service returned an invalid detected language"})
+				return
+			}
+			emit(browserEvent{Type: event.Type, Language: event.Language, LogID: event.LogID})
 		case "source_partial", "source_final", "translation_partial", "translation_final":
 			if strings.TrimSpace(event.Message) == "" {
 				return
@@ -619,7 +629,8 @@ func parseStart(payload []byte, authRequired bool) (connectionStart, error) {
 		!isSupportedLanguage(message.SourceLanguage) || !isSupportedLanguage(message.TargetLanguage) ||
 		message.SourceLanguage == message.TargetLanguage || message.TargetAudioFormat != "pcm" || message.TargetAudioRate != 16000 ||
 		(message.Provider != "volcengine" && message.Provider != "azure") ||
-		(message.Voice != "" && !azurespeech.IsVoiceAllowed(message.Voice, []string{message.TargetLanguage})) ||
+		!validCandidateLanguages(message) ||
+		(message.Voice != "" && !azurespeech.IsVoiceAllowed(message.Voice, voiceLanguages(message))) ||
 		(authRequired && (strings.TrimSpace(message.UserID) == "" || strings.TrimSpace(message.InstallID) == "")) ||
 		(!authRequired && (message.UserID != "" || message.InstallID != "")) {
 		return connectionStart{}, errors.New("INVALID_START")
@@ -661,6 +672,38 @@ func sessionTokenFromRequest(r *http.Request) (string, bool) {
 func isSupportedLanguage(language string) bool {
 	_, ok := supportedLanguages[language]
 	return ok
+}
+
+func containsLanguage(languages []string, language string) bool {
+	for _, candidate := range languages {
+		if candidate == language {
+			return true
+		}
+	}
+	return false
+}
+
+func validCandidateLanguages(message startMessage) bool {
+	candidates := message.CandidateLanguages
+	if len(candidates) == 0 {
+		return true
+	}
+	if message.Provider != "azure" || len(candidates) != 2 || candidates[0] == candidates[1] ||
+		!isSupportedLanguage(candidates[0]) || !isSupportedLanguage(candidates[1]) {
+		return false
+	}
+	// AUTO detection is a two-party routing decision, never a general LID list.
+	// Keeping candidates equal to the negotiated pair prevents a third language
+	// from being detected and sent to an undefined physical-side route.
+	return (candidates[0] == message.SourceLanguage && candidates[1] == message.TargetLanguage) ||
+		(candidates[0] == message.TargetLanguage && candidates[1] == message.SourceLanguage)
+}
+
+func voiceLanguages(message startMessage) []string {
+	if len(message.CandidateLanguages) != 0 {
+		return message.CandidateLanguages
+	}
+	return []string{message.TargetLanguage}
 }
 
 func validateFinish(payload []byte) error {

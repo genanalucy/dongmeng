@@ -25,8 +25,16 @@ class AgentProtocolTest {
     @Test fun parsesAllTextEventKinds() {
         assertTrue(AgentProtocol.parse("{\"type\":\"ready\"}") is AgentEvent.Ready)
         assertEquals("hello", (AgentProtocol.parse("{\"type\":\"translation_final\",\"message\":\"hello\"}") as AgentEvent.Subtitle).text)
+        assertEquals("en", (AgentProtocol.parse("{\"type\":\"detected_language\",\"language\":\"en\"}") as AgentEvent.DetectedLanguage).language)
         assertTrue(AgentProtocol.parse("{\"type\":\"finished\"}") is AgentEvent.Finished)
         assertEquals("BAD", (AgentProtocol.parse("{\"type\":\"error\",\"code\":\"BAD\",\"message\":\"no\"}") as AgentEvent.Error).code)
+    }
+
+    @Test fun automaticStartCarriesExactlyTwoCandidates() {
+        val json = JSONObject(StartMessage("session-1", "zh", "en", candidateLanguages = listOf("zh", "en")).toJson())
+        assertEquals(2, json.getJSONArray("candidateLanguages").length())
+        assertEquals("zh", json.getJSONArray("candidateLanguages").getString(0))
+        assertEquals("en", json.getJSONArray("candidateLanguages").getString(1))
     }
 
     @Test fun parsesGovernanceCodesAsTypedTerminalEventsWithoutTrustingMessage() {

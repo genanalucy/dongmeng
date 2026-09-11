@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	neturl "net/url"
 	"strings"
 	"testing"
 	"time"
@@ -61,6 +62,118 @@ func TestVoiceAllowlistUsesTargetLanguageLocale(t *testing.T) {
 	}
 	if IsVoiceAllowed("en-US-JennyNeural", []string{"zh"}) {
 		t.Fatal("cross-language voice was accepted")
+	}
+}
+
+func TestAutomaticCandidateLanguagesUseAzureUniversalV2AndExposeDetectedLanguage(t *testing.T) {
+	endpoint, err := translationEndpoint("wss://japaneast.stt.speech.microsoft.com", "zh-CN", "en-US", []string{"zh", "en"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(endpoint, "/speech/universal/v2") {
+		t.Fatalf("automatic endpoint = %q", endpoint)
+	}
+	url, err := neturl.Parse(endpoint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := url.Query().Get("to"); got != "zh-Hans,en" {
+		t.Fatalf("automatic targets = %q", got)
+	}
+	config, err := automaticSpeechContext([]string{"zh", "en"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var context map[string]any
+	if err := json.Unmarshal([]byte(config), &context); err != nil {
+		t.Fatal(err)
+	}
+	if _, wrapped := context["context"]; wrapped {
+		t.Fatalf("speech.context must be the context object, got %s", config)
+	}
+	for _, wanted := range []string{"DetectAtAudioStart", "PrioritizeLatency", "Recognize", "zh-CN", "en-US", "zh-Hans"} {
+		if !strings.Contains(config, wanted) {
+			t.Fatalf("automatic context missing %q: %s", wanted, config)
+		}
+	}
+	if strings.Contains(config, "Continuous") {
+		t.Fatalf("automatic context must not enable Continuous LID: %s", config)
+	}
+	legacy, err := legacySpeechConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var legacyBody map[string]any
+	if err := json.Unmarshal([]byte(legacy), &legacyBody); err != nil || legacyBody["context"] == nil {
+		t.Fatalf("legacy speech.config must retain context wrapper: %s (%v)", legacy, err)
+	}
+
+	message := upstreamMessage{PrimaryLanguage: struct {
+		Language string `json:"Language"`
+	}{Language: "en-US"}}
+	if got := message.detectedLanguage(); got != "en-US" {
+		t.Fatalf("detectedLanguage() = %q, want en-US", got)
+	}
+}
+
+func TestAutomaticFinalEmitsDetectedLanguageBeforeFinalsAndTTS(t *testing.T) {
+	ws := newWSServer(t, func(ctx context.Context, conn *websocket.Conn) {
+		readContext(t, ctx, conn)
+		_ = conn.Write(ctx, websocket.MessageText, []byte(`{"type":"translation.hypothesis","Text":"hello","Translations":{"zh-Hans":"你好"}}`))
+		_ = conn.Write(ctx, websocket.MessageText, []byte(`{"type":"translation.phrase","Text":"hello","PrimaryLanguage":{"Language":"en-US"},"RecognitionStatus":"Success","Translations":{"zh-Hans":"你好"}}`))
+	})
+	defer ws.Close()
+	tts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte{0, 1}) }))
+	defer tts.Close()
+	sink := newRecordingSink()
+	client := &client{configured: true, key: "secret", region: "japaneast", wsBase: strings.Replace(ws.URL, "http://", "ws://", 1), ttsBase: tts.URL, httpClient: http.DefaultClient}
+	session, err := client.Start(context.Background(), ast.StartRequest{SourceLanguage: "zh", TargetLanguage: "en", CandidateLanguages: []string{"zh", "en"}}, sink)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close()
+	assertEvent(t, sink.next(t), "detected_language", "")
+	if event := sink.next(t); event.Type != "source_final" || event.Message != "hello" {
+		t.Fatalf("source final = %#v", event)
+	}
+	if event := sink.next(t); event.Type != "translation_final" || event.Message != "你好" {
+		t.Fatalf("translation final = %#v", event)
+	}
+	if event := sink.next(t); event.Type != "tts_audio" {
+		t.Fatalf("tts = %#v", event)
+	}
+}
+
+func TestAutomaticEmptyFinalPairFailsClosedWithoutFinalsOrTTS(t *testing.T) {
+	ws := newWSServer(t, func(ctx context.Context, conn *websocket.Conn) {
+		readContext(t, ctx, conn)
+		_ = conn.Write(ctx, websocket.MessageText, []byte(`{"type":"translation.phrase","Text":"hello","PrimaryLanguage":{"Language":"en-US"},"RecognitionStatus":"Success","Translations":{"zh-Hans":"   "}}`))
+		<-ctx.Done()
+	})
+	defer ws.Close()
+	ttsCalls := 0
+	tts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { ttsCalls++ }))
+	defer tts.Close()
+	sink := newRecordingSink()
+	client := &client{configured: true, key: "secret", region: "japaneast", wsBase: strings.Replace(ws.URL, "http://", "ws://", 1), ttsBase: tts.URL, httpClient: http.DefaultClient}
+	session, err := client.Start(context.Background(), ast.StartRequest{SourceLanguage: "zh", TargetLanguage: "en", CandidateLanguages: []string{"zh", "en"}}, sink)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close()
+	if event := sink.next(t); event.Type != "detected_language" {
+		t.Fatalf("first event = %#v", event)
+	}
+	if event := sink.next(t); event.Type != "error" || event.Code != "AZURE_SESSION_FAILED" {
+		t.Fatalf("terminal event = %#v", event)
+	}
+	if ttsCalls != 0 {
+		t.Fatalf("TTS calls = %d, want 0", ttsCalls)
+	}
+	select {
+	case event := <-sink.events:
+		t.Fatalf("unexpected event after empty final: %#v", event)
+	default:
 	}
 }
 
@@ -259,6 +372,29 @@ func newWSServer(t *testing.T, handler func(context.Context, *websocket.Conn)) *
 		handler(r.Context(), conn)
 	}))
 }
+func readContext(t *testing.T, ctx context.Context, conn *websocket.Conn) {
+	t.Helper()
+	typ, payload, err := conn.Read(ctx)
+	if err != nil || typ != websocket.MessageText {
+		t.Fatalf("speech.context frame = (%v, %q, %v)", typ, payload, err)
+	}
+	frame := string(payload)
+	if !strings.Contains(frame, "Path:speech.context") {
+		t.Fatalf("speech.context path missing: %q", frame)
+	}
+	bodyIndex := strings.Index(frame, headerBodySeparator)
+	if bodyIndex < 0 {
+		t.Fatalf("speech.context separator missing: %q", frame)
+	}
+	var body map[string]any
+	if err := json.Unmarshal([]byte(frame[bodyIndex+len(headerBodySeparator):]), &body); err != nil {
+		t.Fatalf("speech.context body: %v", err)
+	}
+	if _, wrapped := body["context"]; wrapped {
+		t.Fatalf("speech.context must not have context wrapper: %s", frame[bodyIndex+len(headerBodySeparator):])
+	}
+}
+
 func readConfig(t *testing.T, ctx context.Context, conn *websocket.Conn) {
 	t.Helper()
 	typ, _, err := conn.Read(ctx)

@@ -42,10 +42,16 @@ type fakeClient struct {
 }
 
 type emittingClient struct{}
+type detectedLanguageClient struct{ language string }
 type zeroTTSClient struct{}
 
 func (zeroTTSClient) Start(_ context.Context, _ ast.StartRequest, sink ast.EventSink) (ast.Session, error) {
 	sink.Emit(ast.Event{Type: "finished"})
+	return &fakeSession{}, nil
+}
+
+func (detectedLanguageClient) Start(_ context.Context, _ ast.StartRequest, sink ast.EventSink) (ast.Session, error) {
+	sink.Emit(ast.Event{Type: "detected_language", Language: "fr"})
 	return &fakeSession{}, nil
 }
 
@@ -608,7 +614,7 @@ func TestProviderStartFieldsAreParsedAndForwarded(t *testing.T) {
 	conn := dial(t, ts.URL, "http://localhost:5173")
 	defer conn.CloseNow()
 	start(t, conn, map[string]any{
-		"provider": "azure", "candidateLanguages": []string{"en", "fr"}, "voice": "en-US-JennyNeural",
+		"provider": "azure", "candidateLanguages": []string{"zh", "en"}, "voice": "en-US-JennyNeural",
 	})
 	if event := readEvent(t, conn); event.Type != "ready" {
 		t.Fatalf("event = %#v, want ready", event)
@@ -619,8 +625,8 @@ func TestProviderStartFieldsAreParsedAndForwarded(t *testing.T) {
 
 	payload, err := json.Marshal(map[string]any{
 		"type": "start", "sessionId": testSessionID, "mode": "s2s", "sourceLanguage": "zh", "targetLanguage": "en",
-		"targetAudioFormat": "pcm", "targetAudioRate": 16000, "provider": "volcengine",
-		"candidateLanguages": []string{"en", "fr"}, "voice": "en-US-GuyNeural",
+		"targetAudioFormat": "pcm", "targetAudioRate": 16000, "provider": "azure",
+		"candidateLanguages": []string{"zh", "en"}, "voice": "en-US-GuyNeural",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -629,7 +635,7 @@ func TestProviderStartFieldsAreParsedAndForwarded(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parseStart() error = %v", err)
 	}
-	if parsed.Provider != "volcengine" || !equalStrings(parsed.CandidateLanguages, []string{"en", "fr"}) || parsed.Voice != "en-US-GuyNeural" {
+	if parsed.Provider != "azure" || !equalStrings(parsed.CandidateLanguages, []string{"zh", "en"}) || parsed.Voice != "en-US-GuyNeural" {
 		t.Fatalf("parsed request = %#v", parsed.StartRequest)
 	}
 }
@@ -653,6 +659,13 @@ func TestAzureUnavailableProviderIsReported(t *testing.T) {
 func TestStartRejectsInvalidProviderAndVoice(t *testing.T) {
 	for _, updates := range []map[string]any{
 		{"provider": "unknown"},
+		{"provider": "volcengine", "candidateLanguages": []string{"zh", "en"}},
+		{"provider": "azure", "candidateLanguages": []string{"zh"}},
+		{"provider": "azure", "candidateLanguages": []string{"zh", "zh"}},
+		{"provider": "azure", "candidateLanguages": []string{"zh", "de"}},
+		{"provider": "azure", "candidateLanguages": []string{"zh", "en", "fr"}},
+		{"provider": "azure", "candidateLanguages": []string{"en", "fr"}},
+		{"provider": "volcengine", "candidateLanguages": []string{"zh"}},
 		{"voice": "zh-CN-XiaoxiaoNeural"},
 		{"voice": "zh-CN-NotAllowedNeural"},
 	} {
@@ -789,6 +802,30 @@ func TestQueueOverflow(t *testing.T) {
 		t.Fatalf("expected overflow, got %#v", event)
 	}
 	close(fake.session.blockAudio)
+}
+
+func TestDetectedLanguageMustBelongToAutomaticCandidateLanguages(t *testing.T) {
+	for _, testCase := range []struct {
+		name    string
+		updates map[string]any
+	}{
+		{name: "automatic candidate mismatch", updates: map[string]any{"provider": "azure", "candidateLanguages": []string{"zh", "en"}}},
+		{name: "non automatic", updates: map[string]any{}},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			ts := testHTTPServer(detectedLanguageClient{language: "fr"})
+			defer ts.Close()
+			conn := dial(t, ts.URL, "http://localhost:5173")
+			defer conn.CloseNow()
+			start(t, conn, testCase.updates)
+			if event := readEvent(t, conn); event.Type != "ready" {
+				t.Fatalf("first event = %#v, want ready", event)
+			}
+			if event := readEvent(t, conn); event.Type != "error" || event.Code != "TRANSLATION_PROTOCOL_ERROR" {
+				t.Fatalf("event = %#v, want protocol error", event)
+			}
+		})
+	}
 }
 
 func TestUpstreamEventsUseOneOrderedTextAndBinaryWriterAndSkipEmptySubtitles(t *testing.T) {

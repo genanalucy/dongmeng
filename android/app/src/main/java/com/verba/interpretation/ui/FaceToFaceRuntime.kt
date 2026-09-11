@@ -13,13 +13,14 @@ import com.verba.interpretation.protocol.TranslationSettingsStore
 
 /** Device/network boundary; the ViewModel and coordinator retain all lifecycle decisions. */
 interface FaceToFaceSocket {
-    fun start(source: String, target: String, grant: TranslationSessionGrant): Boolean
+    fun start(source: String, target: String, grant: TranslationSessionGrant, candidateLanguages: List<String> = emptyList()): Boolean
     fun sendAudio(packet: ByteArray): Boolean
     fun finish()
     fun cancel()
 }
 
 interface FaceToFaceRuntime {
+    fun requiresAutoDetection(): Boolean = false
     fun createSocket(onEvent: (AgentEvent) -> Unit, onTts: (ByteArray) -> Unit, onFailure: (String) -> Unit): FaceToFaceSocket
     fun startCapture(onPacket: (ByteArray) -> Unit, onError: (String) -> Unit, onLevel: (Float) -> Unit): CaptureResult
     fun stopCapture()
@@ -34,6 +35,9 @@ internal class AndroidFaceToFaceRuntime(application: Application) : FaceToFaceRu
     private val translationSettings = TranslationSettingsStore(application)
     private val player = TtsPlayer()
 
+    override fun requiresAutoDetection(): Boolean =
+        translationSettings.load().provider == com.verba.interpretation.protocol.TranslationProvider.AZURE
+
     override fun createSocket(onEvent: (AgentEvent) -> Unit, onTts: (ByteArray) -> Unit, onFailure: (String) -> Unit): FaceToFaceSocket {
         val socket = AgentSocket(
             endpointSettings = endpointSettings,
@@ -43,7 +47,8 @@ internal class AndroidFaceToFaceRuntime(application: Application) : FaceToFaceRu
             onFailure = onFailure,
         )
         return object : FaceToFaceSocket {
-            override fun start(source: String, target: String, grant: TranslationSessionGrant) = socket.start(source, target, grant)
+            override fun start(source: String, target: String, grant: TranslationSessionGrant, candidateLanguages: List<String>) =
+                socket.start(source, target, grant, candidateLanguages)
             override fun sendAudio(packet: ByteArray) = socket.sendAudio(packet)
             override fun finish() { socket.finish() }
             override fun cancel() { socket.cancel() }

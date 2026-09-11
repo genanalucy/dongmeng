@@ -226,6 +226,81 @@ class FaceToFaceViewModelTest {
         assertEquals(1, cloud.opens)
     }
 
+    @Test fun azureFinalPairStopsCaptureThenFinishedStartsFreshDetectedSegment() {
+        val azureRuntime = RecordingRuntime().also { it.autoDetection = true }
+        val azureVm = FaceToFaceViewModel(
+            Application(), azureRuntime,
+            TranslationSessionCoordinator(cloud, CoroutineScope(dispatcher), { 0L }, dispatcher),
+            LocalHistoryTurnSaver { "saved" }, playback, effects,
+        )
+        try {
+            azureVm.setMode(FaceToFaceMode.AUTO)
+            azureVm.startAuto()
+            dispatcher.scheduler.advanceUntilIdle()
+            effects.drain()
+            val first = azureRuntime.sockets.single()
+            assertEquals(listOf("zh", "en"), first.candidateLanguages)
+            first.event(AgentEvent.DetectedLanguage("en"))
+            first.source("hello")
+            first.translation("你好")
+            effects.drain()
+            assertEquals(1, first.finishes)
+            assertEquals(1, azureRuntime.captureStops)
+            first.tts(byteArrayOf(1, 0))
+            first.event(AgentEvent.Finished)
+            effects.drain()
+            assertEquals(2, azureRuntime.sockets.size)
+            assertEquals(FaceToFacePhase.LISTENING, azureVm.state.value.phase)
+            val second = azureRuntime.sockets.last()
+            second.event(AgentEvent.DetectedLanguage("zh"))
+            assertEquals(FaceToFaceSide.LEFT, azureVm.state.value.activeSide)
+            playback.drain()
+            assertEquals(listOf(PlaybackRoute.LEFT), azureRuntime.routes)
+
+            azureVm.stopAuto()
+            effects.drain()
+            second.event(AgentEvent.Finished)
+            effects.drain()
+            assertEquals(2, azureRuntime.sockets.size)
+        } finally {
+            azureVm.cancel()
+        }
+    }
+
+    @Test fun azurePauseResumeKeepsLidRoutingForTheNewSegment() {
+        val azureRuntime = RecordingRuntime().also { it.autoDetection = true }
+        val azureVm = FaceToFaceViewModel(
+            Application(), azureRuntime,
+            TranslationSessionCoordinator(cloud, CoroutineScope(dispatcher), { 0L }, dispatcher),
+            LocalHistoryTurnSaver { "saved" }, playback, effects,
+        )
+        try {
+            azureVm.setMode(FaceToFaceMode.AUTO)
+            azureVm.startAuto()
+            dispatcher.scheduler.advanceUntilIdle()
+            effects.drain()
+            azureVm.pauseAuto()
+            effects.drain()
+            azureVm.resumeAuto()
+            dispatcher.scheduler.advanceUntilIdle()
+            effects.drain()
+
+            val resumed = azureRuntime.sockets.last()
+            resumed.event(AgentEvent.DetectedLanguage("en"))
+            assertEquals(FaceToFaceSide.RIGHT, azureVm.state.value.activeSide)
+            assertEquals("zh", azureVm.state.value.turns.last().targetLanguage)
+            resumed.source("hello")
+            resumed.translation("你好")
+            effects.drain()
+            resumed.tts(byteArrayOf(1, 0))
+            resumed.event(AgentEvent.Finished)
+            playback.drain()
+            assertEquals(PlaybackRoute.LEFT, azureRuntime.routes.last())
+        } finally {
+            azureVm.cancel()
+        }
+    }
+
     @Test fun rejectedRestoreCancelsNewSocketWithoutRevivingPausedCapture() {
         start()
         vm.pressRightAuto()
@@ -335,10 +410,13 @@ private class RecordingRuntime : FaceToFaceRuntime {
     var captureStarts = 0
     var playbackStops = 0
     var drains = 0
+    var captureStops = 0
+    var autoDetection = false
     var packet: ((ByteArray) -> Unit)? = null
     val routes = mutableListOf<PlaybackRoute>()
     var onPlay: (ByteArray) -> Unit = {}
     var onStopCapture: () -> Unit = { packet = null }
+    override fun requiresAutoDetection() = autoDetection
     override fun createSocket(onEvent: (AgentEvent) -> Unit, onTts: (ByteArray) -> Unit, onFailure: (String) -> Unit) =
         RecordingSocket(onEvent, onTts) { onStart() }.also { sockets += it }
     override fun startCapture(onPacket: (ByteArray) -> Unit, onError: (String) -> Unit, onLevel: (Float) -> Unit): CaptureResult {
@@ -346,7 +424,7 @@ private class RecordingRuntime : FaceToFaceRuntime {
         packet = onPacket
         return CaptureResult.Started
     }
-    override fun stopCapture() { onStopCapture() }
+    override fun stopCapture() { captureStops++; onStopCapture() }
     override fun play(pcm: ByteArray, route: PlaybackRoute): Result<Unit> { routes += route; onPlay(pcm); return Result.success(Unit) }
     override fun awaitDrained(): Result<Unit> { drains++; return Result.success(Unit) }
     override fun stopPlayback() { playbackStops++ }
@@ -356,9 +434,11 @@ private class RecordingSocket(val event: (AgentEvent) -> Unit, val tts: (ByteArr
     var finishes = 0
     var cancels = 0
     var languages: Pair<String, String>? = null
+    var candidateLanguages: List<String> = emptyList()
     var sendSucceeds = true
-    override fun start(source: String, target: String, grant: TranslationSessionGrant): Boolean {
+    override fun start(source: String, target: String, grant: TranslationSessionGrant, candidateLanguages: List<String>): Boolean {
         languages = source to target
+        this.candidateLanguages = candidateLanguages
         onStart()
         return true
     }
@@ -366,6 +446,7 @@ private class RecordingSocket(val event: (AgentEvent) -> Unit, val tts: (ByteArr
     override fun finish() { finishes++ }
     override fun cancel() { cancels++ }
     fun source(text: String) = event(AgentEvent.Subtitle(AgentEvent.Subtitle.Kind.SOURCE_FINAL, text))
+    fun translation(text: String) = event(AgentEvent.Subtitle(AgentEvent.Subtitle.Kind.TRANSLATION_FINAL, text))
 }
 
 private class QueuedExecutor : AbstractExecutorService() {

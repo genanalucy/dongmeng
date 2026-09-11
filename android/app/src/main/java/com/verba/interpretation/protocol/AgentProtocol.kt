@@ -9,6 +9,7 @@ data class StartMessage(
     val userId: String? = null,
     val installId: String? = null,
     val settings: TranslationSettings = TranslationSettings(),
+    val candidateLanguages: List<String> = emptyList(),
 ) {
     fun toJson(): String = JSONObject()
         .put("type", "start").put("sessionId", sessionId).put("mode", "s2s")
@@ -18,6 +19,7 @@ data class StartMessage(
             userId?.let { put("userId", it) }
             installId?.let { put("installId", it) }
             if (settings.provider == TranslationProvider.AZURE) put("provider", settings.provider.storedValue)
+            if (candidateLanguages.isNotEmpty()) put("candidateLanguages", candidateLanguages)
             settings.voiceFor(targetLanguage).takeIf { it.isNotEmpty() }?.let { put("voice", it) }
         }.toString()
 }
@@ -30,6 +32,7 @@ enum class TranslationSessionEndReason {
 sealed interface AgentEvent {
     data object Ready : AgentEvent
     data object Finished : AgentEvent
+    data class DetectedLanguage(val language: String) : AgentEvent
     data class Subtitle(val kind: Kind, val text: String) : AgentEvent {
         enum class Kind { SOURCE_PARTIAL, SOURCE_FINAL, TRANSLATION_PARTIAL, TRANSLATION_FINAL }
     }
@@ -47,6 +50,7 @@ object AgentProtocol {
         return when (val type = json.optString("type")) {
             "ready" -> AgentEvent.Ready
             "finished" -> AgentEvent.Finished
+            "detected_language" -> detectedLanguage(json)
             "source_partial" -> subtitle(json, AgentEvent.Subtitle.Kind.SOURCE_PARTIAL)
             "source_final" -> subtitle(json, AgentEvent.Subtitle.Kind.SOURCE_FINAL)
             "translation_partial" -> subtitle(json, AgentEvent.Subtitle.Kind.TRANSLATION_PARTIAL)
@@ -54,6 +58,12 @@ object AgentProtocol {
             "error" -> error(json)
             else -> throw ProtocolException("不支持的 Agent 事件：$type")
         }
+    }
+
+    private fun detectedLanguage(json: JSONObject): AgentEvent.DetectedLanguage {
+        val language = json.optString("language").trim()
+        if (language.isEmpty()) throw ProtocolException("检测语言事件缺少 language。")
+        return AgentEvent.DetectedLanguage(language)
     }
 
     private fun subtitle(json: JSONObject, kind: AgentEvent.Subtitle.Kind): AgentEvent.Subtitle {
