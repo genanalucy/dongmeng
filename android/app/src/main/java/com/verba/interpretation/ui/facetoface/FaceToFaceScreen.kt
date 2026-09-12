@@ -70,7 +70,15 @@ internal fun FaceToFaceScreen(
                 viewModel.setView(view)
             },
             onSelectMode = { mode -> clearMicrophoneRequest(); viewModel.setMode(mode) },
-            onStartAuto = { requestMicrophone(MicrophonePermissionAction.ContinuousStart) },
+            onStartAuto = {
+                requestMicrophone(
+                    if (state.mode == FaceToFaceMode.MANUAL) {
+                        MicrophonePermissionAction.ContinuousEnable
+                    } else {
+                        MicrophonePermissionAction.ContinuousStart
+                    },
+                )
+            },
             onPauseAuto = viewModel::pauseAuto,
             onResumeAuto = { requestMicrophone(MicrophonePermissionAction.ContinuousResume) },
             onStopAuto = { clearMicrophoneRequest(); viewModel.stopAuto() },
@@ -144,6 +152,7 @@ private fun TranslationTopBar(
                 state = state,
                 onSelectMode = onSelectMode,
                 onStopAuto = onStopAuto,
+                onStartAutomaticMode = onStartAuto,
             )
         }
     }

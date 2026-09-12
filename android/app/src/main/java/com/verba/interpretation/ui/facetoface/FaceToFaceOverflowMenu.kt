@@ -34,9 +34,10 @@ internal fun FaceToFaceOverflowMenu(
     state: FaceToFaceState,
     onSelectMode: (FaceToFaceMode) -> Unit,
     onStopAuto: () -> Unit,
+    onStartAutomaticMode: () -> Unit,
+    showAutomaticMode: Boolean = EndpointSettingsAccessPolicy.automaticModeVisible(BuildConfig.DEBUG),
 ) {
     var expanded by remember { mutableStateOf(false) }
-    var automaticModeNoticeVisible by remember { mutableStateOf(false) }
     IconButton(
         onClick = { expanded = true },
         modifier = Modifier
@@ -79,22 +80,12 @@ internal fun FaceToFaceOverflowMenu(
             // 主操作（播放/暂停）在双麦之间；结束是次要会话操作，保留在更多菜单。
             DropdownMenuItem(text = { Text("结束连续翻译") }, onClick = { onStopAuto(); expanded = false })
         }
-        if (EndpointSettingsAccessPolicy.automaticModeVisible(BuildConfig.DEBUG)) {
+        if (showAutomaticMode) {
             HorizontalDivider()
             DropdownMenuItem(
                 text = { Text("自动模式") },
-                onClick = { automaticModeNoticeVisible = true; expanded = false },
+                onClick = { onStartAutomaticMode(); expanded = false },
             )
         }
-    }
-    if (automaticModeNoticeVisible) {
-        androidx.compose.material3.AlertDialog(
-            onDismissRequest = { automaticModeNoticeVisible = false },
-            title = { Text("自动模式") },
-            text = { Text("功能开发中") },
-            confirmButton = {
-                androidx.compose.material3.TextButton(onClick = { automaticModeNoticeVisible = false }) { Text("知道了") }
-            },
-        )
     }
 }
