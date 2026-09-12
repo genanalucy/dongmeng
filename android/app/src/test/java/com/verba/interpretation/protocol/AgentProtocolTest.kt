@@ -30,11 +30,20 @@ class AgentProtocolTest {
         assertEquals("BAD", (AgentProtocol.parse("{\"type\":\"error\",\"code\":\"BAD\",\"message\":\"no\"}") as AgentEvent.Error).code)
     }
 
-    @Test fun automaticStartCarriesExactlyTwoCandidates() {
-        val json = JSONObject(StartMessage("session-1", "zh", "en", candidateLanguages = listOf("zh", "en")).toJson())
+    @Test fun automaticAzureSnapshotCarriesMatchingProviderVoiceAndCandidates() {
+        val settings = TranslationSettings(provider = TranslationProvider.AZURE, voices = mapOf("en" to "en-US-JennyNeural"))
+        val json = JSONObject(StartMessage("session-1", "zh", "en", settings = settings, candidateLanguages = listOf("zh", "en")).toJson())
+        assertEquals("azure", json.getString("provider"))
+        assertEquals("en-US-JennyNeural", json.getString("voice"))
         assertEquals(2, json.getJSONArray("candidateLanguages").length())
         assertEquals("zh", json.getJSONArray("candidateLanguages").getString(0))
         assertEquals("en", json.getJSONArray("candidateLanguages").getString(1))
+    }
+
+    @Test fun nonAzureStartOmitsProviderAndCandidates() {
+        val json = JSONObject(StartMessage("session-1", "zh", "en", candidateLanguages = emptyList()).toJson())
+        assertTrue(!json.has("provider"))
+        assertTrue(!json.has("candidateLanguages"))
     }
 
     @Test fun parsesGovernanceCodesAsTypedTerminalEventsWithoutTrustingMessage() {

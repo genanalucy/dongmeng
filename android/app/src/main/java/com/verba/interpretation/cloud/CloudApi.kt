@@ -7,6 +7,7 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
 import java.io.IOException
+import java.util.concurrent.TimeUnit
 
 private val JSON = "application/json; charset=utf-8".toMediaType()
 
@@ -148,6 +149,12 @@ class CloudApi private constructor(
     private val installationIdStore: InstallationIdStore,
     private val client: OkHttpClient,
 ) : CloudTranslationSessionService, AccountApi, HistoryApi {
+    private val updateCheckClient = client.newBuilder()
+        .connectTimeout(10, TimeUnit.SECONDS)
+        .readTimeout(10, TimeUnit.SECONDS)
+        .callTimeout(10, TimeUnit.SECONDS)
+        .build()
+
     constructor(
         endpointSettings: CloudEndpointSettings,
         tokenStore: TokenStore,
@@ -165,7 +172,7 @@ class CloudApi private constructor(
     /** 拼图验证码：严格解析，任何字段缺失或几何越界都视为服务响应无效。 */
     /** Public OTA metadata is unsigned only in transit; the APK is pinned by SHA-256 before installation. */
     fun appUpdate(): CloudAppUpdate? {
-        val json = publicGet("app-update")
+        val json = publicGet("app-update", updateCheckClient)
         if (!json.optBoolean("available", false)) return null
         val versionCode = json.requiredInt("version_code")
         if (versionCode <= 0) throw CloudApiException("服务返回了无效的更新版本。")
@@ -446,7 +453,8 @@ class CloudApi private constructor(
     )
 
     private fun publicPost(path: String, body: JSONObject, expected: Int = 200): JSONObject = execute(path, body, null, expected)
-    private fun publicGet(path: String): JSONObject = execute(path, null, null, 200, "GET")
+    private fun publicGet(path: String, requestClient: OkHttpClient = client): JSONObject =
+        execute(path, null, null, 200, "GET", clientOverride = requestClient)
     private fun authorized(path: String, query: Map<String, String> = emptyMap()): JSONObject = authorizedRequest(path, null, "GET", 200, query)
     private fun authorizedPost(path: String, body: JSONObject, expected: Int = 200): JSONObject = authorizedRequest(path, body, "POST", expected)
     private fun authorizedPostNoContent(path: String, body: JSONObject, expected: Int) { authorizedRequestNoContent(path, body, expected) }
@@ -484,14 +492,14 @@ class CloudApi private constructor(
 
     private fun refresh(refreshToken: String): AuthTokens = parseTokens(publicPost("auth/refresh", JSONObject().put("refresh_token", refreshToken)))
 
-    private fun execute(path: String, body: JSONObject?, accessToken: String?, expected: Int, method: String = "POST", query: Map<String, String> = emptyMap(), headers: Map<String, String> = emptyMap()): JSONObject {
+    private fun execute(path: String, body: JSONObject?, accessToken: String?, expected: Int, method: String = "POST", query: Map<String, String> = emptyMap(), headers: Map<String, String> = emptyMap(), clientOverride: OkHttpClient = client): JSONObject {
         val url = endpointProvider().toHttpUrl().newBuilder().addPathSegments("api/v1/$path").apply { query.forEach(::addQueryParameter) }.build()
         val request = Request.Builder().url(url).apply {
             if (accessToken != null) header("Authorization", "Bearer $accessToken")
             headers.forEach(::header)
             if (method == "GET") get() else method(method, (body ?: JSONObject()).toString().toRequestBody(JSON))
         }.build()
-        client.newCall(request).execute().use { response ->
+        clientOverride.newCall(request).execute().use { response ->
             val payload = response.body?.string().orEmpty()
             if (response.code != expected) throw CloudApiException(errorMessage(payload, response.code), response.code)
             return try { JSONObject(payload) } catch (_: Exception) { throw CloudApiException("服务返回了无效响应。", response.code) }

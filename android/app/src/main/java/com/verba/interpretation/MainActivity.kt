@@ -169,6 +169,7 @@ import com.verba.interpretation.ui.TranslationLanguage
 import com.verba.interpretation.ui.TranslationSettingsScreen
 import com.verba.interpretation.update.AppUpdateState
 import com.verba.interpretation.update.AppUpdateViewModel
+import com.verba.interpretation.update.ReadyToInstallLaunchGate
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -234,13 +235,14 @@ private fun InterpretationApp(
     val accountState by accountViewModel.state.collectAsStateWithLifecycle()
     val updateState by appUpdateViewModel.state.collectAsStateWithLifecycle()
     val automaticUpdatePrompt by appUpdateViewModel.automaticPrompt.collectAsStateWithLifecycle()
+    val updateInstallGate = remember { ReadyToInstallLaunchGate() }
     val updateDownloading = updateState is AppUpdateState.Downloading
     LaunchedEffect(Unit) {
         appUpdateViewModel.checkAutomatically()
     }
     LaunchedEffect(updateState) {
-        if (updateState is AppUpdateState.ReadyToInstall) {
-            onInstallUpdate(appUpdateViewModel.installerIntent((updateState as AppUpdateState.ReadyToInstall).apkUri))
+        updateInstallGate.consume(updateState) { apkUri ->
+            onInstallUpdate(appUpdateViewModel.installerIntent(apkUri))
         }
     }
     val navigationMode = accountState.navigationMode
@@ -1027,11 +1029,6 @@ private fun AppAboutPage(
     onInstallUpdate: (android.content.Intent) -> Unit,
 ) {
     val state by updateViewModel.state.collectAsStateWithLifecycle()
-    LaunchedEffect(state) {
-        if (state is AppUpdateState.ReadyToInstall) {
-            onInstallUpdate(updateViewModel.installerIntent((state as AppUpdateState.ReadyToInstall).apkUri))
-        }
-    }
     AppAboutScreen(
         state = state,
         onBack = onBack,

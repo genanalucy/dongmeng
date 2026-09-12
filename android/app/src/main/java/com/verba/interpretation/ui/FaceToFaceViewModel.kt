@@ -123,26 +123,26 @@ class FaceToFaceViewModel @JvmOverloads constructor(
         startAuto()
     }
 
-    fun startAuto() {
-        synchronized(actionLock) { coordinator.setAutomaticLanguageDetection(runtime.requiresAutoDetection()) }
-        startWithCloudGrant(
-            side = FaceToFaceSide.LEFT,
-            canStart = { coordinator.state().mode == FaceToFaceMode.AUTO && coordinator.state().phase == FaceToFacePhase.IDLE },
-        ) { created -> applyTransition(coordinator.startAuto(created.turnId, created.socket, runtime.requiresAutoDetection(), runtime.requiresAutoDetection())) }
+    fun startAuto() = startWithCloudGrant(
+        side = FaceToFaceSide.LEFT,
+        canStart = { coordinator.state().mode == FaceToFaceMode.AUTO && coordinator.state().phase == FaceToFacePhase.IDLE },
+    ) { created ->
+        val automaticDetection = created.socket.automaticLanguageDetectionSupported
+        applyTransition(coordinator.startAuto(created.turnId, created.socket, automaticDetection, automaticDetection))
     }
 
     // Azure AUTO determines the side only from each segment's AtStart LID result;
     // legacy providers retain the explicit accessibility/takeover controls.
     fun pressRightAuto() {
-        if (!runtime.requiresAutoDetection()) switchAuto(FaceToFaceSide.RIGHT)
+        if (!coordinator.state().automaticLanguageDetection) switchAuto(FaceToFaceSide.RIGHT)
     }
 
     fun releaseRightAuto() {
-        if (!runtime.requiresAutoDetection()) switchAuto(FaceToFaceSide.LEFT)
+        if (!coordinator.state().automaticLanguageDetection) switchAuto(FaceToFaceSide.LEFT)
     }
 
     fun cancelRightAuto() {
-        if (runtime.requiresAutoDetection()) return
+        if (coordinator.state().automaticLanguageDetection) return
         startWithCloudGrant(
             side = FaceToFaceSide.LEFT,
             canStart = {
@@ -161,7 +161,10 @@ class FaceToFaceViewModel @JvmOverloads constructor(
     fun resumeAuto() = startWithCloudGrant(
         side = FaceToFaceSide.LEFT,
         canStart = { coordinator.state().mode == FaceToFaceMode.AUTO && coordinator.state().phase == FaceToFacePhase.PAUSED },
-    ) { created -> applyTransition(coordinator.resumeAuto(created.turnId, created.socket, runtime.requiresAutoDetection(), runtime.requiresAutoDetection())) }
+    ) { created ->
+        val automaticDetection = created.socket.automaticLanguageDetectionSupported
+        applyTransition(coordinator.resumeAuto(created.turnId, created.socket, automaticDetection, automaticDetection))
+    }
 
     fun stopAuto() = synchronized(actionLock) {
         localHistory.finishConversation()
@@ -289,7 +292,7 @@ class FaceToFaceViewModel @JvmOverloads constructor(
         val state = coordinator.state()
         val source = if (created.side == FaceToFaceSide.LEFT) state.leftLanguage else state.rightLanguage
         val target = if (created.side == FaceToFaceSide.LEFT) state.rightLanguage else state.leftLanguage
-        val candidates = if (coordinator.state().mode == FaceToFaceMode.AUTO && runtime.requiresAutoDetection()) {
+        val candidates = if (coordinator.state().mode == FaceToFaceMode.AUTO && created.socket.automaticLanguageDetectionSupported) {
             listOf(state.leftLanguage, state.rightLanguage)
         } else {
             emptyList()

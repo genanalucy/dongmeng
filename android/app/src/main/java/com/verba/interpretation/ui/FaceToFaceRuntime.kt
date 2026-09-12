@@ -13,6 +13,9 @@ import com.verba.interpretation.protocol.TranslationSettingsStore
 
 /** Device/network boundary; the ViewModel and coordinator retain all lifecycle decisions. */
 interface FaceToFaceSocket {
+    /** Fixed when this transport is created; never reread settings while starting it. */
+    val automaticLanguageDetectionSupported: Boolean get() = false
+
     fun start(source: String, target: String, grant: TranslationSessionGrant, candidateLanguages: List<String> = emptyList()): Boolean
     fun sendAudio(packet: ByteArray): Boolean
     fun finish()
@@ -20,7 +23,6 @@ interface FaceToFaceSocket {
 }
 
 interface FaceToFaceRuntime {
-    fun requiresAutoDetection(): Boolean = false
     fun createSocket(onEvent: (AgentEvent) -> Unit, onTts: (ByteArray, Long?, String?) -> Unit, onFailure: (String) -> Unit): FaceToFaceSocket
     fun startCapture(onPacket: (ByteArray) -> Unit, onError: (String) -> Unit, onLevel: (Float) -> Unit): CaptureResult
     fun stopCapture()
@@ -35,18 +37,21 @@ internal class AndroidFaceToFaceRuntime(application: Application) : FaceToFaceRu
     private val translationSettings = TranslationSettingsStore(application)
     private val player = TtsPlayer()
 
-    override fun requiresAutoDetection(): Boolean =
-        translationSettings.load().provider == com.verba.interpretation.protocol.TranslationProvider.AZURE
-
     override fun createSocket(onEvent: (AgentEvent) -> Unit, onTts: (ByteArray, Long?, String?) -> Unit, onFailure: (String) -> Unit): FaceToFaceSocket {
+        // A face-to-face transport must use one settings image for both automatic LID
+        // and its start payload. Reading the store again in AgentSocket can race a setting change.
+        val settingsSnapshot = translationSettings.load()
         val socket = AgentSocket(
             endpointSettings = endpointSettings,
-            translationSettings = translationSettings::load,
+            translationSettings = { settingsSnapshot },
             onEvent = onEvent,
             onTts = onTts,
             onFailure = onFailure,
         )
         return object : FaceToFaceSocket {
+            override val automaticLanguageDetectionSupported =
+                settingsSnapshot.provider == com.verba.interpretation.protocol.TranslationProvider.AZURE
+
             override fun start(source: String, target: String, grant: TranslationSessionGrant, candidateLanguages: List<String>) =
                 socket.start(source, target, grant, candidateLanguages)
             override fun sendAudio(packet: ByteArray) = socket.sendAudio(packet)

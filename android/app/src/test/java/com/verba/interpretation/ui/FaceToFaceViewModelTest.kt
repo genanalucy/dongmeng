@@ -226,6 +226,29 @@ class FaceToFaceViewModelTest {
         assertEquals(1, cloud.opens)
     }
 
+    @Test fun automaticStartUsesTheSocketSettingsSnapshotForCandidates() {
+        runtime.autoDetection = true
+        // Simulates the store changing after socket construction but before start().
+        runtime.onStart = { runtime.autoDetection = false }
+        vm.startAuto()
+        dispatcher.scheduler.advanceUntilIdle()
+        effects.drain()
+
+        val socket = runtime.sockets.single()
+        assertTrue(socket.automaticLanguageDetectionSupported)
+        assertEquals(listOf("zh", "en"), socket.candidateLanguages)
+    }
+
+    @Test fun nonAzureAutomaticStartSendsNoCandidates() {
+        runtime.autoDetection = false
+        vm.startAuto()
+        dispatcher.scheduler.advanceUntilIdle()
+        effects.drain()
+
+        assertFalse(runtime.sockets.single().automaticLanguageDetectionSupported)
+        assertTrue(runtime.sockets.single().candidateLanguages.isEmpty())
+    }
+
     @Test fun azureFinalPairsShareOneSocketAndEachDetectedSegmentRoutesItsOwnTurn() {
         val azureRuntime = RecordingRuntime().also { it.autoDetection = true }
         val azureVm = FaceToFaceViewModel(
@@ -465,9 +488,8 @@ private class RecordingRuntime : FaceToFaceRuntime {
     val routes = mutableListOf<PlaybackRoute>()
     var onPlay: (ByteArray) -> Unit = {}
     var onStopCapture: () -> Unit = { packet = null }
-    override fun requiresAutoDetection() = autoDetection
     override fun createSocket(onEvent: (AgentEvent) -> Unit, onTts: (ByteArray, Long?, String?) -> Unit, onFailure: (String) -> Unit) =
-        RecordingSocket(onEvent, onTts) { onStart() }.also { sockets += it }
+        RecordingSocket(onEvent, onTts, autoDetection) { onStart() }.also { sockets += it }
     override fun startCapture(onPacket: (ByteArray) -> Unit, onError: (String) -> Unit, onLevel: (Float) -> Unit): CaptureResult {
         captureStarts++
         packet = onPacket
@@ -479,7 +501,12 @@ private class RecordingRuntime : FaceToFaceRuntime {
     override fun stopPlayback() { playbackStops++ }
 }
 
-private class RecordingSocket(val event: (AgentEvent) -> Unit, private val onTts: (ByteArray, Long?, String?) -> Unit, val onStart: () -> Unit) : FaceToFaceSocket {
+private class RecordingSocket(
+    val event: (AgentEvent) -> Unit,
+    private val onTts: (ByteArray, Long?, String?) -> Unit,
+    override val automaticLanguageDetectionSupported: Boolean,
+    val onStart: () -> Unit,
+) : FaceToFaceSocket {
     var finishes = 0
     var cancels = 0
     var languages: Pair<String, String>? = null

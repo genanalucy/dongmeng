@@ -1,6 +1,7 @@
 package com.verba.interpretation.update
 
 import android.app.Application
+import com.verba.interpretation.cloud.CloudApiException
 import com.verba.interpretation.BuildConfig
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -59,6 +60,33 @@ class AppUpdateViewModelTest {
         advanceUntilIdle()
 
         assertEquals(AppUpdateState.Available(testUpdate(false)), viewModel.state.value)
+    }
+
+    @Test fun manualCheckMapsTimeoutToRecoverableFailure() = runTest(dispatcher) {
+        val viewModel = AppUpdateViewModel(
+            Application(),
+            service = object : AppUpdateService {
+                override fun checkForUpdate(): AppUpdateInfo? = throw CloudApiException("timeout")
+            },
+            promptPreferences = RecordingPreferences(),
+            dispatcher = dispatcher,
+        )
+
+        viewModel.check()
+        advanceUntilIdle()
+
+        assertEquals(AppUpdateState.Failed("暂时无法检查更新，请确认网络后重试。"), viewModel.state.value)
+    }
+
+    @Test fun readyToInstallLaunchIsConsumedOnlyOnce() {
+        val gate = ReadyToInstallLaunchGate()
+        val versionCode = testUpdate(false).versionCode
+        var launches = 0
+
+        gate.consume(versionCode) { launches++ }
+        gate.consume(versionCode) { launches++ }
+
+        assertEquals(1, launches)
     }
 
     private fun viewModel(preferences: RecordingPreferences, forceUpdate: Boolean) = AppUpdateViewModel(
