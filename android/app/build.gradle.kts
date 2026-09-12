@@ -26,7 +26,7 @@ android {
         targetSdk = 36
         // versionName is the human-facing China Standard Time timestamp: YYYYMMDD.HHmm.
         // Android versionCode remains a compact monotonic integer (max 2,100,000,000).
-        versionCode = 15
+        versionCode = 16
         versionName = ZonedDateTime.now(ZoneId.of("Asia/Shanghai"))
             .format(DateTimeFormatter.ofPattern("yyyyMMdd.HHmm"))
 
