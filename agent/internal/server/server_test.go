@@ -46,6 +46,18 @@ type detectedLanguageClient struct{ language string }
 type zeroTTSClient struct{}
 type interleavedTTSClient struct{}
 type ttsPreludeClient struct{}
+type diagnosticStartClient struct{ err error }
+
+type diagnosticEventClient struct{}
+
+func (c diagnosticStartClient) Start(context.Context, ast.StartRequest, ast.EventSink) (ast.Session, error) {
+	return nil, c.err
+}
+
+func (diagnosticEventClient) Start(_ context.Context, _ ast.StartRequest, sink ast.EventSink) (ast.Session, error) {
+	sink.Emit(ast.Event{Type: "error", Code: "AZURE_SESSION_FAILED", Message: "translation session failed", Diagnostic: "azure_ws_close_1008_reason_present"})
+	return &fakeSession{}, nil
+}
 
 func (zeroTTSClient) Start(_ context.Context, _ ast.StartRequest, sink ast.EventSink) (ast.Session, error) {
 	sink.Emit(ast.Event{Type: "finished"})
@@ -134,6 +146,10 @@ func (f *fakeSession) Close() error {
 
 func testHTTPServer(client ast.Client) *httptest.Server {
 	return httptest.NewServer(New(Options{ASTClient: client}).Handler())
+}
+
+func testHTTPServerWithLogger(client ast.Client, logger *slog.Logger) *httptest.Server {
+	return httptest.NewServer(New(Options{ASTClient: client, Logger: logger}).Handler())
 }
 
 func testAuthorizedHTTPServer(t *testing.T, client ast.Client, logger *slog.Logger) *httptest.Server {
@@ -257,6 +273,53 @@ func TestHealthCORSAllowsOnlyConfiguredOrigins(t *testing.T) {
 		response.Body.Close()
 	}
 }
+
+func TestAzureDiagnosticsStayServerOnlyAndKeepBrowserErrorContract(t *testing.T) {
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&logs, nil))
+	startErr := diagnosticStartError{status: http.StatusForbidden, diagnostic: "azure_handshake_http"}
+	ts := testHTTPServerWithLogger(diagnosticStartClient{err: startErr}, logger)
+	defer ts.Close()
+	conn := dial(t, ts.URL, "http://localhost:5173")
+	defer conn.CloseNow()
+	start(t, conn, nil)
+	event := readEvent(t, conn)
+	if event.Code != "VOLCENGINE_CONNECT_FAILED" || event.Message != "translation service is unavailable" {
+		t.Fatalf("browser error contract = %#v", event)
+	}
+	if strings.Contains(event.Message, "azure_") || strings.Contains(event.Message, "403") {
+		t.Fatalf("browser error leaked diagnostic: %#v", event)
+	}
+	output := logs.String()
+	if !strings.Contains(output, `"upstream_status":403`) || !strings.Contains(output, `"upstream_diagnostic":"azure_handshake_http"`) {
+		t.Fatalf("safe handshake diagnostics absent from logs: %s", output)
+	}
+
+	logs.Reset()
+	ts = testHTTPServerWithLogger(diagnosticEventClient{}, logger)
+	defer ts.Close()
+	conn = dial(t, ts.URL, "http://localhost:5173")
+	defer conn.CloseNow()
+	start(t, conn, nil)
+	if event = readEvent(t, conn); event.Type != "ready" {
+		t.Fatalf("ready event = %#v", event)
+	}
+	if event = readEvent(t, conn); event.Type != "error" || event.Code != "AZURE_SESSION_FAILED" || event.Message != "translation session failed" {
+		t.Fatalf("browser event = %#v", event)
+	}
+	if !strings.Contains(logs.String(), `"upstream_diagnostic":"azure_ws_close_1008_reason_present"`) {
+		t.Fatalf("safe close diagnostic absent from logs: %s", logs.String())
+	}
+}
+
+type diagnosticStartError struct {
+	status     int
+	diagnostic string
+}
+
+func (e diagnosticStartError) Error() string         { return "provider failure" }
+func (e diagnosticStartError) UpstreamStatus() int32 { return int32(e.status) }
+func (e diagnosticStartError) Diagnostic() string    { return e.diagnostic }
 
 func TestOriginValidation(t *testing.T) {
 	ts := testHTTPServer(&fakeClient{})

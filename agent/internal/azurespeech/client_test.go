@@ -3,6 +3,7 @@ package azurespeech
 import (
 	"context"
 	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -121,6 +122,124 @@ func TestAutomaticCandidateLanguagesUseAzureUniversalV2AndExposeDetectedLanguage
 	}{Language: "en-US"}}
 	if got := message.detectedLanguage(); got != "en-US" {
 		t.Fatalf("detectedLanguage() = %q, want en-US", got)
+	}
+}
+
+func TestAutomaticSessionUsesConnectionIDAndSeparateRIFFBeforePCM(t *testing.T) {
+	type sequence struct {
+		requestIDs []string
+		riff       []byte
+		pcm        []byte
+	}
+	sequences := make(chan sequence, 1)
+	var handshakeID string
+	ws := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		handshakeID = r.Header.Get("X-ConnectionId")
+		conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
+		if err != nil {
+			t.Errorf("Accept: %v", err)
+			return
+		}
+		defer conn.CloseNow()
+		frames := make([][]byte, 4)
+		for index := range frames {
+			typ, payload, err := conn.Read(r.Context())
+			if err != nil {
+				t.Errorf("frame %d read: %v", index, err)
+				return
+			}
+			if (index < 2 && typ != websocket.MessageText) || (index >= 2 && typ != websocket.MessageBinary) {
+				t.Errorf("frame %d type = %v", index, typ)
+				return
+			}
+			frames[index] = payload
+		}
+		configPath, _ := splitMessage(frames[0])
+		contextPath, _ := splitMessage(frames[1])
+		if configPath != "speech.config" || contextPath != "speech.context" {
+			t.Errorf("paths = %q, %q", configPath, contextPath)
+			return
+		}
+		requestIDs := []string{
+			headerValue(t, string(frames[0]), "X-RequestId"),
+			headerValue(t, string(frames[1]), "X-RequestId"),
+		}
+		for _, frame := range frames[2:] {
+			headerLength := int(binary.BigEndian.Uint16(frame[:2]))
+			requestIDs = append(requestIDs, headerValue(t, string(frame[2:2+headerLength]), "X-RequestId"))
+		}
+		riffHeaderLength := int(binary.BigEndian.Uint16(frames[2][:2]))
+		pcmHeaderLength := int(binary.BigEndian.Uint16(frames[3][:2]))
+		sequences <- sequence{requestIDs: requestIDs, riff: frames[2][2+riffHeaderLength:], pcm: frames[3][2+pcmHeaderLength:]}
+		<-r.Context().Done()
+	}))
+	defer ws.Close()
+	sink := newRecordingSink()
+	client := &client{configured: true, key: "secret", region: "japaneast", wsBase: strings.Replace(ws.URL, "http://", "ws://", 1), httpClient: http.DefaultClient}
+	session, err := client.Start(context.Background(), ast.StartRequest{SourceLanguage: "zh", TargetLanguage: "en", CandidateLanguages: []string{"zh", "en"}}, sink)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close()
+	if err := session.SendAudio(context.Background(), []byte{1, 2, 3, 4}); err != nil {
+		t.Fatal(err)
+	}
+	got := <-sequences
+	if len(handshakeID) != 32 {
+		t.Fatalf("X-ConnectionId length = %d, want 32", len(handshakeID))
+	}
+	if _, err := hex.DecodeString(handshakeID); err != nil {
+		t.Fatalf("X-ConnectionId must be hexadecimal: %v", err)
+	}
+	for _, requestID := range got.requestIDs[1:] {
+		if requestID != got.requestIDs[0] {
+			t.Fatalf("frame request IDs = %q", got.requestIDs)
+		}
+	}
+	if len(got.riff) != 44 || string(got.riff[:4]) != "RIFF" {
+		t.Fatalf("standalone RIFF = %v", got.riff)
+	}
+	if string(got.pcm) != string([]byte{1, 2, 3, 4}) {
+		t.Fatalf("PCM frame = %v", got.pcm)
+	}
+}
+
+func TestAzureDialErrorClassifiesHTTPStatusWithoutBody(t *testing.T) {
+	err := azureDialError(&http.Response{StatusCode: http.StatusForbidden}, errors.New("body contains secret"))
+	if status := ast.ErrorUpstreamStatus(err); status != http.StatusForbidden {
+		t.Fatalf("status = %d", status)
+	}
+	if diagnostic := ast.ErrorDiagnostic(err); diagnostic != "azure_handshake_http" {
+		t.Fatalf("diagnostic = %q", diagnostic)
+	}
+	if strings.Contains(err.Error(), "secret") {
+		t.Fatalf("body leaked into error: %q", err)
+	}
+}
+
+func TestAzurePathErrorMapsToGenericSessionFailure(t *testing.T) {
+	ws := newWSServer(t, func(ctx context.Context, conn *websocket.Conn) {
+		readConfig(t, ctx, conn)
+		_ = conn.Write(ctx, websocket.MessageText, []byte("X-RequestId:test\r\nPath:error\r\n\r\n{\"sensitive\":\"transcript\"}"))
+		<-ctx.Done()
+	})
+	defer ws.Close()
+	sink := newRecordingSink()
+	session := startTestSession(t, ws.URL, "", sink)
+	defer session.Close()
+	event := sink.next(t)
+	if event.Type != "error" || event.Code != "AZURE_SESSION_FAILED" || event.Message != "translation session failed" || event.Diagnostic != "azure_path_error" {
+		t.Fatalf("event = %#v", event)
+	}
+}
+
+func TestAzureReadErrorClassifiesCloseWithoutReason(t *testing.T) {
+	err := azureReadError(websocket.CloseError{Code: websocket.StatusPolicyViolation, Reason: "secret Azure detail"})
+	if diagnostic := azureDiagnostic(err); diagnostic != "azure_ws_close_1008_reason_present" {
+		t.Fatalf("diagnostic = %q", diagnostic)
+	}
+	if strings.Contains(err.Error(), "secret") {
+		t.Fatalf("close reason leaked into error: %q", err)
 	}
 }
 
@@ -298,10 +417,18 @@ func TestLegacyFinalWithoutTargetTranslationFailsClosed(t *testing.T) {
 func TestTranslationWebSocketConfigAudioAndEventMapping(t *testing.T) {
 	configReceived := make(chan struct{})
 	configRequestID := make(chan string, 1)
+	riffReceived := make(chan []byte, 1)
 	audioReceived := make(chan []byte, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Ocp-Apim-Subscription-Key") != "secret" {
 			t.Errorf("subscription header = %q", r.Header.Get("Ocp-Apim-Subscription-Key"))
+		}
+		connectionID := r.Header.Get("X-ConnectionId")
+		if len(connectionID) != 32 {
+			t.Errorf("X-ConnectionId length = %d, want 32", len(connectionID))
+		}
+		if _, err := hex.DecodeString(connectionID); err != nil {
+			t.Errorf("X-ConnectionId must be hexadecimal: %v", err)
 		}
 		query := r.URL.Query()
 		if query.Get("from") != "zh-CN" || query.Get("to") != "en-US" || query.Get("format") != "simple" {
@@ -336,6 +463,12 @@ func TestTranslationWebSocketConfigAudioAndEventMapping(t *testing.T) {
 		close(configReceived)
 		typ, payload, err = conn.Read(ctx)
 		if err != nil || typ != websocket.MessageBinary {
+			t.Errorf("RIFF frame = (%v, %q, %v)", typ, payload, err)
+			return
+		}
+		riffReceived <- payload
+		typ, payload, err = conn.Read(ctx)
+		if err != nil || typ != websocket.MessageBinary {
 			t.Errorf("audio frame = (%v, %q, %v)", typ, payload, err)
 			return
 		}
@@ -363,20 +496,26 @@ func TestTranslationWebSocketConfigAudioAndEventMapping(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("did not receive config")
 	}
+	riffFrame := <-riffReceived
+	riffHeaderLen := int(binary.BigEndian.Uint16(riffFrame[:2]))
+	riffHeader := string(riffFrame[2 : 2+riffHeaderLen])
+	if !strings.Contains(riffHeader, "Path:audio") || !strings.Contains(riffHeader, "audio/x-wav") {
+		t.Fatalf("RIFF frame header = %q", riffHeader)
+	}
+	configID := <-configRequestID
+	if riffRequestID := headerValue(t, riffHeader, "X-RequestId"); riffRequestID != configID {
+		t.Fatalf("RIFF request ID = %q, want config request ID", riffRequestID)
+	}
+	if riff := riffFrame[2+riffHeaderLen:]; len(riff) != 44 || string(riff[:4]) != "RIFF" {
+		t.Fatalf("standalone RIFF frame = %v", riff)
+	}
 	frame := <-audioReceived
 	headerLen := int(binary.BigEndian.Uint16(frame[:2]))
 	header := string(frame[2 : 2+headerLen])
-	if !strings.Contains(header, "Path:audio") || !strings.Contains(header, "audio/x-wav") {
-		t.Fatalf("audio frame header = %q", header)
-	}
-	if audioRequestID := headerValue(t, header, "X-RequestId"); audioRequestID != <-configRequestID {
+	if audioRequestID := headerValue(t, header, "X-RequestId"); audioRequestID != configID {
 		t.Fatalf("audio request ID = %q, want config request ID", audioRequestID)
 	}
-	audio := frame[2+headerLen:]
-	if string(audio[:4]) != "RIFF" {
-		t.Fatalf("first frame must carry RIFF header, got %q", audio[:4])
-	}
-	if pcm := audio[44:]; string(pcm) != string([]byte{1, 2, 3, 4}) {
+	if pcm := frame[2+headerLen:]; string(pcm) != string([]byte{1, 2, 3, 4}) {
 		t.Fatalf("audio payload = %v", pcm)
 	}
 	assertEvent(t, sink.next(t), "source_partial", "你好")
@@ -543,6 +682,22 @@ func readContext(t *testing.T, ctx context.Context, conn *websocket.Conn) {
 			t.Fatalf("speech.context %s = %#v", section, body[section])
 		}
 	}
+	readStandaloneRIFF(t, ctx, conn)
+}
+
+func readStandaloneRIFF(t *testing.T, ctx context.Context, conn *websocket.Conn) {
+	t.Helper()
+	typ, payload, err := conn.Read(ctx)
+	if err != nil || typ != websocket.MessageBinary {
+		t.Fatalf("RIFF frame = %v, %v", typ, err)
+	}
+	if len(payload) < 2 {
+		t.Fatalf("RIFF frame too short: %d", len(payload))
+	}
+	headerLength := int(binary.BigEndian.Uint16(payload[:2]))
+	if len(payload) != 2+headerLength+44 || string(payload[2+headerLength:2+headerLength+4]) != "RIFF" {
+		t.Fatalf("RIFF frame must contain only a 44-byte RIFF header: %v", payload)
+	}
 }
 
 func readConfig(t *testing.T, ctx context.Context, conn *websocket.Conn) {
@@ -550,7 +705,9 @@ func readConfig(t *testing.T, ctx context.Context, conn *websocket.Conn) {
 	typ, _, err := conn.Read(ctx)
 	if err != nil || typ != websocket.MessageText {
 		t.Errorf("config frame = %v, %v", typ, err)
+		return
 	}
+	readStandaloneRIFF(t, ctx, conn)
 }
 func headerValue(t *testing.T, header, name string) string {
 	t.Helper()

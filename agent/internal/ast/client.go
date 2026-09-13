@@ -15,6 +15,14 @@ type logIDError interface {
 	LogID() string
 }
 
+type diagnosticError interface {
+	Diagnostic() string
+}
+
+type upstreamStatusError interface {
+	UpstreamStatus() int32
+}
+
 // ErrorLogID returns a safe upstream request identifier without exposing the
 // underlying request headers or credentials.
 func ErrorLogID(err error) string {
@@ -23,6 +31,25 @@ func ErrorLogID(err error) string {
 		return withLogID.LogID()
 	}
 	return ""
+}
+
+// ErrorDiagnostic returns a provider-defined, non-sensitive failure category
+// for server logs. It is never sent to clients.
+func ErrorDiagnostic(err error) string {
+	var withDiagnostic diagnosticError
+	if errors.As(err, &withDiagnostic) {
+		return withDiagnostic.Diagnostic()
+	}
+	return ""
+}
+
+// ErrorUpstreamStatus returns a safe upstream HTTP status for server logs.
+func ErrorUpstreamStatus(err error) int32 {
+	var withStatus upstreamStatusError
+	if errors.As(err, &withStatus) {
+		return withStatus.UpstreamStatus()
+	}
+	return 0
 }
 
 // StartRequest is the validated Browser-to-Agent session configuration.
@@ -90,6 +117,9 @@ type Event struct {
 	TargetLanguage string `json:"targetLanguage,omitempty"`
 	Binary         []byte `json:"-"`
 	UpstreamStatus int32  `json:"-"`
+	// Diagnostic is a provider-defined, non-sensitive failure category that is
+	// consumed only by the server logger.
+	Diagnostic string `json:"-"`
 }
 
 // UnavailableClient is the explicit safe default. It never claims the AST

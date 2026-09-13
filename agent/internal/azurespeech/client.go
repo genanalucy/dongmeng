@@ -119,11 +119,16 @@ func (c *client) Start(ctx context.Context, request ast.StartRequest, sink ast.E
 	if err != nil {
 		return nil, fmt.Errorf("build Azure endpoint: %w", err)
 	}
+	connectionID := randomRequestID()
 	headers := make(http.Header)
 	headers.Set("Ocp-Apim-Subscription-Key", c.key)
-	conn, _, err := websocket.Dial(ctx, endpoint, &websocket.DialOptions{HTTPHeader: headers})
+	// The Speech SDK sends one no-dash GUID for the lifetime of every WebSocket
+	// connection. It is deliberately distinct from the per-session request ID
+	// carried by Unified Speech Protocol frames.
+	headers.Set("X-ConnectionId", connectionID)
+	conn, response, err := websocket.Dial(ctx, endpoint, &websocket.DialOptions{HTTPHeader: headers})
 	if err != nil {
-		return nil, fmt.Errorf("dial Azure Speech: %w", err)
+		return nil, azureDialError(response, err)
 	}
 	session := newSession(ctx, conn, c, to, request.Voice, request.CandidateLanguages, sink)
 	// ServiceRecognizerBase.configureConnection sends speech.config before
@@ -149,6 +154,16 @@ func (c *client) Start(ctx context.Context, request ast.StartRequest, sink ast.E
 			return nil, fmt.Errorf("send Azure speech.context: %w", err)
 		}
 	}
+	// ServiceRecognizerBase sends format metadata in its own binary message
+	// before live PCM. The universal v2 service rejects a RIFF header combined
+	// with the first PCM packet, so establish the stream independently here.
+	if err := session.send(ctx, websocket.MessageBinary, session.audioFrame(riffHeaderPCM16k())); err != nil {
+		_ = session.Close()
+		return nil, fmt.Errorf("send Azure RIFF header: %w", err)
+	}
+	session.stateMu.Lock()
+	session.riffSent = true
+	session.stateMu.Unlock()
 	session.wg.Add(1)
 	go session.readLoop()
 	return session, nil
@@ -317,7 +332,7 @@ type session struct {
 	commandMu                                               sync.Mutex
 	stateMu                                                 sync.Mutex
 	accepting, active, turnEnded, finishRequested, terminal bool
-	riffSent                                                bool
+	riffSent, audioSent                                     bool
 	segmentID                                               int64
 	// eventMu serializes text, synchronous TTS, errors, and finished.
 	eventMu sync.Mutex
@@ -345,15 +360,15 @@ func (s *session) SendAudio(ctx context.Context, pcm []byte) error {
 	if len(pcm) > 65535 {
 		return fmt.Errorf("Azure audio chunk exceeds 65535 bytes")
 	}
-	// Unified Speech Protocol audio frame: [2-byte BE header length][header
-	// block (Path:audio, Content-Type:audio/x-wav)][payload]; the first frame
-	// prepends a 44-byte RIFF header declaring 16k/mono/16-bit PCM.
-	payload := pcm
-	if !s.riffSent {
-		payload = append(riffHeaderPCM16k(), pcm...)
-		s.riffSent = true
+	// Start has already sent the standalone RIFF metadata frame. Subsequent
+	// audio messages contain PCM only.
+	if err := s.send(ctx, websocket.MessageBinary, s.audioFrame(pcm)); err != nil {
+		return err
 	}
-	return s.send(ctx, websocket.MessageBinary, s.audioFrame(payload))
+	s.stateMu.Lock()
+	s.audioSent = true
+	s.stateMu.Unlock()
+	return nil
 }
 
 // audioFrame encodes an audio fragment. An empty payload marks end-of-stream
@@ -390,6 +405,48 @@ func azureTimestamp() string {
 	return time.Now().UTC().Format("2006-01-02T15:04:05.0000000Z")
 }
 
+// azureSessionError deliberately retains only a coarse failure category and
+// HTTP status. Azure error text can contain request metadata or user content,
+// so it must not reach logs or browser events.
+type azureSessionError struct {
+	diagnostic string
+	status     int32
+}
+
+func (e azureSessionError) Error() string         { return e.diagnostic }
+func (e azureSessionError) Diagnostic() string    { return e.diagnostic }
+func (e azureSessionError) UpstreamStatus() int32 { return e.status }
+
+func azureDialError(response *http.Response, _ error) error {
+	if response != nil {
+		return azureSessionError{diagnostic: "azure_handshake_http", status: int32(response.StatusCode)}
+	}
+	return azureSessionError{diagnostic: "azure_handshake_transport"}
+}
+
+func azureReadError(err error) error {
+	var closeErr websocket.CloseError
+	if errors.As(err, &closeErr) {
+		// Do not log Azure's arbitrary close reason. Its presence is enough to
+		// distinguish an explicit reason from a bare close while the code
+		// identifies the protocol category.
+		reason := "empty"
+		if strings.TrimSpace(closeErr.Reason) != "" {
+			reason = "present"
+		}
+		return azureSessionError{diagnostic: fmt.Sprintf("azure_ws_close_%d_reason_%s", closeErr.Code, reason)}
+	}
+	return azureSessionError{diagnostic: "azure_ws_read_failed"}
+}
+
+func azureDiagnostic(err error) string {
+	var sessionErr azureSessionError
+	if errors.As(err, &sessionErr) {
+		return sessionErr.diagnostic
+	}
+	return "azure_session_failed"
+}
+
 func (s *session) Finish(ctx context.Context) error {
 	s.finishOnce.Do(func() {
 		s.eventMu.Lock()
@@ -399,11 +456,14 @@ func (s *session) Finish(ctx context.Context) error {
 		s.stateMu.Lock()
 		s.accepting = false
 		s.finishRequested = true
-		hasAudio := s.riffSent
+		hasPCM := s.audioSent
 		active := s.active
 		turnEnded := s.turnEnded
 		s.stateMu.Unlock()
-		if (!hasAudio && !active) || turnEnded {
+		// The standalone RIFF header is stream metadata, not speech. Without
+		// PCM there is no turn for Azure to finalize, so terminate locally rather
+		// than waiting indefinitely for a turn.end that may never arrive.
+		if (!hasPCM && !active) || turnEnded {
 			s.finishedLocked()
 			return
 		}
@@ -459,7 +519,7 @@ func (s *session) readLoop() {
 		typ, data, err := s.conn.Read(s.ctx)
 		if err != nil {
 			if s.ctx.Err() == nil {
-				s.fail("AZURE_SESSION_FAILED", "translation session failed", err)
+				s.fail("AZURE_SESSION_FAILED", "translation session failed", azureReadError(err))
 			}
 			return
 		}
@@ -615,6 +675,11 @@ func (m *upstreamMessage) detectedLanguage() string {
 
 func (s *session) handleMessage(data []byte) error {
 	path, body := splitMessage(data)
+	if strings.EqualFold(path, "error") {
+		// Azure error bodies can contain request metadata or recognition input;
+		// classify the protocol path without decoding or exposing their contents.
+		return azureSessionError{diagnostic: "azure_path_error"}
+	}
 	// Production messages carry the message type in the Path header; the JSON
 	// `type` field is only a fallback for headerless fakes.
 	kind := path
@@ -647,7 +712,7 @@ func (s *session) handleMessage(data []byte) error {
 		}
 	}
 	if kind == "speech.event" && message.Signal.Name == "telemetry" {
-		return s.send(s.ctx, websocket.MessageText, textFrame("telemetry", `{"type":"telemetry","receivedMessages":[]}`))
+		return s.send(s.ctx, websocket.MessageText, textFrameWithRequestID(s.requestID, "telemetry", `{"type":"telemetry","receivedMessages":[]}`))
 	}
 	s.eventMu.Lock()
 	defer s.eventMu.Unlock()
@@ -805,7 +870,7 @@ func (s *session) fail(code, message string, err error) {
 		s.err = err
 	}
 	s.errMu.Unlock()
-	s.sink.Emit(ast.Event{Type: "error", Code: code, Message: message})
+	s.sink.Emit(ast.Event{Type: "error", Code: code, Message: message, Diagnostic: azureDiagnostic(err)})
 	s.cancel()
 	_ = s.conn.CloseNow()
 }

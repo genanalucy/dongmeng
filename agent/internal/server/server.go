@@ -521,7 +521,7 @@ func (s *Server) runConnection(parent context.Context, conn *websocket.Conn, ses
 			code = "TRANSLATION_PROVIDER_UNAVAILABLE"
 		}
 		logID := ast.ErrorLogID(err)
-		s.logError(start.SessionID, direction, "ast_start_failed", code, logID)
+		s.logASTStartFailed(start.SessionID, direction, code, logID, err)
 		emit(browserEvent{Type: "error", Code: code, Message: "translation service is unavailable", LogID: logID})
 		return
 	}
@@ -829,6 +829,20 @@ func (s *Server) logASTEvent(session, direction string, event ast.Event) {
 	}
 	if event.Type == "error" && event.UpstreamStatus != 0 {
 		attrs = append(attrs, "upstream_status", event.UpstreamStatus)
+	}
+	if event.Type == "error" && event.Diagnostic != "" {
+		attrs = append(attrs, "upstream_diagnostic", event.Diagnostic)
+	}
+	s.logger.Info("agent event", attrs...)
+}
+
+func (s *Server) logASTStartFailed(session, direction, code, logID string, err error) {
+	attrs := []any{"session", session, "direction", direction, "event", "ast_start_failed", "error_code", code, "logId", logID}
+	if status := ast.ErrorUpstreamStatus(err); status != 0 {
+		attrs = append(attrs, "upstream_status", status)
+	}
+	if diagnostic := ast.ErrorDiagnostic(err); diagnostic != "" {
+		attrs = append(attrs, "upstream_diagnostic", diagnostic)
 	}
 	s.logger.Info("agent event", attrs...)
 }
