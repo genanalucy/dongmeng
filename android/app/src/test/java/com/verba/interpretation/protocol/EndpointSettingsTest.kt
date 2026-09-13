@@ -31,10 +31,16 @@ class EndpointSettingsTest {
         assertEquals("wss://dev-agent.example.com/ws/translate", result.getOrThrow().webSocketUrl)
     }
 
-    @Test fun debugBuildUsesEc2HttpsTranslationEndpoints() {
-        assertEquals("https://47-129-170-16.sslip.io", BuildConfig.CLOUD_API_URL)
-        assertEquals("wss://47-129-170-16.sslip.io/ws/translate", BuildConfig.TRANSLATION_WS_URL)
-        assertEquals("https://47-129-170-16.sslip.io", BuildConfig.TRANSLATION_ORIGIN)
+    @Test fun buildUsesItsConfiguredHttpsTranslationEndpoints() {
+        if (BuildConfig.DEBUG) {
+            assertEquals("https://47-129-170-16.sslip.io", BuildConfig.CLOUD_API_URL)
+            assertEquals("wss://47-129-170-16.sslip.io/ws/translate", BuildConfig.TRANSLATION_WS_URL)
+            assertEquals("https://47-129-170-16.sslip.io", BuildConfig.TRANSLATION_ORIGIN)
+        } else {
+            assertEquals("https://yszn.nlplayer.org", BuildConfig.CLOUD_API_URL)
+            assertEquals("wss://yszn.nlplayer.org/ws/translate", BuildConfig.TRANSLATION_WS_URL)
+            assertEquals("https://yszn.nlplayer.org", BuildConfig.TRANSLATION_ORIGIN)
+        }
     }
 
     @Test fun releaseRejectsCleartextEndpoints() {

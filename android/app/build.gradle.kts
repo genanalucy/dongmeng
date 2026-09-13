@@ -26,7 +26,7 @@ android {
         targetSdk = 36
         // versionName is the human-facing China Standard Time timestamp: YYYYMMDD.HHmm.
         // Android versionCode remains a compact monotonic integer (max 2,100,000,000).
-        versionCode = 18
+        versionCode = 19
         versionName = ZonedDateTime.now(ZoneId.of("Asia/Shanghai"))
             .format(DateTimeFormatter.ofPattern("yyyyMMdd.HHmm"))
 
@@ -60,10 +60,10 @@ android {
         release {
             signingConfigs.findByName("production")?.let { signingConfig = it }
             isMinifyEnabled = false
-            buildConfigField("String", "AGENT_HTTP_URL", "\"https://47-129-170-16.sslip.io\"")
-            buildConfigField("String", "CLOUD_API_URL", "\"https://47-129-170-16.sslip.io\"")
-            buildConfigField("String", "TRANSLATION_WS_URL", "\"wss://47-129-170-16.sslip.io/ws/translate\"")
-            buildConfigField("String", "TRANSLATION_ORIGIN", "\"https://47-129-170-16.sslip.io\"")
+            buildConfigField("String", "AGENT_HTTP_URL", "\"https://yszn.nlplayer.org\"")
+            buildConfigField("String", "CLOUD_API_URL", "\"https://yszn.nlplayer.org\"")
+            buildConfigField("String", "TRANSLATION_WS_URL", "\"wss://yszn.nlplayer.org/ws/translate\"")
+            buildConfigField("String", "TRANSLATION_ORIGIN", "\"https://yszn.nlplayer.org\"")
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
     }
