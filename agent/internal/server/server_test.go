@@ -719,7 +719,10 @@ func TestParseStartAcceptsAndroidAutomaticCloudPayload(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parseStart() error = %v", err)
 	}
-	if parsed.Provider != "azure" || !equalStrings(parsed.CandidateLanguages, []string{"zh", "en"}) || parsed.Voice != "en-US-JennyNeural" || parsed.UserID != testUserID || parsed.InstallID != testInstallID {
+	if parsed.SessionID != testSessionID || parsed.Mode != "s2s" || parsed.SourceLanguage != "zh" || parsed.TargetLanguage != "en" ||
+		parsed.TargetAudioFormat != "pcm" || parsed.TargetAudioRate != 16000 || parsed.Provider != "azure" ||
+		!equalStrings(parsed.CandidateLanguages, []string{"zh", "en"}) || parsed.Voice != "en-US-JennyNeural" ||
+		parsed.UserID != testUserID || parsed.InstallID != testInstallID {
 		t.Fatalf("parsed start = %#v", parsed)
 	}
 }

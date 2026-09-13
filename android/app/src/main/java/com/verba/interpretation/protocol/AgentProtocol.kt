@@ -1,5 +1,6 @@
 package com.verba.interpretation.protocol
 
+import org.json.JSONArray
 import org.json.JSONObject
 
 data class StartMessage(
@@ -18,8 +19,10 @@ data class StartMessage(
         .apply {
             userId?.let { put("userId", it) }
             installId?.let { put("installId", it) }
-            if (settings.provider == TranslationProvider.AZURE) put("provider", settings.provider.storedValue)
-            if (candidateLanguages.isNotEmpty()) put("candidateLanguages", candidateLanguages)
+            if (settings.provider == TranslationProvider.AZURE) {
+                put("provider", settings.provider.storedValue)
+                if (candidateLanguages.isNotEmpty()) put("candidateLanguages", JSONArray(candidateLanguages))
+            }
             settings.voiceFor(targetLanguage).takeIf { it.isNotEmpty() }?.let { put("voice", it) }
         }.toString()
 }

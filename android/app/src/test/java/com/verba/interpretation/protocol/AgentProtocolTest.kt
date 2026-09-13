@@ -30,18 +30,27 @@ class AgentProtocolTest {
         assertEquals("BAD", (AgentProtocol.parse("{\"type\":\"error\",\"code\":\"BAD\",\"message\":\"no\"}") as AgentEvent.Error).code)
     }
 
-    @Test fun automaticAzureSnapshotCarriesMatchingProviderVoiceAndCandidates() {
+    @Test fun automaticAzureStartSerializesCandidatesAsExactJsonArray() {
         val settings = TranslationSettings(provider = TranslationProvider.AZURE, voices = mapOf("en" to "en-US-JennyNeural"))
         val json = JSONObject(StartMessage("session-1", "zh", "en", settings = settings, candidateLanguages = listOf("zh", "en")).toJson())
+
         assertEquals("azure", json.getString("provider"))
         assertEquals("en-US-JennyNeural", json.getString("voice"))
-        assertEquals(2, json.getJSONArray("candidateLanguages").length())
-        assertEquals("zh", json.getJSONArray("candidateLanguages").getString(0))
-        assertEquals("en", json.getJSONArray("candidateLanguages").getString(1))
+        val candidates = json.getJSONArray("candidateLanguages")
+        assertEquals(2, candidates.length())
+        assertEquals("zh", candidates.getString(0))
+        assertEquals("en", candidates.getString(1))
+        val fields = mutableSetOf<String>()
+        val keys = json.keys()
+        while (keys.hasNext()) fields += keys.next()
+        assertEquals(
+            setOf("type", "sessionId", "mode", "sourceLanguage", "targetLanguage", "targetAudioFormat", "targetAudioRate", "provider", "candidateLanguages", "voice"),
+            fields,
+        )
     }
 
     @Test fun nonAzureStartOmitsProviderAndCandidates() {
-        val json = JSONObject(StartMessage("session-1", "zh", "en", candidateLanguages = emptyList()).toJson())
+        val json = JSONObject(StartMessage("session-1", "zh", "en", candidateLanguages = listOf("zh", "en")).toJson())
         assertTrue(!json.has("provider"))
         assertTrue(!json.has("candidateLanguages"))
     }
