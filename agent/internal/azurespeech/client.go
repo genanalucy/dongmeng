@@ -223,9 +223,8 @@ func legacySpeechConfig() (string, error) {
 
 func automaticSpeechContext(candidates []string) (string, error) {
 	// The official SDK emits system/device metadata only in speech.config. Its
-	// V2 speech.context contains recognition context exclusively. In the
-	// combined continuous-LID translation case it also suppresses ordinary
-	// phrase results because translation.response is authoritative.
+	// V2 speech.context contains recognition context exclusively. Preserve the
+	// SDK's phrase output so each automatic final carries its LID metadata.
 	context := map[string]any{}
 	locales := make([]string, 0, len(candidates))
 	targets := make([]string, 0, len(candidates))
@@ -247,8 +246,8 @@ func automaticSpeechContext(candidates []string) (string, error) {
 		"onUnknown": map[string]string{"action": "None"}, "priority": "PrioritizeLatency",
 	}
 	context["phraseOutput"] = map[string]any{
-		"interimResults": map[string]string{"resultType": "None"},
-		"phraseResults":  map[string]string{"resultType": "None"},
+		"interimResults": map[string]string{"resultType": "Auto"},
+		"phraseResults":  map[string]string{"resultType": "Always"},
 	}
 	context["translation"] = map[string]any{
 		"onPassthrough":   map[string]string{"action": "None"},

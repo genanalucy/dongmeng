@@ -106,7 +106,7 @@ func TestAutomaticCandidateLanguagesUseAzureUniversalV2AndExposeDetectedLanguage
 	if _, wrapped := context["context"]; wrapped {
 		t.Fatalf("speech.context must be the context object, got %s", config)
 	}
-	for _, wanted := range []string{"DetectContinuous", "PrioritizeLatency", "Recognize", "zh-CN", "en-US", "zh-Hans", `"phraseOutput":{"interimResults":{"resultType":"None"},"phraseResults":{"resultType":"None"}}`} {
+	for _, wanted := range []string{"DetectContinuous", "PrioritizeLatency", "Recognize", "zh-CN", "en-US", "zh-Hans", `"phraseOutput":{"interimResults":{"resultType":"Auto"},"phraseResults":{"resultType":"Always"}}`} {
 		if !strings.Contains(config, wanted) {
 			t.Fatalf("automatic context missing %q: %s", wanted, config)
 		}
@@ -823,8 +823,8 @@ func readContext(t *testing.T, ctx context.Context, conn *websocket.Conn) {
 	}
 	phraseOutput, ok := body["phraseOutput"].(map[string]any)
 	if !ok || !reflect.DeepEqual(phraseOutput, map[string]any{
-		"interimResults": map[string]any{"resultType": "None"},
-		"phraseResults":  map[string]any{"resultType": "None"},
+		"interimResults": map[string]any{"resultType": "Auto"},
+		"phraseResults":  map[string]any{"resultType": "Always"},
 	}) {
 		t.Fatalf("speech.context phraseOutput = %#v", phraseOutput)
 	}
