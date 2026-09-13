@@ -16,9 +16,26 @@ internal data class FaceToFacePresentation(
     val timelinePlaceholder: String,
     val canChangeLanguages: Boolean,
     val isContinuous: Boolean,
+    val automaticLanguageDetectionAvailable: Boolean,
+    val automaticLanguageDetectionActive: Boolean,
     val showRecoveryAction: Boolean,
     val recoveryMessage: String?,
 )
+
+internal data class FaceToFaceModeMenuPresentation(
+    val automaticModeLabel: String,
+    val manualModeSelected: Boolean,
+    val continuousModeSelected: Boolean,
+    val automaticModeSelected: Boolean,
+)
+
+internal fun faceToFaceModeMenuPresentation(state: FaceToFaceState): FaceToFaceModeMenuPresentation =
+    FaceToFaceModeMenuPresentation(
+        automaticModeLabel = "自动识别语言",
+        manualModeSelected = state.mode == FaceToFaceMode.MANUAL,
+        continuousModeSelected = state.mode == FaceToFaceMode.AUTO && !state.automaticLanguageDetectionSelected,
+        automaticModeSelected = state.automaticLanguageDetectionSelected,
+    )
 
 internal const val FACE_TO_FACE_SESSION_REPLACED_MESSAGE = "已在另一设备开始翻译"
 internal const val FACE_TO_FACE_SESSION_ENDED_MESSAGE = "翻译会话已结束，请重新开始。"
@@ -36,6 +53,8 @@ internal fun faceToFacePresentation(state: FaceToFaceState): FaceToFacePresentat
     timelinePlaceholder = if (state.activeSourceLanguage() == "zh") "听取中…" else "Listening…",
     canChangeLanguages = state.phase == FaceToFacePhase.IDLE && !state.captureActive,
     isContinuous = state.mode == FaceToFaceMode.AUTO,
+    automaticLanguageDetectionAvailable = state.automaticLanguageDetectionAvailable,
+    automaticLanguageDetectionActive = state.automaticLanguageDetectionActive,
     showRecoveryAction = state.phase == FaceToFacePhase.ERROR,
     recoveryMessage = if (state.phase == FaceToFacePhase.ERROR) {
         when (state.sessionEndReason) {

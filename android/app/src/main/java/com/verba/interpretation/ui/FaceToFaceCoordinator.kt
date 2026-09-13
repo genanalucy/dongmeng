@@ -70,6 +70,22 @@ data class FaceToFaceState(
 ) {
     val manualInputLocked: Boolean
         get() = mode == FaceToFaceMode.MANUAL && (captureActive || phase == FaceToFacePhase.PROCESSING)
+
+    /** The active provider session supports automatic language detection. */
+    val automaticLanguageDetectionAvailable: Boolean
+        get() = automaticLanguageDetection
+
+    /** The selected operation is the provider-backed automatic language detection mode. */
+    val automaticLanguageDetectionSelected: Boolean
+        get() = mode == FaceToFaceMode.AUTO && automaticLanguageDetectionAvailable
+
+    /** Automatic language detection is usable while this automatic session is in progress. */
+    val automaticLanguageDetectionActive: Boolean
+        get() = automaticLanguageDetectionSelected && phase in setOf(
+            FaceToFacePhase.LISTENING,
+            FaceToFacePhase.PAUSED,
+            FaceToFacePhase.PROCESSING,
+        )
 }
 
 /** Pure, synchronized state machine shared by UI, socket, capture, timer and playback threads. */
@@ -122,7 +138,12 @@ class FaceToFaceCoordinator<S> {
     @Synchronized
     fun setMode(mode: FaceToFaceMode): Boolean {
         if (current.phase != FaceToFacePhase.IDLE || entries.isNotEmpty()) return false
-        current = current.copy(mode = mode, error = null, sessionEndReason = null)
+        current = current.copy(
+            mode = mode,
+            automaticLanguageDetection = false,
+            error = null,
+            sessionEndReason = null,
+        )
         return true
     }
 
@@ -639,6 +660,7 @@ class FaceToFaceCoordinator<S> {
             activeSide = FaceToFaceSide.LEFT,
             captureActive = true,
             captureLevel = 0f,
+            automaticLanguageDetection = requiresDetection,
             error = null,
         )
         return Transition(accepted = true, startCapture = true)

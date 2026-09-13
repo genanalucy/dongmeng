@@ -389,6 +389,57 @@ class FaceToFaceUiMapperTest {
     }
 
     @Test
+    fun automaticLanguageDetectionHasDistinctActivePresentationAndMenuSelection() {
+        val state = FaceToFaceState(
+            mode = FaceToFaceMode.AUTO,
+            phase = FaceToFacePhase.LISTENING,
+            captureActive = true,
+            automaticLanguageDetection = true,
+        )
+
+        val presentation = faceToFacePresentation(state)
+        val menu = faceToFaceModeMenuPresentation(state)
+
+        assertTrue(presentation.automaticLanguageDetectionAvailable)
+        assertTrue(presentation.automaticLanguageDetectionActive)
+        assertEquals("自动识别语言", menu.automaticModeLabel)
+        assertTrue(menu.automaticModeSelected)
+        assertFalse(menu.continuousModeSelected)
+    }
+
+    @Test
+    fun standardContinuousModeDoesNotExposeAutomaticLanguageDetectionStatus() {
+        val state = FaceToFaceState(
+            mode = FaceToFaceMode.AUTO,
+            phase = FaceToFacePhase.LISTENING,
+            captureActive = true,
+        )
+
+        val presentation = faceToFacePresentation(state)
+        val menu = faceToFaceModeMenuPresentation(state)
+
+        assertFalse(presentation.automaticLanguageDetectionAvailable)
+        assertFalse(presentation.automaticLanguageDetectionActive)
+        assertFalse(menu.automaticModeSelected)
+        assertTrue(menu.continuousModeSelected)
+    }
+
+    @Test
+    fun automaticLanguageDetectionRemainsSelectedAfterSessionError() {
+        val state = FaceToFaceState(
+            mode = FaceToFaceMode.AUTO,
+            phase = FaceToFacePhase.ERROR,
+            automaticLanguageDetection = true,
+        )
+
+        val presentation = faceToFacePresentation(state)
+
+        assertTrue(presentation.automaticLanguageDetectionAvailable)
+        assertFalse(presentation.automaticLanguageDetectionActive)
+        assertTrue(faceToFaceModeMenuPresentation(state).automaticModeSelected)
+    }
+
+    @Test
     fun pausedContinuousModeHasNoRipple() {
         val presentation = faceToFacePresentation(
             FaceToFaceState(

@@ -487,6 +487,20 @@ class FaceToFaceCoordinatorTest {
         assertNull(coordinator.state().activeTurnId)
     }
 
+    @Test fun automaticLanguageDetectionPersistsThroughSessionError() {
+        val coordinator = FaceToFaceCoordinator<String>()
+        coordinator.setMode(FaceToFaceMode.AUTO)
+        coordinator.startAuto(1, "azure", requiresDetection = true)
+
+        assertTrue(coordinator.state().automaticLanguageDetectionSelected)
+        assertTrue(coordinator.state().automaticLanguageDetectionActive)
+
+        coordinator.cancelAll("连接中断")
+
+        assertTrue(coordinator.state().automaticLanguageDetectionSelected)
+        assertFalse(coordinator.state().automaticLanguageDetectionActive)
+    }
+
     @Test fun errorKeepsCompletedTurnsAndRecoveryClearsErrorWithoutLosingTranscript() {
         val coordinator = FaceToFaceCoordinator<String>()
         coordinator.setMode(FaceToFaceMode.AUTO)

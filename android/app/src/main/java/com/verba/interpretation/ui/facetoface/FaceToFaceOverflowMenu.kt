@@ -37,6 +37,7 @@ internal fun FaceToFaceOverflowMenu(
     onStartAutomaticMode: () -> Unit,
     showAutomaticMode: Boolean = EndpointSettingsAccessPolicy.automaticModeVisible(BuildConfig.DEBUG),
 ) {
+    val modePresentation = faceToFaceModeMenuPresentation(state)
     var expanded by remember { mutableStateOf(false) }
     IconButton(
         onClick = { expanded = true },
@@ -67,12 +68,24 @@ internal fun FaceToFaceOverflowMenu(
         modifier = Modifier.background(MaterialTheme.colorScheme.surfaceContainer, RoundedCornerShape(19.dp)),
     ) {
         DropdownMenuItem(
-            text = { Text(if (state.mode == FaceToFaceMode.MANUAL) "✓  按住说话模式" else "按住说话模式", color = if (state.mode == FaceToFaceMode.MANUAL) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface) },
+            text = {
+                val selected = modePresentation.manualModeSelected
+                Text(
+                    if (selected) "✓  按住说话模式" else "按住说话模式",
+                    color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                )
+            },
             onClick = { onSelectMode(FaceToFaceMode.MANUAL); expanded = false },
             enabled = state.phase == FaceToFacePhase.IDLE,
         )
         DropdownMenuItem(
-            text = { Text(if (state.mode == FaceToFaceMode.AUTO) "✓  连续翻译模式" else "连续翻译模式", color = if (state.mode == FaceToFaceMode.AUTO) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface) },
+            text = {
+                val selected = modePresentation.continuousModeSelected
+                Text(
+                    if (selected) "✓  连续翻译模式" else "连续翻译模式",
+                    color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                )
+            },
             onClick = { onSelectMode(FaceToFaceMode.AUTO); expanded = false },
             enabled = state.phase == FaceToFacePhase.IDLE,
         )
@@ -83,8 +96,15 @@ internal fun FaceToFaceOverflowMenu(
         if (showAutomaticMode) {
             HorizontalDivider()
             DropdownMenuItem(
-                text = { Text("自动模式") },
+                text = {
+                    val selected = modePresentation.automaticModeSelected
+                    Text(
+                        if (selected) "✓  ${modePresentation.automaticModeLabel}" else modePresentation.automaticModeLabel,
+                        color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                    )
+                },
                 onClick = { onStartAutomaticMode(); expanded = false },
+                enabled = state.phase == FaceToFacePhase.IDLE,
             )
         }
     }
