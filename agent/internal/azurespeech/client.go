@@ -14,9 +14,11 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"reflect"
 	"sort"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/coder/websocket"
@@ -446,7 +448,26 @@ func azureDialError(response *http.Response, _ error) error {
 }
 
 func azureReadError(err error) error {
-	return azurePhaseError("read", err)
+	return azurePhaseError("read_transport", err)
+}
+
+type azureMessageError struct{ diagnostic string }
+
+func (e azureMessageError) Error() string      { return e.diagnostic }
+func (e azureMessageError) Diagnostic() string { return e.diagnostic }
+
+// azureMessageDiagnostic only permits known protocol paths and fixed schema
+// categories. It must never incorporate upstream JSON, headers, identifiers,
+// or recognition text into diagnostics.
+func azureMessageDiagnostic(path, category string) error {
+	knownPath := "unknown"
+	switch strings.ToLower(strings.TrimSpace(path)) {
+	case "translation.response":
+		knownPath = "translation_response"
+	case "translation.phrase":
+		knownPath = "translation_phrase"
+	}
+	return azureMessageError{diagnostic: "azure_message_" + knownPath + "_" + category}
 }
 
 // azurePhaseError keeps Azure transport details out of logs while preserving
@@ -454,6 +475,9 @@ func azureReadError(err error) error {
 // code is protocol metadata; the arbitrary Azure close reason is reduced to
 // its presence only.
 func azurePhaseError(phase string, err error) error {
+	if diagnostic := azureTransportDiagnostic(phase, err); diagnostic != "" {
+		return azureSessionError{diagnostic: diagnostic}
+	}
 	var closeErr websocket.CloseError
 	if errors.As(err, &closeErr) {
 		reason := "empty"
@@ -472,27 +496,96 @@ func azurePhaseError(phase string, err error) error {
 			status:     sessionErr.status,
 		}
 	}
-	if errors.Is(err, io.EOF) {
-		return azureSessionError{diagnostic: "azure_" + phase + "_io_eof"}
-	}
-	if errors.Is(err, net.ErrClosed) {
-		return azureSessionError{diagnostic: "azure_" + phase + "_net_closed"}
-	}
-	if errors.Is(err, context.Canceled) {
-		return azureSessionError{diagnostic: "azure_" + phase + "_context_canceled"}
-	}
-	if errors.Is(err, context.DeadlineExceeded) {
-		return azureSessionError{diagnostic: "azure_" + phase + "_net_timeout"}
+	return azureSessionError{diagnostic: "azure_" + phase + "_" + azureErrorShape(err)}
+}
+
+// azureTransportDiagnostic maps only fixed error-chain categories. It never
+// formats arbitrary errors: URL, request, endpoint, and upstream error text
+// can contain sensitive request metadata.
+func azureTransportDiagnostic(phase string, err error) string {
+	prefix := "azure_" + phase + "_"
+	switch {
+	case errors.Is(err, io.EOF):
+		return prefix + "io_eof"
+	case errors.Is(err, io.ErrUnexpectedEOF):
+		return prefix + "io_unexpected_eof"
+	case errors.Is(err, net.ErrClosed):
+		return prefix + "net_closed"
+	case errors.Is(err, context.Canceled):
+		return prefix + "context_canceled"
+	case errors.Is(err, context.DeadlineExceeded):
+		return prefix + "context_deadline"
+	case errors.Is(err, syscall.ECONNRESET):
+		return prefix + "syscall_conn_reset"
+	case errors.Is(err, syscall.ECONNABORTED):
+		return prefix + "syscall_conn_aborted"
+	case errors.Is(err, syscall.EPIPE):
+		return prefix + "syscall_broken_pipe"
 	}
 	var netErr net.Error
 	if errors.As(err, &netErr) && netErr.Timeout() {
-		return azureSessionError{diagnostic: "azure_" + phase + "_net_timeout"}
+		return prefix + "net_timeout"
 	}
 	var urlErr *url.Error
 	if errors.As(err, &urlErr) {
-		return azureSessionError{diagnostic: "azure_" + phase + "_url_error"}
+		return prefix + "chain_url_error"
 	}
-	return azureSessionError{diagnostic: "azure_" + phase + "_failed"}
+	var opErr *net.OpError
+	if errors.As(err, &opErr) {
+		return prefix + "chain_net_op_error"
+	}
+	return ""
+}
+
+// azureErrorShape exposes only concrete Go error types and fixed errors.Is
+// bits. It intentionally excludes Error() text, addresses, URLs, close
+// reasons, and status payloads. The bounded chain distinguishes an opaque
+// production read failure from a new transport class without leaking content.
+func azureErrorShape(err error) string {
+	const maxErrorChain = 6
+	original := err
+	parts := make([]string, 0, maxErrorChain+4)
+	for depth := 0; err != nil && depth < maxErrorChain; depth++ {
+		parts = append(parts, safeErrorTypeName(reflect.TypeOf(err).String()))
+		unwrapper, ok := err.(interface{ Unwrap() error })
+		if !ok {
+			break
+		}
+		err = unwrapper.Unwrap()
+	}
+	parts = append(parts,
+		"is_eof_"+boolDiagnostic(errors.Is(original, io.EOF)),
+		"is_unexpected_eof_"+boolDiagnostic(errors.Is(original, io.ErrUnexpectedEOF)),
+		"is_net_closed_"+boolDiagnostic(errors.Is(original, net.ErrClosed)),
+		"is_context_canceled_"+boolDiagnostic(errors.Is(original, context.Canceled)),
+		"is_context_deadline_"+boolDiagnostic(errors.Is(original, context.DeadlineExceeded)),
+		"is_conn_reset_"+boolDiagnostic(errors.Is(original, syscall.ECONNRESET)),
+	)
+	return "types_" + strings.Join(parts, "_")
+}
+
+func boolDiagnostic(value bool) string {
+	if value {
+		return "1"
+	}
+	return "0"
+}
+
+func safeErrorTypeName(value string) string {
+	value = strings.ToLower(strings.Trim(value, "*"))
+	if value == "" {
+		return "unknown"
+	}
+	var builder strings.Builder
+	for _, character := range value {
+		switch {
+		case character >= 'a' && character <= 'z', character >= 'A' && character <= 'Z', character >= '0' && character <= '9':
+			builder.WriteRune(character)
+		default:
+			builder.WriteByte('_')
+		}
+	}
+	return strings.Trim(builder.String(), "_")
 }
 
 func azureFrameType(typ websocket.MessageType) string {
@@ -510,6 +603,10 @@ func azureDiagnostic(err error) string {
 	var sessionErr azureSessionError
 	if errors.As(err, &sessionErr) {
 		return sessionErr.diagnostic
+	}
+	var messageErr azureMessageError
+	if errors.As(err, &messageErr) {
+		return messageErr.diagnostic
 	}
 	return "azure_session_failed"
 }
@@ -599,7 +696,14 @@ func (s *session) readLoop() {
 			if errors.As(err, &ttsErr) {
 				s.fail("AZURE_TTS_FAILED", "text-to-speech synthesis failed", err)
 			} else {
-				s.fail("AZURE_SESSION_FAILED", "translation session failed", azurePhaseError("read", err))
+				// handleMessage errors describe a decoded Azure protocol frame, not
+				// a WebSocket Read failure. Keep their fixed schema category intact.
+				var messageErr azureMessageError
+				if errors.As(err, &messageErr) {
+					s.fail("AZURE_SESSION_FAILED", "translation session failed", err)
+				} else {
+					s.fail("AZURE_SESSION_FAILED", "translation session failed", azureMessageDiagnostic("", "handler_failure"))
+				}
 			}
 			return
 		}
@@ -621,33 +725,52 @@ func (translation translation) text() string {
 
 type translationResponse struct {
 	SpeechPhrase struct {
-		DisplayText       string `json:"DisplayText"`
-		Text              string `json:"Text"`
-		RecognitionStatus string `json:"RecognitionStatus"`
-		PrimaryLanguage   struct {
-			Language string `json:"Language"`
-		} `json:"PrimaryLanguage"`
+		DisplayText       string              `json:"DisplayText"`
+		Text              string              `json:"Text"`
+		RecognitionStatus string              `json:"RecognitionStatus"`
+		PrimaryLanguage   primaryLanguage     `json:"PrimaryLanguage"`
+		Translation       translationEnvelope `json:"Translation"`
 	} `json:"SpeechPhrase"`
+	PrimaryLanguage primaryLanguage     `json:"PrimaryLanguage"`
+	Translations    []translation       `json:"Translations"`
+	Translation     translationEnvelope `json:"Translation"`
+}
+
+type primaryLanguage struct {
+	Language string `json:"Language"`
+}
+
+type translationEnvelope struct {
 	Translations []translation `json:"Translations"`
 }
 
+// automaticFinalSchema is a temporary, content-free production probe. It is
+// emitted only when an automatic final cannot be routed. After a successful
+// production schema confirmation, remove the fields that proved unnecessary
+// together with their test fixtures; retain only the fixed failure categories.
+func automaticFinalSchema(path string, message *upstreamMessage) error {
+	return azureMessageDiagnostic(path, "auto_missing_candidate_lid_primary_language_"+
+		boolDiagnostic(message.PrimaryLanguage.Language != "")+"_speech_phrase_primary_language_"+
+		boolDiagnostic(message.SpeechPhrase.PrimaryLanguage.Language != ""))
+}
+
 type upstreamMessage struct {
-	Type              string `json:"type"` // fallback for headerless (fake upstream) messages
-	Text              string `json:"text"`
-	Language          string `json:"Language"`
-	LanguageLower     string `json:"language"`
-	RecognitionStatus string `json:"RecognitionStatus"`
-	PrimaryLanguage   struct {
-		Language string `json:"Language"`
-	} `json:"PrimaryLanguage"`
+	Type              string          `json:"type"` // fallback for headerless (fake upstream) messages
+	Text              string          `json:"text"`
+	Language          string          `json:"Language"`
+	LanguageLower     string          `json:"language"`
+	RecognitionStatus string          `json:"RecognitionStatus"`
+	PrimaryLanguage   primaryLanguage `json:"PrimaryLanguage"`
+	SpeechPhrase      struct {
+		PrimaryLanguage primaryLanguage     `json:"PrimaryLanguage"`
+		Translation     translationEnvelope `json:"Translation"`
+	} `json:"SpeechPhrase"`
 	// Azure production payloads use capitalized keys.
-	TextCapital         string            `json:"Text"`
-	Translations        map[string]string `json:"translations"`
-	TranslationsCapital map[string]string `json:"Translations"`
-	Translation         struct {
-		Translations []translation `json:"Translations"`
-	} `json:"Translation"`
-	Signal struct {
+	TextCapital         string              `json:"Text"`
+	Translations        map[string]string   `json:"translations"`
+	TranslationsCapital map[string]string   `json:"Translations"`
+	Translation         translationEnvelope `json:"Translation"`
+	Signal              struct {
 		Name string `json:"name"`
 	} `json:"signal"`
 }
@@ -677,16 +800,18 @@ func (m *upstreamMessage) translation(locale string) string {
 			return text
 		}
 	}
-	for _, key := range keys {
-		for _, translation := range m.Translation.Translations {
-			if translation.Language == key && strings.TrimSpace(translation.text()) != "" {
-				return translation.text()
+	for _, translations := range [][]translation{m.Translation.Translations, m.SpeechPhrase.Translation.Translations} {
+		for _, key := range keys {
+			for _, translation := range translations {
+				if translation.Language == key && strings.TrimSpace(translation.text()) != "" {
+					return translation.text()
+				}
 			}
 		}
-	}
-	for _, translation := range m.Translation.Translations {
-		if candidate, ok := protocolLanguage(translation.Language); ok && candidate == language && strings.TrimSpace(translation.text()) != "" {
-			return translation.text()
+		for _, translation := range translations {
+			if candidate, ok := protocolLanguage(translation.Language); ok && candidate == language && strings.TrimSpace(translation.text()) != "" {
+				return translation.text()
+			}
 		}
 	}
 	return ""
@@ -731,6 +856,9 @@ func translationFromMap(translations map[string]string, language string) string 
 }
 
 func (m *upstreamMessage) detectedLanguage() string {
+	if m.SpeechPhrase.PrimaryLanguage.Language != "" {
+		return m.SpeechPhrase.PrimaryLanguage.Language
+	}
 	if m.PrimaryLanguage.Language != "" {
 		return m.PrimaryLanguage.Language
 	}
@@ -745,7 +873,7 @@ func (s *session) handleMessage(data []byte) error {
 	if strings.EqualFold(path, "error") {
 		// Azure error bodies can contain request metadata or recognition input;
 		// classify the protocol path without decoding or exposing their contents.
-		return azureSessionError{diagnostic: "azure_path_error"}
+		return azureMessageDiagnostic(path, "upstream_error")
 	}
 	// Production messages carry the message type in the Path header; the JSON
 	// `type` field is only a fallback for headerless fakes.
@@ -754,7 +882,7 @@ func (s *session) handleMessage(data []byte) error {
 	if kind == "translation.response" {
 		var response translationResponse
 		if err := json.Unmarshal(body, &response); err != nil {
-			return fmt.Errorf("decode Azure translation.response: %w", err)
+			return azureMessageDiagnostic(kind, "json_decode")
 		}
 		if response.SpeechPhrase.RecognitionStatus != "" && !strings.EqualFold(response.SpeechPhrase.RecognitionStatus, "Success") {
 			return nil
@@ -767,12 +895,17 @@ func (s *session) handleMessage(data []byte) error {
 			message.TextCapital = response.SpeechPhrase.Text
 		}
 		message.RecognitionStatus = response.SpeechPhrase.RecognitionStatus
-		message.PrimaryLanguage = response.SpeechPhrase.PrimaryLanguage
+		message.PrimaryLanguage = response.PrimaryLanguage
+		message.SpeechPhrase.PrimaryLanguage = response.SpeechPhrase.PrimaryLanguage
 		message.Translation.Translations = response.Translations
+		if len(message.Translation.Translations) == 0 {
+			message.Translation.Translations = response.Translation.Translations
+		}
+		message.SpeechPhrase.Translation.Translations = response.SpeechPhrase.Translation.Translations
 		kind = "translation.phrase"
 	} else {
 		if err := json.Unmarshal(body, &message); err != nil {
-			return fmt.Errorf("decode Azure message: %w", err)
+			return azureMessageDiagnostic(kind, "json_decode")
 		}
 		if kind == "" {
 			kind = message.Type
@@ -801,7 +934,7 @@ func (s *session) handleMessage(data []byte) error {
 		language := ""
 		if len(s.candidates) != 0 {
 			var err error
-			language, targetLocale, err = s.resolveDetectedLanguage(&message)
+			language, targetLocale, err = s.resolveDetectedLanguage(kind, &message)
 			if err != nil {
 				return err
 			}
@@ -810,11 +943,16 @@ func (s *session) handleMessage(data []byte) error {
 		translation := strings.TrimSpace(message.translation(targetLocale))
 		// A continuous automatic final is independently routable only when it
 		// has source, candidate LID, and the opposite-target translation.
-		if len(s.candidates) != 0 && (source == "" || translation == "") {
-			return errors.New("Azure returned an empty automatic final pair")
+		if len(s.candidates) != 0 && source == "" {
+			return azureMessageDiagnostic(kind, "auto_missing_source_source_length_0")
+		}
+		if len(s.candidates) != 0 && translation == "" {
+			return azureMessageDiagnostic(kind, "auto_missing_target_root_translations_"+
+				boolDiagnostic(len(message.Translation.Translations) != 0)+"_speech_phrase_translation_translations_"+
+				boolDiagnostic(len(message.SpeechPhrase.Translation.Translations) != 0))
 		}
 		if len(s.candidates) == 0 && source != "" && translation == "" {
-			return errors.New("Azure returned no target translation for final result")
+			return azureMessageDiagnostic(kind, "legacy_missing_target")
 		}
 		segmentID := int64(0)
 		targetLanguage := ""
@@ -846,13 +984,13 @@ func (s *session) handleMessage(data []byte) error {
 	return nil
 }
 
-func (s *session) resolveDetectedLanguage(message *upstreamMessage) (string, string, error) {
+func (s *session) resolveDetectedLanguage(path string, message *upstreamMessage) (string, string, error) {
 	if status := strings.TrimSpace(message.RecognitionStatus); status != "" && !strings.EqualFold(status, "Success") {
-		return "", "", fmt.Errorf("Azure recognition status %q", status)
+		return "", "", azureMessageDiagnostic(path, "auto_non_success_recognition")
 	}
 	language, ok := protocolLanguage(message.detectedLanguage())
 	if !ok || (language != s.candidates[0] && language != s.candidates[1]) {
-		return "", "", errors.New("Azure did not return a candidate detected language")
+		return "", "", automaticFinalSchema(path, message)
 	}
 	target := s.candidates[0]
 	if language == target {

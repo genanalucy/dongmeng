@@ -271,14 +271,14 @@ func TestAzurePathErrorMapsToGenericSessionFailure(t *testing.T) {
 	session := startTestSession(t, ws.URL, "", sink)
 	defer session.Close()
 	event := sink.next(t)
-	if event.Type != "error" || event.Code != "AZURE_SESSION_FAILED" || event.Message != "translation session failed" || event.Diagnostic != "azure_read_path_error" {
+	if event.Type != "error" || event.Code != "AZURE_SESSION_FAILED" || event.Message != "translation session failed" || event.Diagnostic != "azure_message_unknown_upstream_error" {
 		t.Fatalf("event = %#v", event)
 	}
 }
 
 func TestAzureReadErrorClassifiesCloseWithoutReason(t *testing.T) {
 	err := azureReadError(websocket.CloseError{Code: websocket.StatusPolicyViolation, Reason: "secret Azure detail"})
-	if diagnostic := azureDiagnostic(err); diagnostic != "azure_read_close_1008_reason_present" {
+	if diagnostic := azureDiagnostic(err); diagnostic != "azure_read_transport_close_1008_reason_present" {
 		t.Fatalf("diagnostic = %q", diagnostic)
 	}
 	if strings.Contains(err.Error(), "secret") {
@@ -291,12 +291,12 @@ func TestAzureReadErrorClassifiesSafeTransportCategories(t *testing.T) {
 		err  error
 		want string
 	}{
-		{io.EOF, "azure_read_io_eof"},
-		{net.ErrClosed, "azure_read_net_closed"},
-		{context.Canceled, "azure_read_context_canceled"},
-		{context.DeadlineExceeded, "azure_read_net_timeout"},
-		{&neturl.Error{Op: "read", URL: "wss://secret.example", Err: errors.New("secret")}, "azure_read_url_error"},
-		{errors.New("secret Azure detail"), "azure_read_failed"},
+		{io.EOF, "azure_read_transport_io_eof"},
+		{net.ErrClosed, "azure_read_transport_net_closed"},
+		{context.Canceled, "azure_read_transport_context_canceled"},
+		{context.DeadlineExceeded, "azure_read_transport_context_deadline"},
+		{&neturl.Error{Op: "read", URL: "wss://secret.example", Err: errors.New("secret")}, "azure_read_transport_chain_url_error"},
+		{errors.New("secret Azure detail"), "azure_read_transport_types_errors_errorstring_is_eof_0_is_unexpected_eof_0_is_net_closed_0_is_context_canceled_0_is_context_deadline_0_is_conn_reset_0"},
 	} {
 		err := azureReadError(testCase.err)
 		if diagnostic := azureDiagnostic(err); diagnostic != testCase.want {
@@ -313,10 +313,10 @@ func TestAzurePhaseErrorClassifiesInitialSetupAndWriteWithoutErrorDetails(t *tes
 		phase string
 		want  string
 	}{
-		{phase: "initial_config", want: "azure_initial_config_failed"},
-		{phase: "initial_context", want: "azure_initial_context_failed"},
-		{phase: "initial_riff", want: "azure_initial_riff_failed"},
-		{phase: "write", want: "azure_write_failed"},
+		{phase: "initial_config", want: "azure_initial_config_types_errors_errorstring_is_eof_0_is_unexpected_eof_0_is_net_closed_0_is_context_canceled_0_is_context_deadline_0_is_conn_reset_0"},
+		{phase: "initial_context", want: "azure_initial_context_types_errors_errorstring_is_eof_0_is_unexpected_eof_0_is_net_closed_0_is_context_canceled_0_is_context_deadline_0_is_conn_reset_0"},
+		{phase: "initial_riff", want: "azure_initial_riff_types_errors_errorstring_is_eof_0_is_unexpected_eof_0_is_net_closed_0_is_context_canceled_0_is_context_deadline_0_is_conn_reset_0"},
+		{phase: "write", want: "azure_write_types_errors_errorstring_is_eof_0_is_unexpected_eof_0_is_net_closed_0_is_context_canceled_0_is_context_deadline_0_is_conn_reset_0"},
 	} {
 		err := azurePhaseError(testCase.phase, errors.New("secret Azure detail"))
 		if diagnostic := azureDiagnostic(err); diagnostic != testCase.want {
@@ -364,13 +364,14 @@ func TestAutomaticFinalEmitsDetectedLanguageBeforeFinalsAndTTS(t *testing.T) {
 	}
 }
 
-func TestAutomaticTranslationResponseSpeechPhraseUsesOfficialWrapperSchema(t *testing.T) {
+func TestAutomaticTranslationResponseSupportsOfficialRootAndSpeechPhraseSchemas(t *testing.T) {
 	ws := newWSServer(t, func(ctx context.Context, conn *websocket.Conn) {
 		readContext(t, ctx, conn)
-		// Azure Speech SDK JS TranslationPhrase.fromTranslationResponse maps this
-		// header-framed production wrapper's SpeechPhrase.DisplayText and root
-		// Translations array into the final translation phrase.
+		// The official SDK maps the root wrapper into SpeechPhrase.Translation.
 		_ = conn.Write(ctx, websocket.MessageText, []byte("X-RequestId:test\r\nPath:translation.response\r\nContent-Type:application/json; charset=utf-8\r\n\r\n"+`{"SpeechPhrase":{"RecognitionStatus":"Success","DisplayText":"hello","PrimaryLanguage":{"Language":"en-US"}},"Translations":[{"Language":"zh-Hans","DisplayText":"你好"}]}`))
+		// Universal V2 can instead carry LID at the wrapper root and translations
+		// inside SpeechPhrase.Translation; both are explicit SDK-compatible fields.
+		_ = conn.Write(ctx, websocket.MessageText, []byte("X-RequestId:test\r\nPath:translation.response\r\nContent-Type:application/json; charset=utf-8\r\n\r\n"+`{"PrimaryLanguage":{"Language":"zh-CN"},"SpeechPhrase":{"RecognitionStatus":"Success","DisplayText":"你好","Translation":{"Translations":[{"Language":"en","DisplayText":"hello"}]}}}`))
 		<-ctx.Done()
 	})
 	defer ws.Close()
@@ -394,6 +395,17 @@ func TestAutomaticTranslationResponseSpeechPhraseUsesOfficialWrapperSchema(t *te
 	if event := sink.next(t); event.Type != "tts_audio" || event.SegmentID != 1 {
 		t.Fatalf("tts = %#v", event)
 	}
+	if event := sink.next(t); event.Type != "detected_language" || event.Language != "zh" || event.SegmentID != 2 || event.TargetLanguage != "en" {
+		t.Fatalf("root detected = %#v", event)
+	}
+	assertEvent(t, sink.next(t), "source_final", "你好")
+	assertEvent(t, sink.next(t), "translation_final", "hello")
+	if event := sink.next(t); event.Type != "tts_start" || event.SegmentID != 2 {
+		t.Fatalf("root tts prelude = %#v", event)
+	}
+	if event := sink.next(t); event.Type != "tts_audio" || event.SegmentID != 2 {
+		t.Fatalf("root tts = %#v", event)
+	}
 }
 
 func TestAutomaticTranslationResponseIgnoresUnsuccessfulSpeechPhrase(t *testing.T) {
@@ -414,6 +426,53 @@ func TestAutomaticTranslationResponseIgnoresUnsuccessfulSpeechPhrase(t *testing.
 	case event := <-sink.events:
 		t.Fatalf("unexpected event: %#v", event)
 	case <-time.After(100 * time.Millisecond):
+	}
+}
+
+func TestAutomaticMissingFieldsEmitSafeSchemaCategories(t *testing.T) {
+	for _, testCase := range []struct {
+		name string
+		body string
+		want string
+	}{
+		{
+			name: "candidate language",
+			body: `{"type":"translation.phrase","Text":"source","RecognitionStatus":"Success","Translations":{"zh-Hans":"target"}}`,
+			want: "azure_message_translation_phrase_auto_missing_candidate_lid_primary_language_0_speech_phrase_primary_language_0",
+		},
+		{
+			name: "source",
+			body: `{"type":"translation.phrase","PrimaryLanguage":{"Language":"en-US"},"RecognitionStatus":"Success","Translations":{"zh-Hans":"target"}}`,
+			want: "azure_message_translation_phrase_auto_missing_source_source_length_0",
+		},
+		{
+			name: "target",
+			body: `{"type":"translation.phrase","Text":"source","PrimaryLanguage":{"Language":"en-US"},"RecognitionStatus":"Success"}`,
+			want: "azure_message_translation_phrase_auto_missing_target_root_translations_0_speech_phrase_translation_translations_0",
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			ws := newWSServer(t, func(ctx context.Context, conn *websocket.Conn) {
+				readContext(t, ctx, conn)
+				_ = conn.Write(ctx, websocket.MessageText, []byte(testCase.body))
+				<-ctx.Done()
+			})
+			defer ws.Close()
+			sink := newRecordingSink()
+			client := &client{configured: true, key: "secret", region: "japaneast", wsBase: strings.Replace(ws.URL, "http://", "ws://", 1), httpClient: http.DefaultClient}
+			session, err := client.Start(context.Background(), ast.StartRequest{SourceLanguage: "zh", TargetLanguage: "en", CandidateLanguages: []string{"zh", "en"}}, sink)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer session.Close()
+			event := sink.next(t)
+			if event.Type != "error" || event.Code != "AZURE_SESSION_FAILED" || event.Message != "translation session failed" || event.Diagnostic != testCase.want {
+				t.Fatalf("event = %#v, want diagnostic %q", event, testCase.want)
+			}
+			if strings.Contains(event.Diagnostic, "source") && strings.Contains(event.Diagnostic, "target") {
+				t.Fatalf("diagnostic includes test values: %q", event.Diagnostic)
+			}
+		})
 	}
 }
 
