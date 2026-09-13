@@ -38,6 +38,47 @@ class FaceToFaceOverflowMenuTest {
     }
 
     @Test
+    fun diagnosticLogEntryIsDebugOnlyAndOpensAccessibleDialog() {
+        compose.setContent {
+            MaterialTheme {
+                FaceToFaceOverflowMenu(
+                    state = FaceToFaceState(),
+                    onSelectMode = {},
+                    onStopAuto = {},
+                    onStartAutomaticMode = {},
+                    showAutomaticMode = false,
+                    showDebugDiagnostics = true,
+                )
+            }
+        }
+
+        compose.onNodeWithContentDescription("面对面翻译更多选项").performClick()
+        compose.onNodeWithContentDescription("打开诊断日志").performClick()
+        compose.onNodeWithContentDescription("安全诊断日志内容").assertIsDisplayed()
+        compose.onNodeWithContentDescription("复制诊断日志").assertIsDisplayed()
+        compose.onNodeWithContentDescription("清空诊断日志").assertIsDisplayed()
+    }
+
+    @Test
+    fun diagnosticLogEntryIsHiddenWhenDisabledForRelease() {
+        compose.setContent {
+            MaterialTheme {
+                FaceToFaceOverflowMenu(
+                    state = FaceToFaceState(),
+                    onSelectMode = {},
+                    onStopAuto = {},
+                    onStartAutomaticMode = {},
+                    showAutomaticMode = false,
+                    showDebugDiagnostics = false,
+                )
+            }
+        }
+
+        compose.onNodeWithContentDescription("面对面翻译更多选项").performClick()
+        assertTrue(compose.onAllNodesWithText("诊断日志").fetchSemanticsNodes().isEmpty())
+    }
+
+    @Test
     fun automaticModeEntryIsHiddenWhenDisabledForRelease() {
         compose.setContent {
             MaterialTheme {

@@ -2,6 +2,9 @@ package com.verba.interpretation.protocol
 
 import com.verba.interpretation.BuildConfig
 import com.verba.interpretation.cloud.TranslationSessionGrant
+import com.verba.interpretation.diagnostics.DiagnosticLog
+import com.verba.interpretation.diagnostics.SocketFailure
+import com.verba.interpretation.diagnostics.SocketLifecycle
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
@@ -40,6 +43,7 @@ class AgentSocket(
         finishing = false
         terminalDelivered = false
         pendingAudio.clear()
+        DiagnosticLog.socketLifecycle(SocketLifecycle.OPENING)
         val requestBuilder = Request.Builder().url(endpointSettings.current().webSocketUrl)
         if (BuildConfig.TRANSLATION_ORIGIN.isNotEmpty()) requestBuilder.header("Origin", BuildConfig.TRANSLATION_ORIGIN)
         if (grant != null) requestBuilder.header("Sec-WebSocket-Protocol", CloudAgentHandshake.subprotocols(grant))
@@ -49,11 +53,16 @@ class AgentSocket(
             ?: StartMessage(UUID.randomUUID().toString(), sourceLanguage, targetLanguage, settings = settings, candidateLanguages = candidateLanguages)
         socket = client.newWebSocket(requestBuilder.build(), object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
-                if (!webSocket.send(start.toJson())) fail("无法发送 start 消息。")
+                DiagnosticLog.socketLifecycle(SocketLifecycle.OPENED)
+                if (!webSocket.send(start.toJson())) {
+                    DiagnosticLog.socketFailure(SocketFailure.START_SEND)
+                    fail("无法发送 start 消息。")
+                }
             }
 
             override fun onMessage(webSocket: WebSocket, text: String) {
                 val event = try { AgentProtocol.parse(text) } catch (error: ProtocolException) {
+                    DiagnosticLog.socketLifecycle(SocketLifecycle.PROTOCOL_REJECTED)
                     fail(error.message ?: "Agent 协议错误。")
                     return
                 }
@@ -83,7 +92,11 @@ class AgentSocket(
                     }
                 }
                 if (deliver) {
-                    if (event is AgentEvent.Finished || event is AgentEvent.SessionTerminated || event is AgentEvent.Error) onClosed()
+                    DiagnosticLog.agentEvent(event)
+                    if (event is AgentEvent.Finished || event is AgentEvent.SessionTerminated || event is AgentEvent.Error) {
+                        DiagnosticLog.socketLifecycle(SocketLifecycle.FINISHED)
+                        onClosed()
+                    }
                     onEvent(event)
                 }
             }
@@ -94,7 +107,10 @@ class AgentSocket(
                     else pendingTtsSegments.removeFirstOrNull()
                 }
                 if (segment != null && bytes.size > 0 && bytes.size % 2 == 0) onTts(bytes.toByteArray(), segment.segmentId, segment.targetLanguage)
-                else fail("TTS PCM16 音频包缺少匹配元数据或长度无效。")
+                else {
+                    DiagnosticLog.socketFailure(SocketFailure.INVALID_AUDIO_METADATA)
+                    fail("TTS PCM16 音频包缺少匹配元数据或长度无效。")
+                }
             }
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
@@ -105,8 +121,9 @@ class AgentSocket(
                     true
                 }
                 if (deliver) {
+                    DiagnosticLog.socketFailure(SocketFailure.TRANSPORT)
                     onClosed()
-                    onFailure(t.message ?: "WebSocket 连接失败。")
+                    onFailure("WebSocket 连接失败。")
                 }
             }
         })
@@ -139,7 +156,10 @@ class AgentSocket(
             clearLocked()
             true
         }
-        if (notify) onClosed()
+        if (notify) {
+            DiagnosticLog.socketLifecycle(SocketLifecycle.CANCELLED)
+            onClosed()
+        }
     }
 
     private fun fail(message: String) {
@@ -151,6 +171,7 @@ class AgentSocket(
             true
         }
         if (deliver) {
+            DiagnosticLog.socketFailure(SocketFailure.TRANSPORT)
             onClosed()
             onFailure(message)
         }

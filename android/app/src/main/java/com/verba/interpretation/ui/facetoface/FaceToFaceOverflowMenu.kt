@@ -27,6 +27,7 @@ import com.verba.interpretation.ui.FaceToFacePhase
 import com.verba.interpretation.ui.FaceToFaceState
 import com.verba.interpretation.ui.EndpointSettingsAccessPolicy
 import com.verba.interpretation.BuildConfig
+import com.verba.interpretation.diagnostics.DiagnosticLog
 import androidx.compose.ui.unit.dp
 
 @Composable
@@ -36,9 +37,11 @@ internal fun FaceToFaceOverflowMenu(
     onStopAuto: () -> Unit,
     onStartAutomaticMode: () -> Unit,
     showAutomaticMode: Boolean = EndpointSettingsAccessPolicy.automaticModeVisible(BuildConfig.DEBUG),
+    showDebugDiagnostics: Boolean = BuildConfig.DEBUG,
 ) {
     val modePresentation = faceToFaceModeMenuPresentation(state)
     var expanded by remember { mutableStateOf(false) }
+    var showDiagnostics by remember { mutableStateOf(false) }
     IconButton(
         onClick = { expanded = true },
         modifier = Modifier
@@ -93,6 +96,14 @@ internal fun FaceToFaceOverflowMenu(
             // 主操作（播放/暂停）在双麦之间；结束是次要会话操作，保留在更多菜单。
             DropdownMenuItem(text = { Text("结束连续翻译") }, onClick = { onStopAuto(); expanded = false })
         }
+        if (showDebugDiagnostics) {
+            HorizontalDivider()
+            DropdownMenuItem(
+                text = { Text("诊断日志") },
+                onClick = { expanded = false; showDiagnostics = true },
+                modifier = Modifier.semantics { contentDescription = "打开诊断日志" },
+            )
+        }
         if (showAutomaticMode) {
             HorizontalDivider()
             DropdownMenuItem(
@@ -108,4 +119,5 @@ internal fun FaceToFaceOverflowMenu(
             )
         }
     }
+    if (showDiagnostics) DiagnosticLogDialog(logger = DiagnosticLog, onDismiss = { showDiagnostics = false })
 }

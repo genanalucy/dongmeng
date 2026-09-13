@@ -5,6 +5,10 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.verba.interpretation.audio.CaptureResult
 import com.verba.interpretation.cloud.CloudApi
+import com.verba.interpretation.diagnostics.DiagnosticLog
+import com.verba.interpretation.diagnostics.DiagnosticLogger
+import com.verba.interpretation.diagnostics.FaceAction
+import com.verba.interpretation.diagnostics.SocketFailure
 import com.verba.interpretation.cloud.CloudEndpointSettings
 import com.verba.interpretation.cloud.CloudSessionFailureCode
 import com.verba.interpretation.cloud.KeystoreTokenStore
@@ -40,6 +44,7 @@ class FaceToFaceViewModel @JvmOverloads constructor(
     private val effectsExecutor: java.util.concurrent.ExecutorService = Executors.newSingleThreadExecutor { task ->
         Thread(task, "verba-face-effects").apply { isDaemon = true }
     },
+    private val diagnosticLogger: DiagnosticLogger = DiagnosticLog,
 ) : AndroidViewModel(application) {
     internal val microphonePermissionPolicy = MicrophonePermissionPolicy()
     private val coordinator = FaceToFaceCoordinator<FaceToFaceSocket>()
@@ -78,7 +83,10 @@ class FaceToFaceViewModel @JvmOverloads constructor(
     }
 
     fun setMode(mode: FaceToFaceMode) = synchronized(actionLock) {
-        if (coordinator.setMode(mode)) publishState()
+        if (coordinator.setMode(mode)) {
+            diagnosticLogger.faceAction(if (mode == FaceToFaceMode.AUTO) FaceAction.MODE_AUTO else FaceAction.MODE_MANUAL)
+            publishState()
+        }
     }
 
     fun setView(view: FaceToFaceView) = synchronized(actionLock) {
@@ -119,16 +127,22 @@ class FaceToFaceViewModel @JvmOverloads constructor(
     /** Switches from manual only after the permission intent has completed successfully. */
     fun enableAndStartAuto() = synchronized(actionLock) {
         if (coordinator.state().mode != FaceToFaceMode.MANUAL || coordinator.state().phase != FaceToFacePhase.IDLE) return
-        if (coordinator.setMode(FaceToFaceMode.AUTO)) publishState()
+        if (coordinator.setMode(FaceToFaceMode.AUTO)) {
+            diagnosticLogger.faceAction(FaceAction.ENABLE_AUTO)
+            publishState()
+        }
         startAuto()
     }
 
-    fun startAuto() = startWithCloudGrant(
+    fun startAuto() {
+        diagnosticLogger.faceAction(FaceAction.START_AUTO)
+        startWithCloudGrant(
         side = FaceToFaceSide.LEFT,
         canStart = { coordinator.state().mode == FaceToFaceMode.AUTO && coordinator.state().phase == FaceToFacePhase.IDLE },
     ) { created ->
         val automaticDetection = created.socket.automaticLanguageDetectionSupported
         applyTransition(coordinator.startAuto(created.turnId, created.socket, automaticDetection, automaticDetection))
+    }
     }
 
     // Azure AUTO determines the side only from each segment's AtStart LID result;
@@ -158,15 +172,19 @@ class FaceToFaceViewModel @JvmOverloads constructor(
         applyTransition(coordinator.pauseAuto())
     }
 
-    fun resumeAuto() = startWithCloudGrant(
+    fun resumeAuto() {
+        diagnosticLogger.faceAction(FaceAction.RESUME_AUTO)
+        startWithCloudGrant(
         side = FaceToFaceSide.LEFT,
         canStart = { coordinator.state().mode == FaceToFaceMode.AUTO && coordinator.state().phase == FaceToFacePhase.PAUSED },
     ) { created ->
         val automaticDetection = created.socket.automaticLanguageDetectionSupported
         applyTransition(coordinator.resumeAuto(created.turnId, created.socket, automaticDetection, automaticDetection))
     }
+    }
 
     fun stopAuto() = synchronized(actionLock) {
+        diagnosticLogger.faceAction(FaceAction.STOP_AUTO)
         localHistory.finishConversation()
         invalidatePendingGrantOpen()
         applyTransition(coordinator.stopAuto())
@@ -184,11 +202,15 @@ class FaceToFaceViewModel @JvmOverloads constructor(
     }
 
     fun microphonePermissionResult(granted: Boolean) {
+        diagnosticLogger.faceAction(if (granted) FaceAction.PERMISSION_GRANTED else FaceAction.PERMISSION_DENIED)
         val result = microphonePermissionPolicy.consumeResult(granted) ?: return
         if (result.granted) runMicrophoneAction(result.action) else microphonePermissionDenied()
     }
 
-    fun microphonePermissionDenied() = fail("未授予麦克风权限。")
+    fun microphonePermissionDenied() {
+        diagnosticLogger.faceAction(FaceAction.PERMISSION_DENIED)
+        fail("未授予麦克风权限。")
+    }
 
     fun clearError() = synchronized(actionLock) {
         coordinator.clearError()
@@ -278,6 +300,7 @@ class FaceToFaceViewModel @JvmOverloads constructor(
         lateinit var socket: FaceToFaceSocket
         socket = runtime.createSocket(
             onEvent = { event -> synchronized(actionLock) {
+                diagnosticLogger.agentEvent(event)
                 handleEvent(logicalTurnId(event.segmentIdOrNull()), event, socket)
             } },
             onTts = { pcm, segmentId, _ -> synchronized(actionLock) {
@@ -298,6 +321,7 @@ class FaceToFaceViewModel @JvmOverloads constructor(
             emptyList()
         }
         if (created.socket.start(source, target, grant, candidates)) return true
+        diagnosticLogger.socketFailure(SocketFailure.VIEW_MODEL)
         fail("无法创建翻译会话。")
         return false
     }
@@ -495,6 +519,7 @@ class FaceToFaceViewModel @JvmOverloads constructor(
 
     private fun publishState() {
         mutableState.value = coordinator.state().copy(localHistorySave = localHistory.state.value)
+        diagnosticLogger.state(mutableState.value)
     }
 
     override fun onCleared() {
