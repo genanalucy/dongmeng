@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -388,7 +387,7 @@ func (s *Server) runConnection(parent context.Context, conn *websocket.Conn, ses
 
 	start, err := readStart(ctx, conn, s.sessionVerifier != nil)
 	if err != nil {
-		s.logError("", "", "start_rejected", errorCode(err), "")
+		s.logStartRejected(err)
 		emit(browserEvent{Type: "error", Code: errorCode(err), Message: "invalid start request"})
 		return
 	}
@@ -633,15 +632,19 @@ func (s *eventSink) activate() {
 	s.pending = nil
 }
 
+type startRejectError string
+
+func (e startRejectError) Error() string { return "INVALID_START" }
+
 func readStart(ctx context.Context, conn *websocket.Conn, authRequired bool) (connectionStart, error) {
 	readCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	messageType, payload, err := conn.Read(readCtx)
 	if err != nil {
-		return connectionStart{}, fmt.Errorf("invalid start: %w", err)
+		return connectionStart{}, startRejectError("read_failed")
 	}
 	if messageType != websocket.MessageText {
-		return connectionStart{}, errors.New("INVALID_START")
+		return connectionStart{}, startRejectError("not_text")
 	}
 	return parseStart(payload, authRequired)
 }
@@ -650,21 +653,42 @@ func parseStart(payload []byte, authRequired bool) (connectionStart, error) {
 	var message startMessage
 	decoder := json.NewDecoder(strings.NewReader(string(payload)))
 	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&message); err != nil || decoder.Decode(&struct{}{}) != io.EOF {
-		return connectionStart{}, errors.New("INVALID_START")
+	if err := decoder.Decode(&message); err != nil {
+		return connectionStart{}, startRejectError("json_decode")
+	}
+	if decoder.Decode(&struct{}{}) != io.EOF {
+		return connectionStart{}, startRejectError("trailing_json")
 	}
 	if message.Provider == "" {
 		message.Provider = "volcengine"
 	}
-	if message.Type != "start" || !validUUID(message.SessionID) || message.Mode != "s2s" ||
-		!isSupportedLanguage(message.SourceLanguage) || !isSupportedLanguage(message.TargetLanguage) ||
-		message.SourceLanguage == message.TargetLanguage || message.TargetAudioFormat != "pcm" || message.TargetAudioRate != 16000 ||
-		(message.Provider != "volcengine" && message.Provider != "azure") ||
-		!validCandidateLanguages(message) ||
-		(message.Voice != "" && !azurespeech.IsVoiceAllowed(message.Voice, voiceLanguages(message))) ||
-		(authRequired && (strings.TrimSpace(message.UserID) == "" || strings.TrimSpace(message.InstallID) == "")) ||
-		(!authRequired && (message.UserID != "" || message.InstallID != "")) {
-		return connectionStart{}, errors.New("INVALID_START")
+	// Reasons intentionally name only a rejected contract rule. They never
+	// include request contents (tokens, identifiers, audio, or voice names).
+	switch {
+	case message.Type != "start":
+		return connectionStart{}, startRejectError("type")
+	case !validUUID(message.SessionID):
+		return connectionStart{}, startRejectError("session_id")
+	case message.Mode != "s2s":
+		return connectionStart{}, startRejectError("mode")
+	case !isSupportedLanguage(message.SourceLanguage) || !isSupportedLanguage(message.TargetLanguage):
+		return connectionStart{}, startRejectError("language")
+	case message.SourceLanguage == message.TargetLanguage:
+		return connectionStart{}, startRejectError("same_language")
+	case message.TargetAudioFormat != "pcm":
+		return connectionStart{}, startRejectError("audio_format")
+	case message.TargetAudioRate != 16000:
+		return connectionStart{}, startRejectError("audio_rate")
+	case message.Provider != "volcengine" && message.Provider != "azure":
+		return connectionStart{}, startRejectError("provider")
+	case !validCandidateLanguages(message):
+		return connectionStart{}, startRejectError("candidate_languages")
+	case message.Voice != "" && !azurespeech.IsVoiceAllowed(message.Voice, voiceLanguages(message)):
+		return connectionStart{}, startRejectError("voice")
+	case authRequired && (strings.TrimSpace(message.UserID) == "" || strings.TrimSpace(message.InstallID) == ""):
+		return connectionStart{}, startRejectError("session_identity_missing")
+	case !authRequired && (message.UserID != "" || message.InstallID != ""):
+		return connectionStart{}, startRejectError("session_identity_unexpected")
 	}
 	return connectionStart{
 		StartRequest: ast.StartRequest{SessionID: message.SessionID, Mode: message.Mode, SourceLanguage: message.SourceLanguage, TargetLanguage: message.TargetLanguage, TargetAudioFormat: message.TargetAudioFormat, TargetAudioRate: message.TargetAudioRate, Provider: message.Provider, CandidateLanguages: append([]string(nil), message.CandidateLanguages...), Voice: message.Voice},
@@ -771,6 +795,23 @@ func errorCode(err error) string {
 		return ""
 	}
 	return "INVALID_START"
+}
+
+func startRejectReason(err error) string {
+	var rejection startRejectError
+	if errors.As(err, &rejection) {
+		return string(rejection)
+	}
+	return "unknown"
+}
+
+func (s *Server) logStartRejected(err error) {
+	// Keep this server-side only: the client still receives the uniform
+	// INVALID_START code so the protocol does not disclose validation details.
+	s.logger.Info("agent event",
+		"session", "", "direction", "", "event", "start_rejected",
+		"error_code", errorCode(err), "logId", "", "start_reason", startRejectReason(err),
+	)
 }
 
 func (s *Server) logError(session, direction, event, code, logID string) {

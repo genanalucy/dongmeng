@@ -709,6 +709,37 @@ func equalStrings(got, want []string) bool {
 	return true
 }
 
+func TestParseStartAcceptsAndroidAutomaticCloudPayload(t *testing.T) {
+	// This is the wire JSON emitted by StartMessage.toJson() for an Azure AUTO
+	// cloud session. Keep it as a raw payload so this test exercises Go's JSON
+	// decoder rather than Go's own serializer.
+	payload := []byte(`{"type":"start","sessionId":"123e4567-e89b-12d3-a456-426614174000","mode":"s2s","sourceLanguage":"zh","targetLanguage":"en","targetAudioFormat":"pcm","targetAudioRate":16000,"userId":"user-123","installId":"install-456","provider":"azure","candidateLanguages":["zh","en"],"voice":"en-US-JennyNeural"}`)
+
+	parsed, err := parseStart(payload, true)
+	if err != nil {
+		t.Fatalf("parseStart() error = %v", err)
+	}
+	if parsed.Provider != "azure" || !equalStrings(parsed.CandidateLanguages, []string{"zh", "en"}) || parsed.Voice != "en-US-JennyNeural" || parsed.UserID != testUserID || parsed.InstallID != testInstallID {
+		t.Fatalf("parsed start = %#v", parsed)
+	}
+}
+
+func TestStartRejectedLogIncludesOnlySanitizedReason(t *testing.T) {
+	var output bytes.Buffer
+	server := New(Options{Logger: slog.New(slog.NewJSONHandler(&output, nil))})
+	server.logStartRejected(startRejectError("provider"))
+
+	logLine := output.String()
+	if !strings.Contains(logLine, `"event":"start_rejected"`) || !strings.Contains(logLine, `"error_code":"INVALID_START"`) || !strings.Contains(logLine, `"start_reason":"provider"`) {
+		t.Fatalf("log = %q", logLine)
+	}
+	for _, forbidden := range []string{"translation.jwt.", "user-123", "install-456", "en-US-JennyNeural"} {
+		if strings.Contains(logLine, forbidden) {
+			t.Fatalf("log leaked %q: %q", forbidden, logLine)
+		}
+	}
+}
+
 func TestStartParsingAndLanguageValidation(t *testing.T) {
 	for _, language := range []string{"zh", "en", "fr", "vi"} {
 		request := map[string]any{"sourceLanguage": language, "targetLanguage": "en"}
