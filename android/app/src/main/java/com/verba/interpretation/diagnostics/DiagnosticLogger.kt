@@ -6,6 +6,12 @@ import com.verba.interpretation.ui.FaceToFaceState
 
 data class DiagnosticEntry(val elapsedMillis: Long, val clockTime: String, val category: String, val message: String)
 
+/** Renders only DiagnosticEntry values produced by the whitelist-only logger seam. */
+fun renderDiagnosticLog(entries: List<DiagnosticEntry>): String = entries.joinToString(
+    separator = "\n",
+    prefix = "Verba Debug 诊断日志（安全元数据）\n",
+) { "+${it.elapsedMillis}ms ${it.clockTime} [${it.category}] ${it.message}" }
+
 /**
  * Whitelist-only, process-local diagnostic seam. Implementations must never accept user or
  * transport payloads, so callers cannot accidentally copy credentials, audio, or transcript text.

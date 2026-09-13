@@ -19,9 +19,7 @@ internal class DebugDiagnosticLog(
 
     override fun entries(): List<DiagnosticEntry> = synchronized(lock) { entries.toList() }
     override fun clear() = synchronized(lock) { entries.clear() }
-    fun render(): String = entries().joinToString("\n", prefix = "Verba Debug 诊断日志（安全元数据）\n") {
-        "+${it.elapsedMillis}ms ${it.clockTime} [${it.category}] ${it.message}"
-    }
+    fun render(): String = renderDiagnosticLog(entries())
 
     private fun add(category: String, message: String) = synchronized(lock) {
         while (entries.size >= capacity) entries.removeFirst()
