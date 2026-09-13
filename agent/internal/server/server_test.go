@@ -55,7 +55,7 @@ func (c diagnosticStartClient) Start(context.Context, ast.StartRequest, ast.Even
 }
 
 func (diagnosticEventClient) Start(_ context.Context, _ ast.StartRequest, sink ast.EventSink) (ast.Session, error) {
-	sink.Emit(ast.Event{Type: "error", Code: "AZURE_SESSION_FAILED", Message: "translation session failed", Diagnostic: "azure_ws_close_1008_reason_present"})
+	sink.Emit(ast.Event{Type: "error", Code: "AZURE_SESSION_FAILED", Message: "translation session failed", Diagnostic: "azure_read_close_1008_reason_present"})
 	return &fakeSession{}, nil
 }
 
@@ -282,7 +282,7 @@ func TestAzureDiagnosticsStayServerOnlyAndKeepBrowserErrorContract(t *testing.T)
 	defer ts.Close()
 	conn := dial(t, ts.URL, "http://localhost:5173")
 	defer conn.CloseNow()
-	start(t, conn, nil)
+	start(t, conn, map[string]any{"provider": "azure", "candidateLanguages": []string{"zh", "en"}, "voice": "en-US-JennyNeural"})
 	event := readEvent(t, conn)
 	if event.Code != "VOLCENGINE_CONNECT_FAILED" || event.Message != "translation service is unavailable" {
 		t.Fatalf("browser error contract = %#v", event)
@@ -291,8 +291,17 @@ func TestAzureDiagnosticsStayServerOnlyAndKeepBrowserErrorContract(t *testing.T)
 		t.Fatalf("browser error leaked diagnostic: %#v", event)
 	}
 	output := logs.String()
-	if !strings.Contains(output, `"upstream_status":403`) || !strings.Contains(output, `"upstream_diagnostic":"azure_handshake_http"`) {
-		t.Fatalf("safe handshake diagnostics absent from logs: %s", output)
+	for _, wanted := range []string{
+		`"provider":"azure"`, `"automatic":true`, `"upstream_status":403`, `"upstream_diagnostic":"azure_handshake_http"`,
+	} {
+		if !strings.Contains(output, wanted) {
+			t.Fatalf("safe Azure diagnostic %q absent from logs: %s", wanted, output)
+		}
+	}
+	for _, forbidden := range []string{"candidateLanguages", "en-US-JennyNeural"} {
+		if strings.Contains(output, forbidden) {
+			t.Fatalf("logs leaked start detail %q: %s", forbidden, output)
+		}
 	}
 
 	logs.Reset()
@@ -300,15 +309,34 @@ func TestAzureDiagnosticsStayServerOnlyAndKeepBrowserErrorContract(t *testing.T)
 	defer ts.Close()
 	conn = dial(t, ts.URL, "http://localhost:5173")
 	defer conn.CloseNow()
-	start(t, conn, nil)
+	start(t, conn, map[string]any{"provider": "azure", "candidateLanguages": []string{"zh", "en"}})
 	if event = readEvent(t, conn); event.Type != "ready" {
 		t.Fatalf("ready event = %#v", event)
 	}
 	if event = readEvent(t, conn); event.Type != "error" || event.Code != "AZURE_SESSION_FAILED" || event.Message != "translation session failed" {
 		t.Fatalf("browser event = %#v", event)
 	}
-	if !strings.Contains(logs.String(), `"upstream_diagnostic":"azure_ws_close_1008_reason_present"`) {
-		t.Fatalf("safe close diagnostic absent from logs: %s", logs.String())
+	output = logs.String()
+	for _, wanted := range []string{`"provider":"azure"`, `"automatic":true`, `"upstream_diagnostic":"azure_read_close_1008_reason_present"`} {
+		if !strings.Contains(output, wanted) {
+			t.Fatalf("safe close diagnostic %q absent from logs: %s", wanted, output)
+		}
+	}
+}
+
+func TestStartReceivedLogsValidatedVolcengineManualMode(t *testing.T) {
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&logs, nil))
+	ts := testHTTPServerWithLogger(&fakeClient{}, logger)
+	defer ts.Close()
+	conn := dial(t, ts.URL, "http://localhost:5173")
+	defer conn.CloseNow()
+	start(t, conn, nil)
+	if event := readEvent(t, conn); event.Type != "ready" {
+		t.Fatalf("ready event = %#v", event)
+	}
+	if output := logs.String(); !strings.Contains(output, `"event":"start_received"`) || !strings.Contains(output, `"provider":"volcengine"`) || !strings.Contains(output, `"automatic":false`) {
+		t.Fatalf("manual start mode absent from logs: %s", output)
 	}
 }
 

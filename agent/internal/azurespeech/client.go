@@ -141,7 +141,7 @@ func (c *client) Start(ctx context.Context, request ast.StartRequest, sink ast.E
 	}
 	if err := session.send(ctx, websocket.MessageText, textFrameWithRequestID(session.requestID, "speech.config", config)); err != nil {
 		_ = session.Close()
-		return nil, fmt.Errorf("send Azure speech.config: %w", err)
+		return nil, azurePhaseError("initial_config", err)
 	}
 	if automatic {
 		automaticContext, err := automaticSpeechContext(request.CandidateLanguages)
@@ -151,7 +151,7 @@ func (c *client) Start(ctx context.Context, request ast.StartRequest, sink ast.E
 		}
 		if err := session.send(ctx, websocket.MessageText, textFrameWithRequestID(session.requestID, "speech.context", automaticContext)); err != nil {
 			_ = session.Close()
-			return nil, fmt.Errorf("send Azure speech.context: %w", err)
+			return nil, azurePhaseError("initial_context", err)
 		}
 	}
 	// ServiceRecognizerBase sends format metadata in its own binary message
@@ -159,7 +159,7 @@ func (c *client) Start(ctx context.Context, request ast.StartRequest, sink ast.E
 	// with the first PCM packet, so establish the stream independently here.
 	if err := session.send(ctx, websocket.MessageBinary, session.audioFrame(riffHeaderPCM16k())); err != nil {
 		_ = session.Close()
-		return nil, fmt.Errorf("send Azure RIFF header: %w", err)
+		return nil, azurePhaseError("initial_riff", err)
 	}
 	session.stateMu.Lock()
 	session.riffSent = true
@@ -425,18 +425,32 @@ func azureDialError(response *http.Response, _ error) error {
 }
 
 func azureReadError(err error) error {
+	return azurePhaseError("read", err)
+}
+
+// azurePhaseError keeps Azure transport details out of logs while preserving
+// the lifecycle phase that failed. A close code is protocol metadata; the
+// arbitrary Azure close reason is reduced to its presence only.
+func azurePhaseError(phase string, err error) error {
 	var closeErr websocket.CloseError
 	if errors.As(err, &closeErr) {
-		// Do not log Azure's arbitrary close reason. Its presence is enough to
-		// distinguish an explicit reason from a bare close while the code
-		// identifies the protocol category.
 		reason := "empty"
 		if strings.TrimSpace(closeErr.Reason) != "" {
 			reason = "present"
 		}
-		return azureSessionError{diagnostic: fmt.Sprintf("azure_ws_close_%d_reason_%s", closeErr.Code, reason)}
+		return azureSessionError{diagnostic: fmt.Sprintf("azure_%s_close_%d_reason_%s", phase, closeErr.Code, reason)}
 	}
-	return azureSessionError{diagnostic: "azure_ws_read_failed"}
+	var sessionErr azureSessionError
+	if errors.As(err, &sessionErr) {
+		// Retain a known-safe protocol category, but prefix it with the phase
+		// that observed it. This lets immediate Start failures identify which
+		// setup frame was in flight without exposing upstream text.
+		return azureSessionError{
+			diagnostic: "azure_" + phase + "_" + strings.TrimPrefix(sessionErr.diagnostic, "azure_"),
+			status:     sessionErr.status,
+		}
+	}
+	return azureSessionError{diagnostic: "azure_" + phase + "_failed"}
 }
 
 func azureDiagnostic(err error) string {
@@ -505,7 +519,7 @@ func (s *session) writeLoop() {
 			err := s.conn.Write(s.ctx, request.typ, request.payload)
 			request.result <- err
 			if err != nil {
-				s.fail("AZURE_SESSION_FAILED", "translation session failed", err)
+				s.fail("AZURE_SESSION_FAILED", "translation session failed", azurePhaseError("write", err))
 				return
 			}
 		case <-s.ctx.Done():
@@ -524,7 +538,7 @@ func (s *session) readLoop() {
 			return
 		}
 		if typ != websocket.MessageText {
-			s.fail("AZURE_SESSION_FAILED", "translation session failed", errors.New("unexpected Azure WebSocket frame"))
+			s.fail("AZURE_SESSION_FAILED", "translation session failed", azurePhaseError("read", errors.New("unexpected Azure WebSocket frame")))
 			return
 		}
 		if err := s.handleMessage(data); err != nil {
@@ -532,7 +546,7 @@ func (s *session) readLoop() {
 			if errors.As(err, &ttsErr) {
 				s.fail("AZURE_TTS_FAILED", "text-to-speech synthesis failed", err)
 			} else {
-				s.fail("AZURE_SESSION_FAILED", "translation session failed", err)
+				s.fail("AZURE_SESSION_FAILED", "translation session failed", azurePhaseError("read", err))
 			}
 			return
 		}

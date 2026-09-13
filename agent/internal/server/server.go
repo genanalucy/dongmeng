@@ -432,12 +432,12 @@ func (s *Server) runConnection(parent context.Context, conn *websocket.Conn, ses
 		}
 		go s.governSession(ctx, sessionToken, terminate)
 	}
-	s.logError(start.SessionID, direction, "start_received", "", "")
+	s.logStartReceived(start, direction)
 
 	var upstreamMu sync.Mutex
 	upstreamTerminal := false
 	sink := &eventSink{emit: func(event ast.Event) {
-		s.logASTEvent(start.SessionID, direction, event)
+		s.logASTEvent(start.StartRequest, direction, event)
 		upstreamMu.Lock()
 		defer upstreamMu.Unlock()
 		if upstreamTerminal {
@@ -521,7 +521,7 @@ func (s *Server) runConnection(parent context.Context, conn *websocket.Conn, ses
 			code = "TRANSLATION_PROVIDER_UNAVAILABLE"
 		}
 		logID := ast.ErrorLogID(err)
-		s.logASTStartFailed(start.SessionID, direction, code, logID, err)
+		s.logASTStartFailed(start.StartRequest, direction, code, logID, err)
 		emit(browserEvent{Type: "error", Code: code, Message: "translation service is unavailable", LogID: logID})
 		return
 	}
@@ -819,13 +819,29 @@ func (s *Server) logError(session, direction, event, code, logID string) {
 	s.logger.Info("agent event", attrs...)
 }
 
-func (s *Server) logASTEvent(session, direction string, event ast.Event) {
+// logStartReceived records provider mode only after parseStart has validated the
+// browser request. In particular, it never logs a raw provider or candidates.
+func (s *Server) logStartReceived(start connectionStart, direction string) {
+	s.logger.Info("agent event",
+		"session", start.SessionID,
+		"direction", direction,
+		"event", "start_received",
+		"error_code", "",
+		"logId", "",
+		"provider", start.Provider,
+		"automatic", len(start.CandidateLanguages) > 0,
+	)
+}
+
+func (s *Server) logASTEvent(start ast.StartRequest, direction string, event ast.Event) {
 	attrs := []any{
-		"session", session,
+		"session", start.SessionID,
 		"direction", direction,
 		"event", "ast_" + event.Type,
 		"error_code", event.Code,
 		"logId", event.LogID,
+		"provider", start.Provider,
+		"automatic", len(start.CandidateLanguages) > 0,
 	}
 	if event.Type == "error" && event.UpstreamStatus != 0 {
 		attrs = append(attrs, "upstream_status", event.UpstreamStatus)
@@ -836,8 +852,16 @@ func (s *Server) logASTEvent(session, direction string, event ast.Event) {
 	s.logger.Info("agent event", attrs...)
 }
 
-func (s *Server) logASTStartFailed(session, direction, code, logID string, err error) {
-	attrs := []any{"session", session, "direction", direction, "event", "ast_start_failed", "error_code", code, "logId", logID}
+func (s *Server) logASTStartFailed(start ast.StartRequest, direction, code, logID string, err error) {
+	attrs := []any{
+		"session", start.SessionID,
+		"direction", direction,
+		"event", "ast_start_failed",
+		"error_code", code,
+		"logId", logID,
+		"provider", start.Provider,
+		"automatic", len(start.CandidateLanguages) > 0,
+	}
 	if status := ast.ErrorUpstreamStatus(err); status != 0 {
 		attrs = append(attrs, "upstream_status", status)
 	}

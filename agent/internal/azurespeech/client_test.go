@@ -228,18 +228,38 @@ func TestAzurePathErrorMapsToGenericSessionFailure(t *testing.T) {
 	session := startTestSession(t, ws.URL, "", sink)
 	defer session.Close()
 	event := sink.next(t)
-	if event.Type != "error" || event.Code != "AZURE_SESSION_FAILED" || event.Message != "translation session failed" || event.Diagnostic != "azure_path_error" {
+	if event.Type != "error" || event.Code != "AZURE_SESSION_FAILED" || event.Message != "translation session failed" || event.Diagnostic != "azure_read_path_error" {
 		t.Fatalf("event = %#v", event)
 	}
 }
 
 func TestAzureReadErrorClassifiesCloseWithoutReason(t *testing.T) {
 	err := azureReadError(websocket.CloseError{Code: websocket.StatusPolicyViolation, Reason: "secret Azure detail"})
-	if diagnostic := azureDiagnostic(err); diagnostic != "azure_ws_close_1008_reason_present" {
+	if diagnostic := azureDiagnostic(err); diagnostic != "azure_read_close_1008_reason_present" {
 		t.Fatalf("diagnostic = %q", diagnostic)
 	}
 	if strings.Contains(err.Error(), "secret") {
 		t.Fatalf("close reason leaked into error: %q", err)
+	}
+}
+
+func TestAzurePhaseErrorClassifiesInitialSetupAndWriteWithoutErrorDetails(t *testing.T) {
+	for _, testCase := range []struct {
+		phase string
+		want  string
+	}{
+		{phase: "initial_config", want: "azure_initial_config_failed"},
+		{phase: "initial_context", want: "azure_initial_context_failed"},
+		{phase: "initial_riff", want: "azure_initial_riff_failed"},
+		{phase: "write", want: "azure_write_failed"},
+	} {
+		err := azurePhaseError(testCase.phase, errors.New("secret Azure detail"))
+		if diagnostic := azureDiagnostic(err); diagnostic != testCase.want {
+			t.Fatalf("%s diagnostic = %q, want %q", testCase.phase, diagnostic, testCase.want)
+		}
+		if strings.Contains(err.Error(), "secret") {
+			t.Fatalf("%s error leaked detail: %q", testCase.phase, err)
+		}
 	}
 }
 
