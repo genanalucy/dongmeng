@@ -364,6 +364,35 @@ func TestAutomaticFinalEmitsDetectedLanguageBeforeFinalsAndTTS(t *testing.T) {
 	}
 }
 
+func TestAutomaticSpeechPhraseLIDRoutesFollowingTranslationFinal(t *testing.T) {
+	ws := newWSServer(t, func(ctx context.Context, conn *websocket.Conn) {
+		readContext(t, ctx, conn)
+		_ = conn.Write(ctx, websocket.MessageText, []byte(`{"type":"speech.phrase","PrimaryLanguage":{"Language":"en-US"},"RecognitionStatus":"Success"}`))
+		_ = conn.Write(ctx, websocket.MessageText, []byte(`{"type":"translation.phrase","Text":"source","RecognitionStatus":"Success","Translations":{"zh-Hans":"target"}}`))
+	})
+	defer ws.Close()
+	tts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte{0, 1}) }))
+	defer tts.Close()
+	sink := newRecordingSink()
+	client := &client{configured: true, key: "secret", region: "japaneast", wsBase: strings.Replace(ws.URL, "http://", "ws://", 1), ttsBase: tts.URL, httpClient: http.DefaultClient}
+	session, err := client.Start(context.Background(), ast.StartRequest{SourceLanguage: "zh", TargetLanguage: "en", CandidateLanguages: []string{"zh", "en"}}, sink)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close()
+	if event := sink.next(t); event.Type != "detected_language" || event.Language != "en" || event.TargetLanguage != "zh" {
+		t.Fatalf("detected = %#v", event)
+	}
+	assertEvent(t, sink.next(t), "source_final", "source")
+	assertEvent(t, sink.next(t), "translation_final", "target")
+	if event := sink.next(t); event.Type != "tts_start" || event.SegmentID != 1 {
+		t.Fatalf("tts prelude = %#v", event)
+	}
+	if event := sink.next(t); event.Type != "tts_audio" || event.SegmentID != 1 {
+		t.Fatalf("tts = %#v", event)
+	}
+}
+
 func TestAutomaticTranslationResponseSupportsOfficialRootAndSpeechPhraseSchemas(t *testing.T) {
 	ws := newWSServer(t, func(ctx context.Context, conn *websocket.Conn) {
 		readContext(t, ctx, conn)
@@ -438,7 +467,7 @@ func TestAutomaticMissingFieldsEmitSafeSchemaCategories(t *testing.T) {
 		{
 			name: "candidate language",
 			body: `{"type":"translation.phrase","Text":"source","RecognitionStatus":"Success","Translations":{"zh-Hans":"target"}}`,
-			want: "azure_message_translation_phrase_auto_missing_candidate_lid_root_primary_language_0_root_primary_language_language_0_root_primary_language_language_lower_0_root_primary_language_lower_0_root_primary_language_lower_language_0_root_language_0_root_language_lower_0_speech_phrase_0_speech_phrase_primary_language_0_speech_phrase_primary_language_language_0_speech_phrase_primary_language_language_lower_0_speech_phrase_primary_language_lower_0_speech_phrase_primary_language_lower_language_0_root_nbest_0",
+			want: "azure_message_translation_phrase_auto_missing_candidate_lid_root_primary_language_0_root_primary_language_language_0_root_primary_language_language_lower_0_root_primary_language_lower_0_root_primary_language_lower_language_0_root_language_0_root_language_lower_0_speech_phrase_0_speech_phrase_primary_language_0_speech_phrase_primary_language_language_0_speech_phrase_primary_language_language_lower_0_speech_phrase_primary_language_lower_0_speech_phrase_primary_language_lower_language_0_translation_0_translation_primary_language_0_translation_primary_language_language_0_translation_detected_language_0_translation_source_language_0_translation_language_0_root_detected_language_0_root_source_language_0_root_nbest_0_prior_speech_phrase_0_prior_speech_phrase_candidate_0",
 		},
 		{
 			name: "source",

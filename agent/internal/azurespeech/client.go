@@ -344,6 +344,11 @@ type session struct {
 	accepting, active, turnEnded, finishRequested, terminal bool
 	riffSent, audioSent                                     bool
 	segmentID                                               int64
+	// Automatic V2 can deliver a speech.phrase LID result immediately before
+	// its paired translation.phrase. Keep only the validated candidate code;
+	// never retain transcript text or upstream metadata.
+	automaticSpeechPhraseSeen, automaticSpeechPhraseCandidate bool
+	pendingAutomaticLanguage                                  string
 	// eventMu serializes text, synchronous TTS, errors, and finished.
 	eventMu sync.Mutex
 	errMu   sync.Mutex
@@ -740,14 +745,18 @@ type primaryLanguage struct {
 }
 
 type translationEnvelope struct {
-	Translations []translation `json:"Translations"`
+	Translations     []translation   `json:"Translations"`
+	PrimaryLanguage  primaryLanguage `json:"PrimaryLanguage"`
+	DetectedLanguage string          `json:"DetectedLanguage"`
+	SourceLanguage   string          `json:"SourceLanguage"`
+	Language         string          `json:"Language"`
 }
 
 // automaticFinalSchema is a temporary, content-free production probe. It is
 // emitted only when an automatic final cannot be routed. After a successful
 // production schema confirmation, remove the fields that proved unnecessary
 // together with their test fixtures; retain only the fixed failure categories.
-func automaticFinalSchema(path string, body []byte) error {
+func automaticFinalSchema(path string, body []byte, speechPhraseSeen, speechPhraseCandidate bool) error {
 	var root map[string]json.RawMessage
 	if json.Unmarshal(body, &root) != nil {
 		return azureMessageDiagnostic(path, "auto_missing_candidate_lid_schema_unavailable")
@@ -757,8 +766,10 @@ func automaticFinalSchema(path string, body []byte) error {
 	speech, speechPhrase := rawObject(root, "SpeechPhrase")
 	speechPrimary, speechPrimaryPresent := rawObject(speech, "PrimaryLanguage")
 	speechPrimaryLower, speechPrimaryLowerPresent := rawObject(speech, "primaryLanguage")
+	translation, translationPresent := rawObject(root, "Translation")
+	translationPrimary, translationPrimaryPresent := rawObject(translation, "PrimaryLanguage")
 	return azureMessageDiagnostic(path, "auto_missing_candidate_lid_root_primary_language_"+
-		boolDiagnostic(rootPrimary)+"_root_primary_language_language_"+boolDiagnostic(rawStringPresent(primary, "Language"))+"_root_primary_language_language_lower_"+boolDiagnostic(rawStringPresent(primary, "language"))+"_root_primary_language_lower_"+boolDiagnostic(rootPrimaryLower)+"_root_primary_language_lower_language_"+boolDiagnostic(rawStringPresent(primaryLower, "language"))+"_root_language_"+boolDiagnostic(rawStringPresent(root, "Language"))+"_root_language_lower_"+boolDiagnostic(rawStringPresent(root, "language"))+"_speech_phrase_"+boolDiagnostic(speechPhrase)+"_speech_phrase_primary_language_"+boolDiagnostic(speechPrimaryPresent)+"_speech_phrase_primary_language_language_"+boolDiagnostic(rawStringPresent(speechPrimary, "Language"))+"_speech_phrase_primary_language_language_lower_"+boolDiagnostic(rawStringPresent(speechPrimary, "language"))+"_speech_phrase_primary_language_lower_"+boolDiagnostic(speechPrimaryLowerPresent)+"_speech_phrase_primary_language_lower_language_"+boolDiagnostic(rawStringPresent(speechPrimaryLower, "language"))+"_root_nbest_"+boolDiagnostic(rawValuePresent(root, "NBest")))
+		boolDiagnostic(rootPrimary)+"_root_primary_language_language_"+boolDiagnostic(rawStringPresent(primary, "Language"))+"_root_primary_language_language_lower_"+boolDiagnostic(rawStringPresent(primary, "language"))+"_root_primary_language_lower_"+boolDiagnostic(rootPrimaryLower)+"_root_primary_language_lower_language_"+boolDiagnostic(rawStringPresent(primaryLower, "language"))+"_root_language_"+boolDiagnostic(rawStringPresent(root, "Language"))+"_root_language_lower_"+boolDiagnostic(rawStringPresent(root, "language"))+"_speech_phrase_"+boolDiagnostic(speechPhrase)+"_speech_phrase_primary_language_"+boolDiagnostic(speechPrimaryPresent)+"_speech_phrase_primary_language_language_"+boolDiagnostic(rawStringPresent(speechPrimary, "Language"))+"_speech_phrase_primary_language_language_lower_"+boolDiagnostic(rawStringPresent(speechPrimary, "language"))+"_speech_phrase_primary_language_lower_"+boolDiagnostic(speechPrimaryLowerPresent)+"_speech_phrase_primary_language_lower_language_"+boolDiagnostic(rawStringPresent(speechPrimaryLower, "language"))+"_translation_"+boolDiagnostic(translationPresent)+"_translation_primary_language_"+boolDiagnostic(translationPrimaryPresent)+"_translation_primary_language_language_"+boolDiagnostic(rawStringPresent(translationPrimary, "Language"))+"_translation_detected_language_"+boolDiagnostic(rawStringPresent(translation, "DetectedLanguage"))+"_translation_source_language_"+boolDiagnostic(rawStringPresent(translation, "SourceLanguage"))+"_translation_language_"+boolDiagnostic(rawStringPresent(translation, "Language"))+"_root_detected_language_"+boolDiagnostic(rawStringPresent(root, "DetectedLanguage"))+"_root_source_language_"+boolDiagnostic(rawStringPresent(root, "SourceLanguage"))+"_root_nbest_"+boolDiagnostic(rawValuePresent(root, "NBest"))+"_prior_speech_phrase_"+boolDiagnostic(speechPhraseSeen)+"_prior_speech_phrase_candidate_"+boolDiagnostic(speechPhraseCandidate))
 }
 
 func rawObject(object map[string]json.RawMessage, key string) (map[string]json.RawMessage, bool) {
@@ -800,6 +811,8 @@ type upstreamMessage struct {
 	Translations        map[string]string   `json:"translations"`
 	TranslationsCapital map[string]string   `json:"Translations"`
 	Translation         translationEnvelope `json:"Translation"`
+	DetectedLanguage    string              `json:"DetectedLanguage"`
+	SourceLanguage      string              `json:"SourceLanguage"`
 	Signal              struct {
 		Name string `json:"name"`
 	} `json:"signal"`
@@ -886,16 +899,29 @@ func translationFromMap(translations map[string]string, language string) string 
 }
 
 func (m *upstreamMessage) detectedLanguage() string {
-	if m.SpeechPhrase.PrimaryLanguage.Language != "" {
-		return m.SpeechPhrase.PrimaryLanguage.Language
+	for _, language := range []string{
+		m.SpeechPhrase.PrimaryLanguage.Language,
+		m.PrimaryLanguage.Language,
+		m.Translation.PrimaryLanguage.Language,
+		m.SpeechPhrase.Translation.PrimaryLanguage.Language,
+		m.DetectedLanguage,
+		m.SourceLanguage,
+		m.Translation.DetectedLanguage,
+		m.Translation.SourceLanguage,
+		m.Translation.Language,
+		m.Language,
+		m.LanguageLower,
+	} {
+		if language != "" {
+			return language
+		}
 	}
-	if m.PrimaryLanguage.Language != "" {
-		return m.PrimaryLanguage.Language
-	}
-	if m.Language != "" {
-		return m.Language
-	}
-	return m.LanguageLower
+	return ""
+}
+
+func (s *session) candidateLanguage(message *upstreamMessage) (string, bool) {
+	language, ok := protocolLanguage(message.detectedLanguage())
+	return language, ok && (language == s.candidates[0] || language == s.candidates[1])
 }
 
 func (s *session) handleMessage(data []byte) error {
@@ -927,11 +953,11 @@ func (s *session) handleMessage(data []byte) error {
 		message.RecognitionStatus = response.SpeechPhrase.RecognitionStatus
 		message.PrimaryLanguage = response.PrimaryLanguage
 		message.SpeechPhrase.PrimaryLanguage = response.SpeechPhrase.PrimaryLanguage
-		message.Translation.Translations = response.Translations
-		if len(message.Translation.Translations) == 0 {
-			message.Translation.Translations = response.Translation.Translations
+		message.Translation = response.Translation
+		if len(response.Translations) != 0 {
+			message.Translation.Translations = response.Translations
 		}
-		message.SpeechPhrase.Translation.Translations = response.SpeechPhrase.Translation.Translations
+		message.SpeechPhrase.Translation = response.SpeechPhrase.Translation
 		kind = "translation.phrase"
 	} else {
 		if err := json.Unmarshal(body, &message); err != nil {
@@ -946,6 +972,14 @@ func (s *session) handleMessage(data []byte) error {
 	}
 	s.eventMu.Lock()
 	defer s.eventMu.Unlock()
+	if len(s.candidates) != 0 && kind == "speech.phrase" {
+		s.automaticSpeechPhraseSeen = true
+		if language, ok := s.candidateLanguage(&message); ok {
+			s.pendingAutomaticLanguage = language
+			s.automaticSpeechPhraseCandidate = true
+		}
+		return nil
+	}
 	switch kind {
 	case "translation.hypothesis":
 		// Hypotheses are display-only. Continuous LID is authoritative only for
@@ -1018,9 +1052,18 @@ func (s *session) resolveDetectedLanguage(path string, body []byte, message *ups
 	if status := strings.TrimSpace(message.RecognitionStatus); status != "" && !strings.EqualFold(status, "Success") {
 		return "", "", azureMessageDiagnostic(path, "auto_non_success_recognition")
 	}
-	language, ok := protocolLanguage(message.detectedLanguage())
-	if !ok || (language != s.candidates[0] && language != s.candidates[1]) {
-		return "", "", automaticFinalSchema(path, body)
+	language, ok := s.candidateLanguage(message)
+	priorSpeechPhraseSeen, priorSpeechPhraseCandidate := s.automaticSpeechPhraseSeen, s.automaticSpeechPhraseCandidate
+	if !ok && message.detectedLanguage() == "" && s.pendingAutomaticLanguage != "" {
+		language, ok = s.pendingAutomaticLanguage, true
+	}
+	// A preceding speech.phrase LID result can only be paired with one final.
+	// Clear it even if the final is rejected so it cannot route a later turn.
+	s.pendingAutomaticLanguage = ""
+	s.automaticSpeechPhraseSeen = false
+	s.automaticSpeechPhraseCandidate = false
+	if !ok {
+		return "", "", automaticFinalSchema(path, body, priorSpeechPhraseSeen, priorSpeechPhraseCandidate)
 	}
 	target := s.candidates[0]
 	if language == target {
