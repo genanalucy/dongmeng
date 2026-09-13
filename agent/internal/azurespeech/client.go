@@ -748,10 +748,41 @@ type translationEnvelope struct {
 // emitted only when an automatic final cannot be routed. After a successful
 // production schema confirmation, remove the fields that proved unnecessary
 // together with their test fixtures; retain only the fixed failure categories.
-func automaticFinalSchema(path string, message *upstreamMessage) error {
-	return azureMessageDiagnostic(path, "auto_missing_candidate_lid_primary_language_"+
-		boolDiagnostic(message.PrimaryLanguage.Language != "")+"_speech_phrase_primary_language_"+
-		boolDiagnostic(message.SpeechPhrase.PrimaryLanguage.Language != ""))
+func automaticFinalSchema(path string, body []byte) error {
+	var root map[string]json.RawMessage
+	if json.Unmarshal(body, &root) != nil {
+		return azureMessageDiagnostic(path, "auto_missing_candidate_lid_schema_unavailable")
+	}
+	primary, rootPrimary := rawObject(root, "PrimaryLanguage")
+	primaryLower, rootPrimaryLower := rawObject(root, "primaryLanguage")
+	speech, speechPhrase := rawObject(root, "SpeechPhrase")
+	speechPrimary, speechPrimaryPresent := rawObject(speech, "PrimaryLanguage")
+	speechPrimaryLower, speechPrimaryLowerPresent := rawObject(speech, "primaryLanguage")
+	return azureMessageDiagnostic(path, "auto_missing_candidate_lid_root_primary_language_"+
+		boolDiagnostic(rootPrimary)+"_root_primary_language_language_"+boolDiagnostic(rawStringPresent(primary, "Language"))+"_root_primary_language_language_lower_"+boolDiagnostic(rawStringPresent(primary, "language"))+"_root_primary_language_lower_"+boolDiagnostic(rootPrimaryLower)+"_root_primary_language_lower_language_"+boolDiagnostic(rawStringPresent(primaryLower, "language"))+"_root_language_"+boolDiagnostic(rawStringPresent(root, "Language"))+"_root_language_lower_"+boolDiagnostic(rawStringPresent(root, "language"))+"_speech_phrase_"+boolDiagnostic(speechPhrase)+"_speech_phrase_primary_language_"+boolDiagnostic(speechPrimaryPresent)+"_speech_phrase_primary_language_language_"+boolDiagnostic(rawStringPresent(speechPrimary, "Language"))+"_speech_phrase_primary_language_language_lower_"+boolDiagnostic(rawStringPresent(speechPrimary, "language"))+"_speech_phrase_primary_language_lower_"+boolDiagnostic(speechPrimaryLowerPresent)+"_speech_phrase_primary_language_lower_language_"+boolDiagnostic(rawStringPresent(speechPrimaryLower, "language"))+"_root_nbest_"+boolDiagnostic(rawValuePresent(root, "NBest")))
+}
+
+func rawObject(object map[string]json.RawMessage, key string) (map[string]json.RawMessage, bool) {
+	value, ok := object[key]
+	if !ok {
+		return nil, false
+	}
+	var nested map[string]json.RawMessage
+	return nested, json.Unmarshal(value, &nested) == nil
+}
+
+func rawValuePresent(object map[string]json.RawMessage, key string) bool {
+	_, ok := object[key]
+	return ok
+}
+
+func rawStringPresent(object map[string]json.RawMessage, key string) bool {
+	value, ok := object[key]
+	if !ok {
+		return false
+	}
+	var text string
+	return json.Unmarshal(value, &text) == nil && text != ""
 }
 
 type upstreamMessage struct {
@@ -934,7 +965,7 @@ func (s *session) handleMessage(data []byte) error {
 		language := ""
 		if len(s.candidates) != 0 {
 			var err error
-			language, targetLocale, err = s.resolveDetectedLanguage(kind, &message)
+			language, targetLocale, err = s.resolveDetectedLanguage(kind, body, &message)
 			if err != nil {
 				return err
 			}
@@ -984,13 +1015,13 @@ func (s *session) handleMessage(data []byte) error {
 	return nil
 }
 
-func (s *session) resolveDetectedLanguage(path string, message *upstreamMessage) (string, string, error) {
+func (s *session) resolveDetectedLanguage(path string, body []byte, message *upstreamMessage) (string, string, error) {
 	if status := strings.TrimSpace(message.RecognitionStatus); status != "" && !strings.EqualFold(status, "Success") {
 		return "", "", azureMessageDiagnostic(path, "auto_non_success_recognition")
 	}
 	language, ok := protocolLanguage(message.detectedLanguage())
 	if !ok || (language != s.candidates[0] && language != s.candidates[1]) {
-		return "", "", automaticFinalSchema(path, message)
+		return "", "", automaticFinalSchema(path, body)
 	}
 	target := s.candidates[0]
 	if language == target {

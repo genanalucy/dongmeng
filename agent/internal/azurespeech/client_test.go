@@ -438,7 +438,7 @@ func TestAutomaticMissingFieldsEmitSafeSchemaCategories(t *testing.T) {
 		{
 			name: "candidate language",
 			body: `{"type":"translation.phrase","Text":"source","RecognitionStatus":"Success","Translations":{"zh-Hans":"target"}}`,
-			want: "azure_message_translation_phrase_auto_missing_candidate_lid_primary_language_0_speech_phrase_primary_language_0",
+			want: "azure_message_translation_phrase_auto_missing_candidate_lid_root_primary_language_0_root_primary_language_language_0_root_primary_language_language_lower_0_root_primary_language_lower_0_root_primary_language_lower_language_0_root_language_0_root_language_lower_0_speech_phrase_0_speech_phrase_primary_language_0_speech_phrase_primary_language_language_0_speech_phrase_primary_language_language_lower_0_speech_phrase_primary_language_lower_0_speech_phrase_primary_language_lower_language_0_root_nbest_0",
 		},
 		{
 			name: "source",
