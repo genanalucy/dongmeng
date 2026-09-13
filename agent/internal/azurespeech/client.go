@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"sort"
@@ -157,7 +158,7 @@ func (c *client) Start(ctx context.Context, request ast.StartRequest, sink ast.E
 	// ServiceRecognizerBase sends format metadata in its own binary message
 	// before live PCM. The universal v2 service rejects a RIFF header combined
 	// with the first PCM packet, so establish the stream independently here.
-	if err := session.send(ctx, websocket.MessageBinary, session.audioFrame(riffHeaderPCM16k())); err != nil {
+	if err := session.send(ctx, websocket.MessageBinary, session.waveHeaderFrame()); err != nil {
 		_ = session.Close()
 		return nil, azurePhaseError("initial_riff", err)
 	}
@@ -219,9 +220,44 @@ func legacySpeechConfig() (string, error) {
 }
 
 func automaticSpeechContext(candidates []string) (string, error) {
-	context, err := speechContext(candidates)
-	if err != nil {
-		return "", err
+	// The official SDK emits system/device metadata only in speech.config. Its
+	// V2 speech.context contains recognition context exclusively. In the
+	// combined continuous-LID translation case it also suppresses ordinary
+	// phrase results because translation.response is authoritative.
+	context := map[string]any{}
+	locales := make([]string, 0, len(candidates))
+	targets := make([]string, 0, len(candidates))
+	for _, candidate := range candidates {
+		locale, ok := LocaleForLanguage(candidate)
+		if !ok {
+			return "", fmt.Errorf("unsupported automatic candidate %q", candidate)
+		}
+		target, ok := translationLanguage(candidate)
+		if !ok {
+			return "", fmt.Errorf("unsupported automatic translation target %q", candidate)
+		}
+		locales = append(locales, locale)
+		targets = append(targets, target)
+	}
+	context["languageId"] = map[string]any{
+		"languages": locales, "mode": "DetectContinuous",
+		"onSuccess": map[string]string{"action": "Recognize"},
+		"onUnknown": map[string]string{"action": "None"}, "priority": "PrioritizeLatency",
+	}
+	context["phraseOutput"] = map[string]any{
+		"interimResults": map[string]string{"resultType": "None"},
+		"phraseResults":  map[string]string{"resultType": "None"},
+	}
+	context["translation"] = map[string]any{
+		"onPassthrough":   map[string]string{"action": "None"},
+		"onSuccess":       map[string]string{"action": "None"},
+		"output":          map[string]any{"includePassThroughResults": true, "interimResults": map[string]string{"mode": "Always"}},
+		"targetLanguages": targets,
+	}
+	context["phraseDetection"] = map[string]any{
+		"mode":      "Conversation",
+		"onInterim": map[string]string{"action": "Translate"},
+		"onSuccess": map[string]string{"action": "Translate"},
 	}
 	body, err := json.Marshal(context)
 	return string(body), err
@@ -234,36 +270,6 @@ func speechContext(candidates []string) (map[string]any, error) {
 		"system": map[string]string{"name": "SpeechSDK", "version": "1.0.0", "build": "Go", "lang": "Go"},
 		"os":     map[string]string{"platform": "Linux", "name": "Linux", "version": "unknown"},
 		"device": map[string]string{"manufacturer": "dngmeng", "model": "agent", "version": "1.0.0"},
-	}
-	if len(candidates) != 0 {
-		locales := make([]string, 0, len(candidates))
-		targets := make([]string, 0, len(candidates))
-		for _, candidate := range candidates {
-			locale, _ := LocaleForLanguage(candidate)
-			target, _ := translationLanguage(candidate)
-			locales = append(locales, locale)
-			targets = append(targets, target)
-		}
-		context["languageId"] = map[string]any{
-			// Universal v2 continuous recognition uses the exact value emitted by
-			// the official JS SDK when LanguageIdMode.Continuous is selected.
-			"languages": locales, "mode": "DetectContinuous",
-			"onSuccess": map[string]string{"action": "Recognize"},
-			"onUnknown": map[string]string{"action": "None"}, "priority": "PrioritizeLatency",
-		}
-		context["translation"] = map[string]any{
-			"onPassthrough":   map[string]string{"action": "None"},
-			"onSuccess":       map[string]string{"action": "None"},
-			"output":          map[string]any{"includePassThroughResults": true, "interimResults": map[string]string{"mode": "Always"}},
-			"targetLanguages": targets,
-		}
-		context["phraseDetection"] = map[string]any{
-			// RecognitionMode.Conversation is the official JS SDK value for
-			// phraseDetection.mode on V2 endpoints.
-			"mode":      "Conversation",
-			"onInterim": map[string]string{"action": "Translate"},
-			"onSuccess": map[string]string{"action": "Translate"},
-		}
 	}
 	return context, nil
 }
@@ -278,7 +284,10 @@ func textFrame(path, body string) []byte {
 }
 
 func textFrameWithRequestID(requestID, path, body string) []byte {
-	return []byte("X-RequestId:" + requestID + "\r\nPath:" + path + "\r\nContent-Type:application/json; charset=utf-8" + headerBodySeparator + body)
+	// SpeechConnectionMessage constructs headers in this exact order. V2 is
+	// stricter than the legacy endpoint, so keep its Path/RequestId/Timestamp
+	// ordering rather than relying on permissive header parsing.
+	return []byte("Path:" + path + "\r\nX-RequestId:" + requestID + "\r\nX-Timestamp:" + azureTimestamp() + "\r\nContent-Type:application/json" + headerBodySeparator + body)
 }
 
 func randomRequestID() string {
@@ -362,7 +371,7 @@ func (s *session) SendAudio(ctx context.Context, pcm []byte) error {
 	}
 	// Start has already sent the standalone RIFF metadata frame. Subsequent
 	// audio messages contain PCM only.
-	if err := s.send(ctx, websocket.MessageBinary, s.audioFrame(pcm)); err != nil {
+	if err := s.send(ctx, websocket.MessageBinary, s.audioFrame(pcm, "")); err != nil {
 		return err
 	}
 	s.stateMu.Lock()
@@ -371,10 +380,20 @@ func (s *session) SendAudio(ctx context.Context, pcm []byte) error {
 	return nil
 }
 
-// audioFrame encodes an audio fragment. An empty payload marks end-of-stream
-// after the preceding PCM frames, so Azure commits the active recognition turn.
-func (s *session) audioFrame(payload []byte) []byte {
-	header := "X-RequestId:" + s.requestID + "\r\nPath:audio\r\nContent-Type:audio/x-wav\r\nX-Timestamp:" + azureTimestamp() + "\r\n\r\n"
+// waveHeaderFrame declares the PCM stream using the same audio/x-wav message
+// that the official SDK sends before live PCM.
+func (s *session) waveHeaderFrame() []byte {
+	return s.audioFrame(riffHeaderPCM16k(), "audio/x-wav")
+}
+
+// audioFrame encodes PCM or end-of-stream. The official SDK omits Content-Type
+// after the standalone RIFF metadata frame; an empty payload marks end-of-stream.
+func (s *session) audioFrame(payload []byte, contentType string) []byte {
+	header := "Path:audio\r\nX-RequestId:" + s.requestID + "\r\nX-Timestamp:" + azureTimestamp() + "\r\n"
+	if contentType != "" {
+		header += "Content-Type:" + contentType + "\r\n"
+	}
+	header += "\r\n"
 	frame := make([]byte, 2+len(header)+len(payload))
 	binary.BigEndian.PutUint16(frame, uint16(len(header)))
 	copy(frame[2:], header)
@@ -386,7 +405,9 @@ func (s *session) audioFrame(payload []byte) []byte {
 func riffHeaderPCM16k() []byte {
 	h := make([]byte, 44)
 	copy(h[0:4], "RIFF")
-	binary.LittleEndian.PutUint32(h[4:8], 0xffffffff)
+	// The official Azure SDK emits a zero-length placeholder for the unknown
+	// streaming WAV size; Universal V2 does not accept a sentinel file size.
+	binary.LittleEndian.PutUint32(h[4:8], 0)
 	copy(h[8:12], "WAVE")
 	copy(h[12:16], "fmt ")
 	binary.LittleEndian.PutUint32(h[16:20], 16)
@@ -397,7 +418,7 @@ func riffHeaderPCM16k() []byte {
 	binary.LittleEndian.PutUint16(h[32:34], 2)
 	binary.LittleEndian.PutUint16(h[34:36], 16)
 	copy(h[36:40], "data")
-	binary.LittleEndian.PutUint32(h[40:44], 0xffffffff)
+	binary.LittleEndian.PutUint32(h[40:44], 0)
 	return h
 }
 
@@ -429,8 +450,9 @@ func azureReadError(err error) error {
 }
 
 // azurePhaseError keeps Azure transport details out of logs while preserving
-// the lifecycle phase that failed. A close code is protocol metadata; the
-// arbitrary Azure close reason is reduced to its presence only.
+// the lifecycle phase and a coarse transport category that failed. A close
+// code is protocol metadata; the arbitrary Azure close reason is reduced to
+// its presence only.
 func azurePhaseError(phase string, err error) error {
 	var closeErr websocket.CloseError
 	if errors.As(err, &closeErr) {
@@ -450,7 +472,38 @@ func azurePhaseError(phase string, err error) error {
 			status:     sessionErr.status,
 		}
 	}
+	if errors.Is(err, io.EOF) {
+		return azureSessionError{diagnostic: "azure_" + phase + "_io_eof"}
+	}
+	if errors.Is(err, net.ErrClosed) {
+		return azureSessionError{diagnostic: "azure_" + phase + "_net_closed"}
+	}
+	if errors.Is(err, context.Canceled) {
+		return azureSessionError{diagnostic: "azure_" + phase + "_context_canceled"}
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return azureSessionError{diagnostic: "azure_" + phase + "_net_timeout"}
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return azureSessionError{diagnostic: "azure_" + phase + "_net_timeout"}
+	}
+	var urlErr *url.Error
+	if errors.As(err, &urlErr) {
+		return azureSessionError{diagnostic: "azure_" + phase + "_url_error"}
+	}
 	return azureSessionError{diagnostic: "azure_" + phase + "_failed"}
+}
+
+func azureFrameType(typ websocket.MessageType) string {
+	switch typ {
+	case websocket.MessageBinary:
+		return "binary"
+	case websocket.MessageText:
+		return "text"
+	default:
+		return "other"
+	}
 }
 
 func azureDiagnostic(err error) string {
@@ -481,7 +534,7 @@ func (s *session) Finish(ctx context.Context) error {
 			s.finishedLocked()
 			return
 		}
-		if err := s.send(ctx, websocket.MessageBinary, s.audioFrame(nil)); err != nil {
+		if err := s.send(ctx, websocket.MessageBinary, s.audioFrame(nil, "")); err != nil {
 			s.finishErr = err
 		}
 	})
@@ -538,7 +591,7 @@ func (s *session) readLoop() {
 			return
 		}
 		if typ != websocket.MessageText {
-			s.fail("AZURE_SESSION_FAILED", "translation session failed", azurePhaseError("read", errors.New("unexpected Azure WebSocket frame")))
+			s.fail("AZURE_SESSION_FAILED", "translation session failed", azureSessionError{diagnostic: "azure_read_frame_" + azureFrameType(typ)})
 			return
 		}
 		if err := s.handleMessage(data); err != nil {

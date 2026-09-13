@@ -6,9 +6,12 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	neturl "net/url"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -103,9 +106,14 @@ func TestAutomaticCandidateLanguagesUseAzureUniversalV2AndExposeDetectedLanguage
 	if _, wrapped := context["context"]; wrapped {
 		t.Fatalf("speech.context must be the context object, got %s", config)
 	}
-	for _, wanted := range []string{"DetectContinuous", "PrioritizeLatency", "Recognize", "zh-CN", "en-US", "zh-Hans"} {
+	for _, wanted := range []string{"DetectContinuous", "PrioritizeLatency", "Recognize", "zh-CN", "en-US", "zh-Hans", `"phraseOutput":{"interimResults":{"resultType":"None"},"phraseResults":{"resultType":"None"}}`} {
 		if !strings.Contains(config, wanted) {
 			t.Fatalf("automatic context missing %q: %s", wanted, config)
+		}
+	}
+	for _, metadata := range []string{"system", "os", "device"} {
+		if _, exists := context[metadata]; exists {
+			t.Fatalf("automatic speech.context must not repeat speech.config metadata %q: %s", metadata, config)
 		}
 	}
 	legacy, err := legacySpeechConfig()
@@ -166,10 +174,23 @@ func TestAutomaticSessionUsesConnectionIDAndSeparateRIFFBeforePCM(t *testing.T) 
 		}
 		for _, frame := range frames[2:] {
 			headerLength := int(binary.BigEndian.Uint16(frame[:2]))
-			requestIDs = append(requestIDs, headerValue(t, string(frame[2:2+headerLength]), "X-RequestId"))
+			header := string(frame[2 : 2+headerLength])
+			requestIDs = append(requestIDs, headerValue(t, header, "X-RequestId"))
+			if strings.Contains(header, "X-RequestId:") && !strings.HasPrefix(header, "Path:audio\r\nX-RequestId:") {
+				t.Errorf("audio header ordering = %q", header)
+			}
+		}
+		if configHeader, contextHeader := string(frames[0]), string(frames[1]); !strings.HasPrefix(configHeader, "Path:speech.config\r\nX-RequestId:") || !strings.HasPrefix(contextHeader, "Path:speech.context\r\nX-RequestId:") {
+			t.Errorf("text header ordering = %q / %q", configHeader, contextHeader)
 		}
 		riffHeaderLength := int(binary.BigEndian.Uint16(frames[2][:2]))
 		pcmHeaderLength := int(binary.BigEndian.Uint16(frames[3][:2]))
+		if riffHeader := string(frames[2][2 : 2+riffHeaderLength]); !strings.Contains(riffHeader, "Content-Type:audio/x-wav") {
+			t.Errorf("RIFF header Content-Type = %q", riffHeader)
+		}
+		if pcmHeader := string(frames[3][2 : 2+pcmHeaderLength]); strings.Contains(pcmHeader, "Content-Type:") {
+			t.Errorf("PCM header must omit Content-Type = %q", pcmHeader)
+		}
 		sequences <- sequence{requestIDs: requestIDs, riff: frames[2][2+riffHeaderLength:], pcm: frames[3][2+pcmHeaderLength:]}
 		<-r.Context().Done()
 	}))
@@ -199,6 +220,12 @@ func TestAutomaticSessionUsesConnectionIDAndSeparateRIFFBeforePCM(t *testing.T) 
 	if len(got.riff) != 44 || string(got.riff[:4]) != "RIFF" {
 		t.Fatalf("standalone RIFF = %v", got.riff)
 	}
+	if got, want := binary.LittleEndian.Uint32(got.riff[4:8]), uint32(0); got != want {
+		t.Fatalf("RIFF streaming size = %d, want %d", got, want)
+	}
+	if got, want := binary.LittleEndian.Uint32(got.riff[40:44]), uint32(0); got != want {
+		t.Fatalf("WAV data streaming size = %d, want %d", got, want)
+	}
 	if string(got.pcm) != string([]byte{1, 2, 3, 4}) {
 		t.Fatalf("PCM frame = %v", got.pcm)
 	}
@@ -214,6 +241,22 @@ func TestAzureDialErrorClassifiesHTTPStatusWithoutBody(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), "secret") {
 		t.Fatalf("body leaked into error: %q", err)
+	}
+}
+
+func TestAzureReadRejectsBinaryFrameWithSafeCategory(t *testing.T) {
+	ws := newWSServer(t, func(ctx context.Context, conn *websocket.Conn) {
+		readConfig(t, ctx, conn)
+		_ = conn.Write(ctx, websocket.MessageBinary, []byte("sensitive transcript"))
+		<-ctx.Done()
+	})
+	defer ws.Close()
+	sink := newRecordingSink()
+	session := startTestSession(t, ws.URL, "", sink)
+	defer session.Close()
+	event := sink.next(t)
+	if event.Type != "error" || event.Code != "AZURE_SESSION_FAILED" || event.Diagnostic != "azure_read_frame_binary" {
+		t.Fatalf("event = %#v", event)
 	}
 }
 
@@ -240,6 +283,28 @@ func TestAzureReadErrorClassifiesCloseWithoutReason(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), "secret") {
 		t.Fatalf("close reason leaked into error: %q", err)
+	}
+}
+
+func TestAzureReadErrorClassifiesSafeTransportCategories(t *testing.T) {
+	for _, testCase := range []struct {
+		err  error
+		want string
+	}{
+		{io.EOF, "azure_read_io_eof"},
+		{net.ErrClosed, "azure_read_net_closed"},
+		{context.Canceled, "azure_read_context_canceled"},
+		{context.DeadlineExceeded, "azure_read_net_timeout"},
+		{&neturl.Error{Op: "read", URL: "wss://secret.example", Err: errors.New("secret")}, "azure_read_url_error"},
+		{errors.New("secret Azure detail"), "azure_read_failed"},
+	} {
+		err := azureReadError(testCase.err)
+		if diagnostic := azureDiagnostic(err); diagnostic != testCase.want {
+			t.Fatalf("diagnostic = %q, want %q", diagnostic, testCase.want)
+		}
+		if strings.Contains(err.Error(), "secret") {
+			t.Fatalf("transport detail leaked into error: %q", err)
+		}
 	}
 }
 
@@ -676,7 +741,7 @@ func readContext(t *testing.T, ctx context.Context, conn *websocket.Conn) {
 	if contextRequestID != configRequestID {
 		t.Fatalf("speech.context request ID = %q, want speech.config request ID %q", contextRequestID, configRequestID)
 	}
-	if _, wrapped := body["context"]; wrapped || len(body) != 6 {
+	if _, wrapped := body["context"]; wrapped || len(body) != 4 {
 		t.Fatalf("speech.context must be an exact unwrapped V2 context: %#v", body)
 	}
 	languageID, ok := body["languageId"].(map[string]any)
@@ -697,9 +762,16 @@ func readContext(t *testing.T, ctx context.Context, conn *websocket.Conn) {
 	if !ok || len(phraseDetection) != 3 || phraseDetection["mode"] != "Conversation" {
 		t.Fatalf("speech.context phraseDetection = %#v", phraseDetection)
 	}
-	for _, section := range []string{"system", "os", "device"} {
-		if value, ok := body[section].(map[string]any); !ok || len(value) == 0 {
-			t.Fatalf("speech.context %s = %#v", section, body[section])
+	phraseOutput, ok := body["phraseOutput"].(map[string]any)
+	if !ok || !reflect.DeepEqual(phraseOutput, map[string]any{
+		"interimResults": map[string]any{"resultType": "None"},
+		"phraseResults":  map[string]any{"resultType": "None"},
+	}) {
+		t.Fatalf("speech.context phraseOutput = %#v", phraseOutput)
+	}
+	for _, metadata := range []string{"system", "os", "device"} {
+		if _, exists := body[metadata]; exists {
+			t.Fatalf("speech.context must not repeat speech.config metadata %q: %#v", metadata, body)
 		}
 	}
 	readStandaloneRIFF(t, ctx, conn)

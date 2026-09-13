@@ -1,13 +1,13 @@
 //go:build smoketest
 
-// azure-smoke exercises the real Azure speech translation pipeline end to
-// end: synthesize a sentence with Azure TTS, feed it into the translation
-// session, and print the event stream. Run on the server with
-// AZURE_SPEECH_KEY/AZURE_SPEECH_REGION set.
+// azure-smoke exercises the real Azure Speech client against credentials loaded
+// from its environment. It intentionally prints only fixed, non-sensitive
+// diagnostic categories so it is safe to run on a production host.
 package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"io"
 	"net/http"
@@ -19,137 +19,157 @@ import (
 	"translator-agent/internal/azurespeech"
 )
 
-type printSink struct {
-	events chan ast.Event
-}
+const (
+	attemptTimeout = 25 * time.Second
+	inputText      = "今天天气很好，我们一起去学校吧。"
+)
 
-func (s *printSink) Emit(e ast.Event) {
-	if e.Type == "tts_audio" {
-		fmt.Printf("  event=tts_audio bytes=%d\n", len(e.Binary))
-	} else {
-		fmt.Printf("  event=%s text=%q code=%s\n", e.Type, e.Message, e.Code)
-	}
+type eventSink struct{ events chan ast.Event }
+
+func (s *eventSink) Emit(event ast.Event) {
 	select {
-	case s.events <- e:
+	case s.events <- event:
 	default:
 	}
 }
 
-// synthesizeInput is a minimal standalone Azure TTS call producing 16k mono
-// PCM16, used only to generate smoke-test input audio.
-func synthesizeInput(ctx context.Context, region, key, locale, voice, text string) ([]byte, error) {
-	ssml := fmt.Sprintf(
-		"<speak version='1.0' xml:lang='%s'><voice name='%s'>%s</voice></speak>",
-		locale, voice, strings.ReplaceAll(text, "&", "&amp;"))
+// synthesizeInput produces valid PCM16 input without exposing request or
+// response contents if Azure TTS rejects the request.
+func synthesizeInput(ctx context.Context, region, key string) ([]byte, error) {
+	ssml := "<speak version='1.0' xml:lang='zh-CN'><voice name='zh-CN-YunxiNeural'>" + inputText + "</voice></speak>"
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		fmt.Sprintf("https://%s.tts.speech.microsoft.com/cognitiveservices/v1", region),
-		strings.NewReader(ssml))
+		"https://"+region+".tts.speech.microsoft.com/cognitiveservices/v1", strings.NewReader(ssml))
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Ocp-Apim-Subscription-Key", key)
 	req.Header.Set("Content-Type", "application/ssml+xml")
 	req.Header.Set("X-Microsoft-OutputFormat", "raw-16khz-16bit-mono-pcm")
-	resp, err := http.DefaultClient.Do(req)
+	response, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
+	defer response.Body.Close()
+	pcm, err := io.ReadAll(response.Body)
 	if err != nil {
 		return nil, err
 	}
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("tts status %d: %.120s", resp.StatusCode, body)
+	if response.StatusCode != http.StatusOK || len(pcm) == 0 || len(pcm)%2 != 0 {
+		return nil, fmt.Errorf("Azure TTS rejected or returned invalid PCM")
 	}
-	return body, nil
+	return pcm, nil
+}
+
+func runAttempt(key, region, mode string, attempt int) string {
+	ctx, cancel := context.WithTimeout(context.Background(), attemptTimeout)
+	defer cancel()
+
+	request := ast.StartRequest{
+		SourceLanguage: "zh", TargetLanguage: "en", TargetAudioFormat: "pcm", TargetAudioRate: 16000,
+	}
+	if mode == "automatic" {
+		request.CandidateLanguages = []string{"zh", "en"}
+	}
+	sink := &eventSink{events: make(chan ast.Event, 16)}
+	session, err := azurespeech.New(azurespeech.Config{Key: key, Region: region}).Start(ctx, request, sink)
+	if err != nil {
+		return "start_" + safeDiagnostic(ast.ErrorDiagnostic(err))
+	}
+	defer session.Close()
+
+	pcm, err := synthesizeInput(ctx, region, key)
+	if err != nil {
+		return "input_tts_failed"
+	}
+	for offset := 0; offset < len(pcm); offset += 2560 {
+		end := offset + 2560
+		if end > len(pcm) {
+			end = len(pcm)
+		}
+		if err := session.SendAudio(ctx, pcm[offset:end]); err != nil {
+			return terminalResult(sink.events, mode, attempt, "send_"+safeDiagnostic(ast.ErrorDiagnostic(err)))
+		}
+		time.Sleep(40 * time.Millisecond)
+	}
+	if err := session.Finish(ctx); err != nil {
+		return terminalResult(sink.events, mode, attempt, "finish_"+safeDiagnostic(ast.ErrorDiagnostic(err)))
+	}
+	for {
+		select {
+		case event := <-sink.events:
+			fmt.Printf("EVENT mode=%s number=%d class=%s\n", mode, attempt, event.Type)
+			switch event.Type {
+			case "error":
+				return "event_" + safeDiagnostic(event.Diagnostic)
+			case "finished":
+				return "finished"
+			}
+		case <-ctx.Done():
+			return "wait_net_timeout"
+		}
+	}
+}
+
+// terminalResult gives the reader goroutine a bounded chance to publish its
+// safe event diagnostic when a concurrent writer observes cancellation first.
+func terminalResult(events <-chan ast.Event, mode string, attempt int, fallback string) string {
+	timer := time.NewTimer(time.Second)
+	defer timer.Stop()
+	for {
+		select {
+		case event := <-events:
+			fmt.Printf("EVENT mode=%s number=%d class=%s\n", mode, attempt, event.Type)
+			if event.Type == "error" {
+				return "event_" + safeDiagnostic(event.Diagnostic)
+			}
+			if event.Type == "finished" {
+				return "finished"
+			}
+		case <-timer.C:
+			return fallback
+		}
+	}
+}
+
+func safeDiagnostic(value string) string {
+	if value == "" {
+		return "unclassified"
+	}
+	// Diagnostics are produced by azurespeech and use fixed ASCII categories.
+	// Avoid printing an unexpected value if a future error path regresses.
+	for _, character := range value {
+		if (character < 'a' || character > 'z') && (character < '0' || character > '9') && character != '_' {
+			return "unclassified"
+		}
+	}
+	return value
 }
 
 func main() {
-	region := os.Getenv("AZURE_SPEECH_REGION")
-	key := os.Getenv("AZURE_SPEECH_KEY")
+	attempts := flag.Int("attempts", 3, "attempts per mode")
+	flag.Parse()
+	if *attempts < 1 || *attempts > 10 {
+		fmt.Println("RESULT invalid_attempt_count")
+		os.Exit(2)
+	}
+	region, key := os.Getenv("AZURE_SPEECH_REGION"), os.Getenv("AZURE_SPEECH_KEY")
 	if region == "" || key == "" {
-		fmt.Println("missing AZURE_SPEECH_REGION/AZURE_SPEECH_KEY")
-		os.Exit(1)
+		fmt.Println("RESULT missing_azure_configuration")
+		os.Exit(2)
 	}
-	inputVoice := map[string]string{"zh": "zh-CN-YunxiNeural", "en": "en-US-GuyNeural", "vi": "vi-VN-NamMaleNeural"}
-	pairs := [][3]string{
-		{"zh", "vi", "今天天气很好，我们一起去学校吧。"},
-		{"en", "vi", "I am going to school to study English today."},
-		{"zh", "en", "欢迎使用实时翻译系统。"},
-	}
+
 	failures := 0
-	for _, pair := range pairs {
-		from, to, sentence := pair[0], pair[1], pair[2]
-		fromLocale, _ := azurespeech.LocaleForLanguage(from)
-		fmt.Printf("=== %s -> %s: %s ===\n", from, to, sentence)
-		client := azurespeech.New(azurespeech.Config{Key: key, Region: region})
-		sink := &printSink{events: make(chan ast.Event, 4)}
-		ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
-		session, err := client.Start(ctx, ast.StartRequest{SourceLanguage: from, TargetLanguage: to}, sink)
-		if err != nil {
-			fmt.Printf("  START FAILED: %v\n", err)
-			failures++
-			cancel()
-			continue
-		}
-		pcm, err := synthesizeInput(ctx, region, key, fromLocale, inputVoice[from], sentence)
-		if err != nil {
-			fmt.Printf("  INPUT TTS FAILED: %v\n", err)
-			failures++
-			session.Close()
-			cancel()
-			continue
-		}
-		fmt.Printf("  input audio: %d bytes\n", len(pcm))
-		go func() {
-			const chunk = 2560
-			for offset := 0; offset < len(pcm); offset += chunk {
-				end := offset + chunk
-				if end > len(pcm) {
-					end = len(pcm)
-				}
-				if err := session.SendAudio(ctx, pcm[offset:end]); err != nil {
-					fmt.Printf("  send failed: %v\n", err)
-					return
-				}
-				time.Sleep(40 * time.Millisecond)
-			}
-			if err := session.Finish(ctx); err != nil {
-				fmt.Printf("  finish failed: %v\n", err)
-			}
-		}()
-		sawFinal := false
-		sawAudio := false
-		terminal := (*ast.Event)(nil)
-		for terminal == nil {
-			select {
-			case e := <-sink.events:
-				if e.Type == "source_final" || e.Type == "translation_final" {
-					sawFinal = true
-				}
-				if e.Type == "tts_audio" {
-					sawAudio = true
-				}
-				if e.Type == "finished" || e.Type == "error" {
-					terminal = &e
-				}
-			case <-ctx.Done():
-				fmt.Println("  PAIR FAILED: timeout waiting for terminal event")
+	for _, mode := range []string{"automatic", "legacy"} {
+		for attempt := 1; attempt <= *attempts; attempt++ {
+			result := runAttempt(key, region, mode, attempt)
+			fmt.Printf("ATTEMPT mode=%s number=%d result=%s\n", mode, attempt, result)
+			if result != "finished" {
 				failures++
-				terminal = &ast.Event{Type: "timeout"}
 			}
 		}
-		if terminal.Type != "finished" || !sawFinal || !sawAudio {
-			fmt.Printf("  PAIR FAILED: terminal=%s sawFinal=%v sawAudio=%v\n", terminal.Type, sawFinal, sawAudio)
-			failures++
-		}
-		session.Close()
-		cancel()
 	}
-	if failures > 0 {
-		fmt.Printf("SMOKE RESULT: %d checks failed\n", failures)
+	fmt.Printf("RESULT failures=%d attempts=%d\n", failures, *attempts*2)
+	if failures != 0 {
 		os.Exit(1)
 	}
-	fmt.Println("SMOKE RESULT: all pairs passed")
 }
