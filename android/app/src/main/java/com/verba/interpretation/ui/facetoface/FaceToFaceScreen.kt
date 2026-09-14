@@ -63,7 +63,7 @@ internal fun FaceToFaceScreen(
     val presentation = faceToFacePresentation(state)
     Column(modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
         TranslationTopBar(
-            title = if (state.view == FaceToFaceView.FACE_TO_FACE) "面对面" else "对话",
+            title = if (state.view == FaceToFaceView.FACE_TO_FACE) null else "对话",
             state = state,
             onSelectView = { view ->
                 clearMicrophoneRequest()
@@ -126,7 +126,7 @@ internal fun FaceToFaceScreen(
 
 @Composable
 private fun TranslationTopBar(
-    title: String,
+    title: String?,
     state: FaceToFaceState,
     onSelectView: (FaceToFaceView) -> Unit,
     onSelectMode: (FaceToFaceMode) -> Unit,
@@ -136,7 +136,9 @@ private fun TranslationTopBar(
     onStopAuto: () -> Unit,
 ) {
     Box(
-        Modifier.fillMaxWidth().height(TranslationVisualTokens.TopBarHeight).padding(horizontal = 16.dp),
+        Modifier.fillMaxWidth()
+            .height(if (title == null) 48.dp else TranslationVisualTokens.TopBarHeight)
+            .padding(horizontal = 16.dp),
     ) {
         FaceToFaceViewMenu(
             selectedView = state.view,
@@ -144,8 +146,10 @@ private fun TranslationTopBar(
             onSelectView = onSelectView,
             modifier = Modifier.align(Alignment.CenterStart),
         )
-        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Text(title, color = MaterialTheme.colorScheme.onBackground, fontSize = 19.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.semantics { heading() }, textAlign = TextAlign.Center)
+        if (title != null) {
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Text(title, color = MaterialTheme.colorScheme.onBackground, fontSize = 19.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.semantics { heading() }, textAlign = TextAlign.Center)
+            }
         }
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.CenterEnd) {
             FaceToFaceOverflowMenu(

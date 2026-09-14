@@ -217,7 +217,7 @@ internal fun EarMicControls(
         if (manual) onManualCancel()
     }
     Column(
-        modifier.fillMaxWidth().height(TranslationVisualTokens.OperationHeight).padding(horizontal = 20.dp, vertical = 7.dp),
+        modifier.fillMaxWidth().height(TranslationVisualTokens.OperationHeight).padding(horizontal = 20.dp, vertical = 0.dp),
         verticalArrangement = Arrangement.Top,
     ) {
         Row(
