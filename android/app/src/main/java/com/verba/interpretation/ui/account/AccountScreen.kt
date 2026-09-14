@@ -53,6 +53,7 @@ import com.verba.interpretation.cloud.AccountOverview
 import com.verba.interpretation.cloud.CloudEntitlement
 import com.verba.interpretation.cloud.UsageSummary
 import com.verba.interpretation.ui.AccountUiState
+import com.verba.interpretation.ui.design.LiquidGlassSurface
 
 enum class AccountAction { USAGE, HISTORY, SETTINGS, SECURITY, ABOUT, SERVICE_SETTINGS, HELP, LOGOUT }
 
@@ -173,10 +174,9 @@ fun AccountScreen(
                 )
             }
             item {
-                Surface(
+                LiquidGlassSurface(
                     modifier = Modifier.fillMaxWidth(),
                     shape = MaterialTheme.shapes.medium,
-                    color = MaterialTheme.colorScheme.surfaceContainerLow,
                 ) {
                     Column {
                         AccountEntryRow("历史记录", "查看本机保存的翻译记录", Icons.Outlined.History) {
@@ -284,10 +284,9 @@ internal fun AccountEntitlementCard(
     } else {
         baseModifier
     }
-    Surface(
+    LiquidGlassSurface(
         modifier = cardModifier,
         shape = MaterialTheme.shapes.large,
-        color = cardColor,
     ) {
         AccountEntitlementCardContent(entitlement, loading, failed, onRedeemNavigate, onRetry, showRedeemAction)
     }

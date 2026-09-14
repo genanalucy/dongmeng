@@ -54,6 +54,7 @@ import com.verba.interpretation.ui.FaceToFaceSide
 import com.verba.interpretation.ui.FaceToFaceTurn
 import com.verba.interpretation.ui.TranslationLanguage
 import com.verba.interpretation.ui.design.ConversationTimelineVisualSpec
+import com.verba.interpretation.ui.design.LiquidGlassSurface
 import com.verba.interpretation.ui.design.TranslationVisualTokens
 import com.verba.interpretation.ui.display.EventBoundaryDisplay
 import kotlinx.coroutines.flow.collect
@@ -295,7 +296,7 @@ private fun ConversationBubble(
             horizontalArrangement = if (isRight) Arrangement.End else Arrangement.Start,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-        Surface(
+        LiquidGlassSurface(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(start = if (isRight) 54.dp else 0.dp, end = if (isRight) 0.dp else 54.dp)
@@ -313,8 +314,6 @@ private fun ConversationBubble(
                 bottomStart = if (isRight) TranslationVisualTokens.BubbleRadius else TranslationVisualTokens.BubbleTailRadius,
                 bottomEnd = if (isRight) TranslationVisualTokens.BubbleTailRadius else TranslationVisualTokens.BubbleRadius,
             ),
-            color = if (isLive) colorScheme.surfaceContainerHigh else colorScheme.surfaceContainer,
-            border = BorderStroke(1.dp, if (isLive) colorScheme.primary else colorScheme.outline),
         ) {
             Column(Modifier.padding(horizontal = visualSpec.bubbleHorizontalPadding, vertical = visualSpec.bubbleVerticalPadding)) {
                 Box(Modifier.fillMaxWidth().height(22.dp)) {

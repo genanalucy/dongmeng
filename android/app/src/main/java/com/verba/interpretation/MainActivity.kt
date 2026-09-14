@@ -159,6 +159,7 @@ import com.verba.interpretation.ui.history.LocalHistorySaveFeedback
 import com.verba.interpretation.ui.InterpretationViewModel
 import com.verba.interpretation.ui.ProductDestination
 import com.verba.interpretation.ui.navigation.ProductBottomBar
+import com.verba.interpretation.ui.design.LiquidGlassSurface
 import com.verba.interpretation.ui.ProductNavigationMode
 import com.verba.interpretation.ui.ProductNavigationPolicy
 import com.verba.interpretation.ui.ProductNavigationStack
@@ -582,11 +583,9 @@ private fun ConnectionStatusCard(phase: SessionPhase) {
         connecting -> "正在建立或结束安全会话"
         else -> "开始翻译时自动连接"
     }
-    Surface(
-        color = if (connected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface,
-        shape = RoundedCornerShape(18.dp),
-        tonalElevation = if (connected) 0.dp else 1.dp,
+    LiquidGlassSurface(
         modifier = Modifier.fillMaxWidth().semantics { contentDescription = "连接状态：$title。$supporting" },
+        shape = RoundedCornerShape(18.dp),
     ) {
         Row(
             Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
@@ -619,14 +618,12 @@ private fun ConnectionStatusCard(phase: SessionPhase) {
 
 @Composable
 private fun LanguagePairCard(modifier: Modifier, source: String, target: String, onClick: () -> Unit) {
-    Card(
+    LiquidGlassSurface(
         onClick = onClick,
         modifier = modifier.heightIn(min = 126.dp).semantics {
             contentDescription = "$source 翻译为 $target，进入同传工作台"
         },
         shape = RoundedCornerShape(22.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
     ) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Icon(Icons.Outlined.Language, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
@@ -649,12 +646,10 @@ private fun ProductModeCard(
     actionLabel: String,
     onClick: () -> Unit,
 ) {
-    Card(
+    LiquidGlassSurface(
         onClick = onClick,
         modifier = Modifier.fillMaxWidth().semantics { contentDescription = "$actionLabel。$description" },
         shape = RoundedCornerShape(24.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
     ) {
         Row(
             Modifier.padding(18.dp),

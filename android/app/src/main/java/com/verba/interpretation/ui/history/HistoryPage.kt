@@ -62,6 +62,7 @@ import com.verba.interpretation.ui.HistorySyncDiagnostic
 import com.verba.interpretation.ui.HistorySyncStatus
 import com.verba.interpretation.ui.HistoryViewModel
 import com.verba.interpretation.ui.TranslationLanguage
+import com.verba.interpretation.ui.design.LiquidGlassSurface
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -235,7 +236,12 @@ private fun SessionSummaryCard(
     onSaveRename: () -> Unit,
     onDelete: () -> Unit,
 ) {
-    Card(Modifier.fillMaxWidth().clickable(enabled = !editing, onClick = onOpen)) {
+    LiquidGlassSurface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.medium,
+        onClick = onOpen,
+        enabled = !editing,
+    ) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 if (editing) {

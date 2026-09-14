@@ -1,7 +1,6 @@
 package com.verba.interpretation.ui.navigation
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
@@ -33,6 +32,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.verba.interpretation.ui.ProductDestination
 import com.verba.interpretation.ui.design.FaceToFaceConversationIcon
+import com.verba.interpretation.ui.design.LiquidGlassSurface
 import com.verba.interpretation.ui.design.TranslationVisualTokens
 
 @Composable
@@ -49,8 +49,7 @@ fun ProductBottomBar(
     val selectedContainer = MaterialTheme.colorScheme.primaryContainer
     val selectedContent = MaterialTheme.colorScheme.primary
     val unselectedContent = MaterialTheme.colorScheme.onSurfaceVariant
-    val shellStroke = MaterialTheme.colorScheme.outline
-    Row(
+    LiquidGlassSurface(
         modifier = Modifier
             .fillMaxWidth()
             .navigationBarsPadding()
@@ -60,15 +59,15 @@ fun ProductBottomBar(
                 top = TranslationVisualTokens.NavigationGap,
                 bottom = TranslationVisualTokens.NavigationBottomMargin,
             )
-            .height(TranslationVisualTokens.NavigationHeight)
-            .background(barContainer, RoundedCornerShape(30.dp))
-            .border(1.dp, shellStroke, RoundedCornerShape(30.dp))
-            .padding(4.dp)
-            .semantics { selectableGroup() },
-        horizontalArrangement = Arrangement.spacedBy(3.dp),
-        verticalAlignment = Alignment.CenterVertically,
+            .height(TranslationVisualTokens.NavigationHeight),
+        shape = RoundedCornerShape(30.dp),
     ) {
-        destinations.forEach { destination ->
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(4.dp).semantics { selectableGroup() },
+            horizontalArrangement = Arrangement.spacedBy(3.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            destinations.forEach { destination ->
             val isSelected = destination == selected
             Row(
                 modifier = Modifier
@@ -108,6 +107,7 @@ fun ProductBottomBar(
                         modifier = Modifier.padding(top = 2.dp),
                     )
                 }
+            }
             }
         }
     }

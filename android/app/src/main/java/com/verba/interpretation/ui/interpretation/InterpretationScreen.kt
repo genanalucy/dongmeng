@@ -77,6 +77,7 @@ import androidx.compose.ui.unit.sp
 import com.verba.interpretation.BuildConfig
 import com.verba.interpretation.ui.SessionPhase
 import com.verba.interpretation.ui.TranslationLanguage
+import com.verba.interpretation.ui.design.LiquidGlassSurface
 import com.verba.interpretation.ui.design.TranslationVisualTokens
 import com.verba.interpretation.ui.design.VerbaColors
 import kotlinx.coroutines.flow.collect
@@ -405,7 +406,7 @@ private fun InterpretationEmptyState(phase: SessionPhase, statusLabel: String) {
 
 @Composable
 private fun InterpretationBubble(bubble: InterpretationDisplayBubble) {
-    Surface(
+    LiquidGlassSurface(
         modifier = Modifier.fillMaxWidth().semantics {
             contentDescription = listOfNotNull(
                 bubble.translationText?.let { "译文。$it" },
@@ -413,8 +414,6 @@ private fun InterpretationBubble(bubble: InterpretationDisplayBubble) {
             ).joinToString(" ")
         },
         shape = RoundedCornerShape(22.dp),
-        color = MaterialTheme.colorScheme.surfaceContainer,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
     ) {
         Column(modifier = Modifier.padding(horizontal = 15.dp, vertical = 16.dp)) {
             if (bubble.sourceText != null) {
@@ -461,10 +460,9 @@ private fun PinnedControls(
 ) {
     val finishAction = actions.firstOrNull { it == InterpretationAction.FINISH }
     val visiblePrimary = primaryAction?.takeIf { it in actions }
-    Surface(
+    LiquidGlassSurface(
         modifier = Modifier.fillMaxWidth().height(76.dp),
-        color = MaterialTheme.colorScheme.background,
-        tonalElevation = 0.dp,
+        shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
     ) {
         Row(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 14.dp),
