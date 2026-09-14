@@ -776,7 +776,7 @@ func TestQueueOverflow(t *testing.T) {
 	close(fake.session.blockAudio)
 }
 
-func TestUpstreamEventsUseOneOrderedTextAndBinaryWriterAndSkipEmptySubtitles(t *testing.T) {
+func TestVolcengineTTSAddsLegacyMetadataBeforeEachPCMFrame(t *testing.T) {
 	ts := testHTTPServer(emittingClient{})
 	defer ts.Close()
 	conn := dial(t, ts.URL, "http://localhost:5173")
@@ -785,6 +785,9 @@ func TestUpstreamEventsUseOneOrderedTextAndBinaryWriterAndSkipEmptySubtitles(t *
 
 	if event := readEvent(t, conn); event.Type != "ready" {
 		t.Fatalf("first event = %#v, want ready", event)
+	}
+	if event := readEvent(t, conn); event.Type != "tts" || event.SegmentID != 1 || event.TargetLanguage != "en" {
+		t.Fatalf("second event = %#v, want Volcengine PCM metadata", event)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
@@ -796,7 +799,7 @@ func TestUpstreamEventsUseOneOrderedTextAndBinaryWriterAndSkipEmptySubtitles(t *
 		t.Fatalf("binary message = (%v, %v)", messageType, payload)
 	}
 	if event := readEvent(t, conn); event.Type != "finished" {
-		t.Fatalf("third event = %#v, want finished", event)
+		t.Fatalf("fourth event = %#v, want finished", event)
 	}
 }
 

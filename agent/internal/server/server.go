@@ -453,6 +453,14 @@ func (s *Server) runConnection(parent context.Context, conn *websocket.Conn, ses
 				emit(browserEvent{Type: "error", Code: "TRANSLATION_PROTOCOL_ERROR", Message: "translation service returned invalid PCM"})
 				return
 			}
+			// The released Android client expects a tts event before every PCM frame.
+			// Volcengine emits a continuous stream without segment metadata, so bind it
+			// to one stable session segment using the negotiated target language.
+			if event.SegmentID == 0 {
+				emit(browserEvent{Type: "tts", SegmentID: 1, TargetLanguage: start.TargetLanguage})
+			} else {
+				emit(browserEvent{Type: "tts", SegmentID: event.SegmentID, TargetLanguage: event.TargetLanguage})
+			}
 			emitMessage(outgoingMessage{binary: append([]byte(nil), event.Binary...)})
 		case "detected_language":
 			upstreamTerminal = true
