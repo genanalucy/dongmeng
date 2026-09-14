@@ -353,6 +353,7 @@ private fun LanguageSwapButton(enabled: Boolean, onClick: () -> Unit) {
                 imageVector = Icons.Filled.SwapVert,
                 contentDescription = null,
                 tint = MaterialTheme.colorScheme.onSecondaryContainer,
+                modifier = Modifier.graphicsLayer { rotationZ = 90f },
             )
         }
     }
