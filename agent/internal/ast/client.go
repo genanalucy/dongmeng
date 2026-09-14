@@ -44,26 +44,6 @@ type Client interface {
 	Start(context.Context, StartRequest, EventSink) (Session, error)
 }
 
-type providerRoutingClient struct {
-	volcengine Client
-	azure      Client
-}
-
-// NewProviderRoutingClient selects an upstream from a validated request provider.
-func NewProviderRoutingClient(volcengine, azure Client) Client {
-	return providerRoutingClient{volcengine: volcengine, azure: azure}
-}
-
-func (c providerRoutingClient) Start(ctx context.Context, request StartRequest, sink EventSink) (Session, error) {
-	if request.Provider == "azure" {
-		if c.azure == nil {
-			return nil, ErrProviderUnavailable
-		}
-		return c.azure.Start(ctx, request, sink)
-	}
-	return c.volcengine.Start(ctx, request, sink)
-}
-
 // Session accepts ordered audio and an idempotent finish request.
 type Session interface {
 	SendAudio(context.Context, []byte) error

@@ -19,7 +19,6 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 
 	"translator-agent/internal/ast"
-	"translator-agent/internal/azurespeech"
 	"translator-agent/internal/sessionauth"
 )
 
@@ -42,18 +41,12 @@ type fakeClient struct {
 }
 
 type emittingClient struct{}
-type detectedLanguageClient struct{ language string }
 type zeroTTSClient struct{}
 type interleavedTTSClient struct{}
 type ttsPreludeClient struct{}
 
 func (zeroTTSClient) Start(_ context.Context, _ ast.StartRequest, sink ast.EventSink) (ast.Session, error) {
 	sink.Emit(ast.Event{Type: "finished"})
-	return &fakeSession{}, nil
-}
-
-func (detectedLanguageClient) Start(_ context.Context, _ ast.StartRequest, sink ast.EventSink) (ast.Session, error) {
-	sink.Emit(ast.Event{Type: "detected_language", Language: "fr"})
 	return &fakeSession{}, nil
 }
 
@@ -622,28 +615,10 @@ func TestSessionTokenProtocolParsingIsStrict(t *testing.T) {
 	}
 }
 
-func TestProviderStartFieldsAreParsedAndForwarded(t *testing.T) {
-	volc := &fakeClient{}
-	azure := &fakeClient{}
-	ts := testHTTPServer(ast.NewProviderRoutingClient(volc, azure))
-	defer ts.Close()
-
-	conn := dial(t, ts.URL, "http://localhost:5173")
-	defer conn.CloseNow()
-	start(t, conn, map[string]any{
-		"provider": "azure", "candidateLanguages": []string{"zh", "en"}, "voice": "en-US-JennyNeural",
-	})
-	if event := readEvent(t, conn); event.Type != "ready" {
-		t.Fatalf("event = %#v, want ready", event)
-	}
-	if volc.starts() != 0 || azure.starts() != 1 {
-		t.Fatalf("provider starts = volcengine %d, azure %d; want 0, 1", volc.starts(), azure.starts())
-	}
-
+func TestVolcengineStartFieldsAreParsedAndForwarded(t *testing.T) {
 	payload, err := json.Marshal(map[string]any{
 		"type": "start", "sessionId": testSessionID, "mode": "s2s", "sourceLanguage": "zh", "targetLanguage": "en",
-		"targetAudioFormat": "pcm", "targetAudioRate": 16000, "provider": "azure",
-		"candidateLanguages": []string{"zh", "en"}, "voice": "en-US-GuyNeural",
+		"targetAudioFormat": "pcm", "targetAudioRate": 16000,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -652,24 +627,8 @@ func TestProviderStartFieldsAreParsedAndForwarded(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parseStart() error = %v", err)
 	}
-	if parsed.Provider != "azure" || !equalStrings(parsed.CandidateLanguages, []string{"zh", "en"}) || parsed.Voice != "en-US-GuyNeural" {
+	if parsed.Provider != "volcengine" || len(parsed.CandidateLanguages) != 0 || parsed.Voice != "" {
 		t.Fatalf("parsed request = %#v", parsed.StartRequest)
-	}
-}
-
-func TestAzureUnavailableProviderIsReported(t *testing.T) {
-	volc := &fakeClient{}
-	ts := testHTTPServer(ast.NewProviderRoutingClient(volc, azurespeech.New(azurespeech.Config{})))
-	defer ts.Close()
-
-	conn := dial(t, ts.URL, "http://localhost:5173")
-	defer conn.CloseNow()
-	start(t, conn, map[string]any{"provider": "azure"})
-	if event := readEvent(t, conn); event.Type != "error" || event.Code != "TRANSLATION_PROVIDER_UNAVAILABLE" {
-		t.Fatalf("event = %#v", event)
-	}
-	if volc.starts() != 0 {
-		t.Fatalf("Volcengine client started %d times, want 0", volc.starts())
 	}
 }
 
@@ -677,11 +636,7 @@ func TestStartRejectsInvalidProviderAndVoice(t *testing.T) {
 	for _, updates := range []map[string]any{
 		{"provider": "unknown"},
 		{"provider": "volcengine", "candidateLanguages": []string{"zh", "en"}},
-		{"provider": "azure", "candidateLanguages": []string{"zh"}},
-		{"provider": "azure", "candidateLanguages": []string{"zh", "zh"}},
-		{"provider": "azure", "candidateLanguages": []string{"zh", "de"}},
-		{"provider": "azure", "candidateLanguages": []string{"zh", "en", "fr"}},
-		{"provider": "azure", "candidateLanguages": []string{"en", "fr"}},
+		{"provider": "azure"},
 		{"provider": "volcengine", "candidateLanguages": []string{"zh"}},
 		{"voice": "zh-CN-XiaoxiaoNeural"},
 		{"voice": "zh-CN-NotAllowedNeural"},
@@ -821,30 +776,6 @@ func TestQueueOverflow(t *testing.T) {
 	close(fake.session.blockAudio)
 }
 
-func TestDetectedLanguageMustBelongToAutomaticCandidateLanguages(t *testing.T) {
-	for _, testCase := range []struct {
-		name    string
-		updates map[string]any
-	}{
-		{name: "automatic candidate mismatch", updates: map[string]any{"provider": "azure", "candidateLanguages": []string{"zh", "en"}}},
-		{name: "non automatic", updates: map[string]any{}},
-	} {
-		t.Run(testCase.name, func(t *testing.T) {
-			ts := testHTTPServer(detectedLanguageClient{language: "fr"})
-			defer ts.Close()
-			conn := dial(t, ts.URL, "http://localhost:5173")
-			defer conn.CloseNow()
-			start(t, conn, testCase.updates)
-			if event := readEvent(t, conn); event.Type != "ready" {
-				t.Fatalf("first event = %#v, want ready", event)
-			}
-			if event := readEvent(t, conn); event.Type != "error" || event.Code != "TRANSLATION_PROTOCOL_ERROR" {
-				t.Fatalf("event = %#v, want protocol error", event)
-			}
-		})
-	}
-}
-
 func TestUpstreamEventsUseOneOrderedTextAndBinaryWriterAndSkipEmptySubtitles(t *testing.T) {
 	ts := testHTTPServer(emittingClient{})
 	defer ts.Close()
@@ -866,61 +797,6 @@ func TestUpstreamEventsUseOneOrderedTextAndBinaryWriterAndSkipEmptySubtitles(t *
 	}
 	if event := readEvent(t, conn); event.Type != "finished" {
 		t.Fatalf("third event = %#v, want finished", event)
-	}
-}
-
-func TestAutomaticTTSPreludeFollowsFinalAndPrecedesMetadataAndPCM(t *testing.T) {
-	ts := testHTTPServer(ttsPreludeClient{})
-	defer ts.Close()
-	conn := dial(t, ts.URL, "http://localhost:5173")
-	defer conn.CloseNow()
-	start(t, conn, map[string]any{"provider": "azure", "candidateLanguages": []string{"zh", "en"}})
-	if event := readEvent(t, conn); event.Type != "ready" {
-		t.Fatalf("ready = %#v", event)
-	}
-	if event := readEvent(t, conn); event.Type != "translation_final" || event.SegmentID != 1 {
-		t.Fatalf("final = %#v", event)
-	}
-	if event := readEvent(t, conn); event.Type != "tts_start" || event.SegmentID != 1 || event.TargetLanguage != "en" {
-		t.Fatalf("prelude = %#v", event)
-	}
-	if event := readEvent(t, conn); event.Type != "tts" || event.SegmentID != 1 || event.TargetLanguage != "en" {
-		t.Fatalf("metadata = %#v", event)
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
-	messageType, payload, err := conn.Read(ctx)
-	if err != nil || messageType != websocket.MessageBinary || !bytes.Equal(payload, []byte{1, 2}) {
-		t.Fatalf("binary = (%v, %v, %v)", messageType, payload, err)
-	}
-}
-
-func TestAutomaticTTSMetadataAndBinaryArePairedFIFO(t *testing.T) {
-	ts := testHTTPServer(interleavedTTSClient{})
-	defer ts.Close()
-	conn := dial(t, ts.URL, "http://localhost:5173")
-	defer conn.CloseNow()
-	start(t, conn, map[string]any{"provider": "azure", "candidateLanguages": []string{"zh", "en"}})
-	if event := readEvent(t, conn); event.Type != "ready" {
-		t.Fatalf("ready = %#v", event)
-	}
-	for _, want := range []struct {
-		id       int64
-		language string
-		pcm      []byte
-	}{{1, "en", []byte{1, 2}}, {2, "zh", []byte{3, 4}}} {
-		if event := readEvent(t, conn); event.Type != "tts" || event.SegmentID != want.id || event.TargetLanguage != want.language {
-			t.Fatalf("metadata = %#v", event)
-		}
-		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-		messageType, payload, err := conn.Read(ctx)
-		cancel()
-		if err != nil || messageType != websocket.MessageBinary || !bytes.Equal(payload, want.pcm) {
-			t.Fatalf("binary = (%v, %v, %v)", messageType, payload, err)
-		}
-	}
-	if event := readEvent(t, conn); event.Type != "finished" {
-		t.Fatalf("finished = %#v", event)
 	}
 }
 

@@ -18,7 +18,6 @@ import (
 	"github.com/coder/websocket/wsjson"
 
 	"translator-agent/internal/ast"
-	"translator-agent/internal/azurespeech"
 	"translator-agent/internal/cloudauth"
 	"translator-agent/internal/sessionauth"
 )
@@ -445,22 +444,8 @@ func (s *Server) runConnection(parent context.Context, conn *websocket.Conn, ses
 			return
 		}
 		switch event.Type {
-		case "tts_start":
-			// Legacy sentence boundaries have no client-visible semantics.
-			if event.SegmentID == 0 {
-				return
-			}
-			// A validated prelude tells clients that PCM playback is imminent. It is
-			// deliberately relayed before the synchronous TTS result, rather than at
-			// translation_final, so capture remains live during slow synthesis.
-			if event.TargetLanguage == "" || !containsLanguage(start.CandidateLanguages, event.TargetLanguage) {
-				upstreamTerminal = true
-				emit(browserEvent{Type: "error", Code: "TRANSLATION_PROTOCOL_ERROR", Message: "translation service returned an invalid TTS segment"})
-				return
-			}
-			emit(browserEvent{Type: "tts_start", SegmentID: event.SegmentID, TargetLanguage: event.TargetLanguage})
-		case "tts_end":
-			// Sentence boundaries have no client-visible semantics.
+		case "tts_start", "tts_end":
+			// Volcengine sentence boundaries have no client-visible semantics.
 			return
 		case "tts_audio":
 			if len(event.Binary) == 0 || len(event.Binary)%2 != 0 {
@@ -468,33 +453,12 @@ func (s *Server) runConnection(parent context.Context, conn *websocket.Conn, ses
 				emit(browserEvent{Type: "error", Code: "TRANSLATION_PROTOCOL_ERROR", Message: "translation service returned invalid PCM"})
 				return
 			}
-			// Legacy transports retain their existing binary framing. Continuous
-			// Azure transports must have emitted tts_start before this PCM frame.
-			if event.SegmentID != 0 {
-				if event.TargetLanguage == "" || !containsLanguage(start.CandidateLanguages, event.TargetLanguage) {
-					upstreamTerminal = true
-					emit(browserEvent{Type: "error", Code: "TRANSLATION_PROTOCOL_ERROR", Message: "translation service returned invalid TTS segment"})
-					return
-				}
-				emit(browserEvent{Type: "tts", SegmentID: event.SegmentID, TargetLanguage: event.TargetLanguage})
-			}
 			emitMessage(outgoingMessage{binary: append([]byte(nil), event.Binary...)})
 		case "detected_language":
-			// Only Azure AUTO sessions may report LID, and its result must stay
-			// within the exact pair negotiated at start.
-			if len(start.CandidateLanguages) == 0 || !containsLanguage(start.CandidateLanguages, event.Language) {
-				upstreamTerminal = true
-				emit(browserEvent{Type: "error", Code: "TRANSLATION_PROTOCOL_ERROR", Message: "translation service returned an invalid detected language"})
-				return
-			}
-			emit(browserEvent{Type: event.Type, Language: event.Language, LogID: event.LogID, SegmentID: event.SegmentID, TargetLanguage: event.TargetLanguage})
+			upstreamTerminal = true
+			emit(browserEvent{Type: "error", Code: "TRANSLATION_PROTOCOL_ERROR", Message: "translation service returned an unsupported event"})
+			return
 		case "source_partial", "source_final", "translation_partial", "translation_final":
-			if event.SegmentID != 0 && (event.TargetLanguage == "" || !containsLanguage(start.CandidateLanguages, event.TargetLanguage)) {
-				upstreamTerminal = true
-				emit(browserEvent{Type: "error", Code: "TRANSLATION_PROTOCOL_ERROR", Message: "translation service returned an invalid final segment"})
-				return
-			}
-
 			if strings.TrimSpace(event.Message) == "" {
 				return
 			}
@@ -653,21 +617,19 @@ func parseStart(payload []byte, authRequired bool) (connectionStart, error) {
 	if err := decoder.Decode(&message); err != nil || decoder.Decode(&struct{}{}) != io.EOF {
 		return connectionStart{}, errors.New("INVALID_START")
 	}
-	if message.Provider == "" {
-		message.Provider = "volcengine"
+	if message.Provider != "" && message.Provider != "volcengine" {
+		return connectionStart{}, errors.New("INVALID_START")
 	}
 	if message.Type != "start" || !validUUID(message.SessionID) || message.Mode != "s2s" ||
 		!isSupportedLanguage(message.SourceLanguage) || !isSupportedLanguage(message.TargetLanguage) ||
 		message.SourceLanguage == message.TargetLanguage || message.TargetAudioFormat != "pcm" || message.TargetAudioRate != 16000 ||
-		(message.Provider != "volcengine" && message.Provider != "azure") ||
-		!validCandidateLanguages(message) ||
-		(message.Voice != "" && !azurespeech.IsVoiceAllowed(message.Voice, voiceLanguages(message))) ||
+		len(message.CandidateLanguages) != 0 || message.Voice != "" ||
 		(authRequired && (strings.TrimSpace(message.UserID) == "" || strings.TrimSpace(message.InstallID) == "")) ||
 		(!authRequired && (message.UserID != "" || message.InstallID != "")) {
 		return connectionStart{}, errors.New("INVALID_START")
 	}
 	return connectionStart{
-		StartRequest: ast.StartRequest{SessionID: message.SessionID, Mode: message.Mode, SourceLanguage: message.SourceLanguage, TargetLanguage: message.TargetLanguage, TargetAudioFormat: message.TargetAudioFormat, TargetAudioRate: message.TargetAudioRate, Provider: message.Provider, CandidateLanguages: append([]string(nil), message.CandidateLanguages...), Voice: message.Voice},
+		StartRequest: ast.StartRequest{SessionID: message.SessionID, Mode: message.Mode, SourceLanguage: message.SourceLanguage, TargetLanguage: message.TargetLanguage, TargetAudioFormat: message.TargetAudioFormat, TargetAudioRate: message.TargetAudioRate, Provider: "volcengine"},
 		UserID:       message.UserID, InstallID: message.InstallID,
 	}, nil
 }
@@ -703,38 +665,6 @@ func sessionTokenFromRequest(r *http.Request) (string, bool) {
 func isSupportedLanguage(language string) bool {
 	_, ok := supportedLanguages[language]
 	return ok
-}
-
-func containsLanguage(languages []string, language string) bool {
-	for _, candidate := range languages {
-		if candidate == language {
-			return true
-		}
-	}
-	return false
-}
-
-func validCandidateLanguages(message startMessage) bool {
-	candidates := message.CandidateLanguages
-	if len(candidates) == 0 {
-		return true
-	}
-	if message.Provider != "azure" || len(candidates) != 2 || candidates[0] == candidates[1] ||
-		!isSupportedLanguage(candidates[0]) || !isSupportedLanguage(candidates[1]) {
-		return false
-	}
-	// AUTO detection is a two-party routing decision, never a general LID list.
-	// Keeping candidates equal to the negotiated pair prevents a third language
-	// from being detected and sent to an undefined physical-side route.
-	return (candidates[0] == message.SourceLanguage && candidates[1] == message.TargetLanguage) ||
-		(candidates[0] == message.TargetLanguage && candidates[1] == message.SourceLanguage)
-}
-
-func voiceLanguages(message startMessage) []string {
-	if len(message.CandidateLanguages) != 0 {
-		return message.CandidateLanguages
-	}
-	return []string{message.TargetLanguage}
 }
 
 func validateFinish(payload []byte) error {

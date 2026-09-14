@@ -256,8 +256,8 @@ class ProductNavigationPolicyTest {
     @Test
     fun endpointSettingsUiRemainsAvailableInDebugBuilds() {
         assertTrue(EndpointSettingsAccessPolicy.endpointEditingEnabled(debugBuild = true))
-        assertTrue(EndpointSettingsAccessPolicy.translationSettingsVisible(debugBuild = true))
-        assertTrue(EndpointSettingsAccessPolicy.automaticModeVisible(debugBuild = true))
+        assertFalse(EndpointSettingsAccessPolicy.translationSettingsVisible(debugBuild = true))
+        assertFalse(EndpointSettingsAccessPolicy.automaticModeVisible(debugBuild = true))
         assertTrue(EndpointSettingsAccessPolicy.adminTestSettingsVisible(ProductNavigationMode.ADMIN_TEST, debugBuild = true))
         assertFalse(EndpointSettingsAccessPolicy.adminTestSettingsVisible(ProductNavigationMode.USER, debugBuild = true))
     }

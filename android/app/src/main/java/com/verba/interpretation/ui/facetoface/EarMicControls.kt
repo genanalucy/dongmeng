@@ -265,7 +265,7 @@ internal fun EarMicControls(
                 side = FaceToFaceSide.RIGHT,
                 language = state.rightLanguage,
                 otherLanguage = state.leftLanguage,
-                // Azure continuous LID routes both speakers automatically. Disable the
+                // Automatic language detection routes both speakers automatically. Disable the
                 // legacy takeover instead of presenting a control that intentionally no-ops.
                 pointerEnabled = if (manual) state.phase in setOf(FaceToFacePhase.IDLE, FaceToFacePhase.PROCESSING) else !state.automaticLanguageDetection && state.phase == FaceToFacePhase.LISTENING,
                 actionEnabled = if (manual) state.phase in setOf(FaceToFacePhase.IDLE, FaceToFacePhase.PROCESSING) || activeSide == FaceToFaceSide.RIGHT else !state.automaticLanguageDetection && state.phase == FaceToFacePhase.LISTENING,

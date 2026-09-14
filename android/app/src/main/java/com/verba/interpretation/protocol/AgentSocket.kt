@@ -12,7 +12,6 @@ import java.util.UUID
 
 class AgentSocket(
     private val endpointSettings: EndpointSettings,
-    private val translationSettings: () -> TranslationSettings = { TranslationSettings() },
     private val client: OkHttpClient = OkHttpClient(),
     private val onEvent: (AgentEvent) -> Unit,
     private val onTts: (ByteArray, Long?, String?) -> Unit,
@@ -33,7 +32,6 @@ class AgentSocket(
         sourceLanguage: String,
         targetLanguage: String,
         grant: TranslationSessionGrant? = null,
-        candidateLanguages: List<String> = emptyList(),
     ): Boolean = synchronized(lock) {
         if (socket != null) return false
         ready = false
@@ -43,10 +41,8 @@ class AgentSocket(
         val requestBuilder = Request.Builder().url(endpointSettings.current().webSocketUrl)
         if (BuildConfig.TRANSLATION_ORIGIN.isNotEmpty()) requestBuilder.header("Origin", BuildConfig.TRANSLATION_ORIGIN)
         if (grant != null) requestBuilder.header("Sec-WebSocket-Protocol", CloudAgentHandshake.subprotocols(grant))
-        // Read preferences only while opening the socket. Existing sessions retain this immutable start payload.
-        val settings = translationSettings()
-        val start = grant?.let { CloudAgentHandshake.startMessage(it, sourceLanguage, targetLanguage, settings, candidateLanguages) }
-            ?: StartMessage(UUID.randomUUID().toString(), sourceLanguage, targetLanguage, settings = settings, candidateLanguages = candidateLanguages)
+        val start = grant?.let { CloudAgentHandshake.startMessage(it, sourceLanguage, targetLanguage) }
+            ?: StartMessage(UUID.randomUUID().toString(), sourceLanguage, targetLanguage)
         socket = client.newWebSocket(requestBuilder.build(), object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
                 if (!webSocket.send(start.toJson())) fail("无法发送 start 消息。")

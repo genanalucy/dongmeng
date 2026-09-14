@@ -152,7 +152,6 @@ private fun TranslationTopBar(
                 state = state,
                 onSelectMode = onSelectMode,
                 onStopAuto = onStopAuto,
-                onStartAutomaticMode = onStartAuto,
             )
         }
     }

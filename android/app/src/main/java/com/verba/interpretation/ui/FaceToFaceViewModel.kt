@@ -127,12 +127,10 @@ class FaceToFaceViewModel @JvmOverloads constructor(
         side = FaceToFaceSide.LEFT,
         canStart = { coordinator.state().mode == FaceToFaceMode.AUTO && coordinator.state().phase == FaceToFacePhase.IDLE },
     ) { created ->
-        val automaticDetection = created.socket.automaticLanguageDetectionSupported
-        applyTransition(coordinator.startAuto(created.turnId, created.socket, automaticDetection, automaticDetection))
+        applyTransition(coordinator.startAuto(created.turnId, created.socket))
     }
 
-    // Azure AUTO determines the side only from each segment's AtStart LID result;
-    // legacy providers retain the explicit accessibility/takeover controls.
+    // Continuous translation keeps an explicit active side and supports takeover.
     fun pressRightAuto() {
         if (!coordinator.state().automaticLanguageDetection) switchAuto(FaceToFaceSide.RIGHT)
     }
@@ -162,8 +160,7 @@ class FaceToFaceViewModel @JvmOverloads constructor(
         side = FaceToFaceSide.LEFT,
         canStart = { coordinator.state().mode == FaceToFaceMode.AUTO && coordinator.state().phase == FaceToFacePhase.PAUSED },
     ) { created ->
-        val automaticDetection = created.socket.automaticLanguageDetectionSupported
-        applyTransition(coordinator.resumeAuto(created.turnId, created.socket, automaticDetection, automaticDetection))
+        applyTransition(coordinator.resumeAuto(created.turnId, created.socket))
     }
 
     fun stopAuto() = synchronized(actionLock) {
@@ -292,12 +289,7 @@ class FaceToFaceViewModel @JvmOverloads constructor(
         val state = coordinator.state()
         val source = if (created.side == FaceToFaceSide.LEFT) state.leftLanguage else state.rightLanguage
         val target = if (created.side == FaceToFaceSide.LEFT) state.rightLanguage else state.leftLanguage
-        val candidates = if (coordinator.state().mode == FaceToFaceMode.AUTO && created.socket.automaticLanguageDetectionSupported) {
-            listOf(state.leftLanguage, state.rightLanguage)
-        } else {
-            emptyList()
-        }
-        if (created.socket.start(source, target, grant, candidates)) return true
+        if (created.socket.start(source, target, grant)) return true
         fail("无法创建翻译会话。")
         return false
     }
@@ -356,7 +348,7 @@ class FaceToFaceViewModel @JvmOverloads constructor(
         when (event) {
             AgentEvent.Ready -> Unit
             is AgentEvent.DetectedLanguage -> {
-                // Continuous Azure events name a logical segment. It is never
+                // A segmented provider event names a logical segment. It is never
                 // inferred from subtitle text; one transport can create many turns.
                 val transport = socket ?: return
                 val isNewSegment = !coordinator.containsTurn(turnId)

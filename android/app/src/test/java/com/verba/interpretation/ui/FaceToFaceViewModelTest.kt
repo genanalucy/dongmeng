@@ -226,153 +226,6 @@ class FaceToFaceViewModelTest {
         assertEquals(1, cloud.opens)
     }
 
-    @Test fun automaticStartUsesTheSocketSettingsSnapshotForCandidates() {
-        runtime.autoDetection = true
-        // Simulates the store changing after socket construction but before start().
-        runtime.onStart = { runtime.autoDetection = false }
-        vm.startAuto()
-        dispatcher.scheduler.advanceUntilIdle()
-        effects.drain()
-
-        val socket = runtime.sockets.single()
-        assertTrue(socket.automaticLanguageDetectionSupported)
-        assertEquals(listOf("zh", "en"), socket.candidateLanguages)
-    }
-
-    @Test fun nonAzureAutomaticStartSendsNoCandidates() {
-        runtime.autoDetection = false
-        vm.startAuto()
-        dispatcher.scheduler.advanceUntilIdle()
-        effects.drain()
-
-        assertFalse(runtime.sockets.single().automaticLanguageDetectionSupported)
-        assertTrue(runtime.sockets.single().candidateLanguages.isEmpty())
-    }
-
-    @Test fun azureFinalPairsShareOneSocketAndEachDetectedSegmentRoutesItsOwnTurn() {
-        val azureRuntime = RecordingRuntime().also { it.autoDetection = true }
-        val azureVm = FaceToFaceViewModel(
-            Application(), azureRuntime,
-            TranslationSessionCoordinator(cloud, CoroutineScope(dispatcher), { 0L }, dispatcher),
-            LocalHistoryTurnSaver { "saved" }, playback, effects,
-        )
-        try {
-            azureVm.setMode(FaceToFaceMode.AUTO)
-            azureVm.startAuto()
-            dispatcher.scheduler.advanceUntilIdle()
-            effects.drain()
-            val first = azureRuntime.sockets.single()
-            assertEquals(listOf("zh", "en"), first.candidateLanguages)
-            first.event(AgentEvent.DetectedLanguage("en", segmentId = 1, targetLanguage = "zh"))
-            first.event(AgentEvent.Subtitle(AgentEvent.Subtitle.Kind.SOURCE_FINAL, "hello", segmentId = 1, targetLanguage = "zh"))
-            first.event(AgentEvent.Subtitle(AgentEvent.Subtitle.Kind.TRANSLATION_FINAL, "你好", segmentId = 1, targetLanguage = "zh"))
-            effects.drain()
-            assertEquals(0, first.finishes)
-            assertEquals(0, azureRuntime.captureStops)
-            assertEquals(FaceToFacePhase.LISTENING, azureVm.state.value.phase)
-            azureRuntime.packet?.invoke(ByteArray(2_560))
-            first.event(AgentEvent.TtsSegment(1, "zh", startsPlayback = true))
-            effects.drain()
-            assertEquals(1, azureRuntime.captureStops)
-            first.tts(byteArrayOf(1, 0), 1, "zh")
-            playback.drain()
-            effects.drain()
-            assertEquals(2, azureRuntime.captureStarts)
-            first.event(AgentEvent.DetectedLanguage("zh", segmentId = 2, targetLanguage = "en"))
-            assertEquals(FaceToFaceSide.LEFT, azureVm.state.value.activeSide)
-            first.event(AgentEvent.Subtitle(AgentEvent.Subtitle.Kind.SOURCE_FINAL, "你好", segmentId = 2, targetLanguage = "en"))
-            first.event(AgentEvent.Subtitle(AgentEvent.Subtitle.Kind.TRANSLATION_FINAL, "hello", segmentId = 2, targetLanguage = "en"))
-            first.event(AgentEvent.TtsSegment(2, "en", startsPlayback = true))
-            effects.drain()
-            first.tts(byteArrayOf(2, 0), 2, "en")
-            playback.drain()
-            effects.drain()
-            assertEquals(listOf(PlaybackRoute.LEFT, PlaybackRoute.RIGHT), azureRuntime.routes)
-            assertEquals(1, azureRuntime.sockets.size)
-
-            azureVm.stopAuto()
-            effects.drain()
-            assertEquals(1, first.finishes)
-            first.event(AgentEvent.Finished)
-            effects.drain()
-            assertEquals(1, azureRuntime.sockets.size)
-        } finally {
-            azureVm.cancel()
-        }
-    }
-
-    @Test fun azureSegmentsPersistExactlyOnceAfterTtsPreludeNotTransportFinished() {
-        val azureRuntime = RecordingRuntime().also { it.autoDetection = true }
-        val saved = mutableListOf<com.verba.interpretation.history.CompletedTurn>()
-        val azureVm = FaceToFaceViewModel(
-            Application(), azureRuntime,
-            TranslationSessionCoordinator(cloud, CoroutineScope(dispatcher), { 0L }, dispatcher),
-            LocalHistoryTurnSaver { saved += it; "saved" }, playback, effects,
-        )
-        try {
-            azureVm.setMode(FaceToFaceMode.AUTO)
-            azureVm.startAuto(); dispatcher.scheduler.advanceUntilIdle(); effects.drain()
-            val socket = azureRuntime.sockets.single()
-            socket.event(AgentEvent.DetectedLanguage("en", 1, "zh"))
-            socket.event(AgentEvent.Subtitle(AgentEvent.Subtitle.Kind.SOURCE_FINAL, "one", 1, "zh"))
-            socket.event(AgentEvent.Subtitle(AgentEvent.Subtitle.Kind.TRANSLATION_FINAL, "一", 1, "zh"))
-            dispatcher.scheduler.advanceUntilIdle()
-            assertTrue(saved.isEmpty())
-            socket.event(AgentEvent.TtsSegment(1, "zh", startsPlayback = true))
-            effects.drain()
-            socket.event(AgentEvent.TtsSegment(1, "zh", startsPlayback = true))
-            effects.drain()
-            socket.tts(byteArrayOf(1, 0), 1, "zh"); playback.drain(); effects.drain()
-            socket.event(AgentEvent.DetectedLanguage("zh", 2, "en"))
-            socket.event(AgentEvent.Subtitle(AgentEvent.Subtitle.Kind.SOURCE_FINAL, "二", 2, "en"))
-            socket.event(AgentEvent.Subtitle(AgentEvent.Subtitle.Kind.TRANSLATION_FINAL, "two", 2, "en"))
-            dispatcher.scheduler.advanceUntilIdle()
-            assertEquals(listOf("one" to "一"), saved.map { it.sourceText to it.translatedText })
-            socket.event(AgentEvent.TtsSegment(2, "en", startsPlayback = true))
-            effects.drain()
-            socket.tts(byteArrayOf(2, 0), 2, "en"); playback.drain(); effects.drain()
-            socket.event(AgentEvent.Finished)
-            dispatcher.scheduler.advanceUntilIdle()
-            assertEquals(listOf("one" to "一", "二" to "two"), saved.map { it.sourceText to it.translatedText })
-            assertEquals(listOf("en" to "zh", "zh" to "en"), saved.map { it.sourceLanguage to it.targetLanguage })
-        } finally { azureVm.cancel() }
-    }
-
-    @Test fun azurePauseResumeKeepsLidRoutingForTheNewSegment() {
-        val azureRuntime = RecordingRuntime().also { it.autoDetection = true }
-        val azureVm = FaceToFaceViewModel(
-            Application(), azureRuntime,
-            TranslationSessionCoordinator(cloud, CoroutineScope(dispatcher), { 0L }, dispatcher),
-            LocalHistoryTurnSaver { "saved" }, playback, effects,
-        )
-        try {
-            azureVm.setMode(FaceToFaceMode.AUTO)
-            azureVm.startAuto()
-            dispatcher.scheduler.advanceUntilIdle()
-            effects.drain()
-            azureVm.pauseAuto()
-            effects.drain()
-            azureVm.resumeAuto()
-            dispatcher.scheduler.advanceUntilIdle()
-            effects.drain()
-
-            val resumed = azureRuntime.sockets.last()
-            assertEquals(2, azureRuntime.sockets.size)
-            resumed.event(AgentEvent.DetectedLanguage("en", segmentId = 1, targetLanguage = "zh"))
-            assertEquals(FaceToFaceSide.RIGHT, azureVm.state.value.activeSide)
-            assertEquals("zh", azureVm.state.value.turns.last().targetLanguage)
-            resumed.event(AgentEvent.Subtitle(AgentEvent.Subtitle.Kind.SOURCE_FINAL, "hello", segmentId = 1, targetLanguage = "zh"))
-            resumed.event(AgentEvent.Subtitle(AgentEvent.Subtitle.Kind.TRANSLATION_FINAL, "你好", segmentId = 1, targetLanguage = "zh"))
-            effects.drain()
-            resumed.tts(byteArrayOf(1, 0), 1, "zh")
-            resumed.event(AgentEvent.Finished)
-            playback.drain()
-            assertEquals(PlaybackRoute.LEFT, azureRuntime.routes.last())
-        } finally {
-            azureVm.cancel()
-        }
-    }
-
     @Test fun rejectedRestoreCancelsNewSocketWithoutRevivingPausedCapture() {
         start()
         vm.pressRightAuto()
@@ -483,13 +336,12 @@ private class RecordingRuntime : FaceToFaceRuntime {
     var playbackStops = 0
     var drains = 0
     var captureStops = 0
-    var autoDetection = false
     var packet: ((ByteArray) -> Unit)? = null
     val routes = mutableListOf<PlaybackRoute>()
     var onPlay: (ByteArray) -> Unit = {}
     var onStopCapture: () -> Unit = { packet = null }
     override fun createSocket(onEvent: (AgentEvent) -> Unit, onTts: (ByteArray, Long?, String?) -> Unit, onFailure: (String) -> Unit) =
-        RecordingSocket(onEvent, onTts, autoDetection) { onStart() }.also { sockets += it }
+        RecordingSocket(onEvent, onTts) { onStart() }.also { sockets += it }
     override fun startCapture(onPacket: (ByteArray) -> Unit, onError: (String) -> Unit, onLevel: (Float) -> Unit): CaptureResult {
         captureStarts++
         packet = onPacket
@@ -504,17 +356,14 @@ private class RecordingRuntime : FaceToFaceRuntime {
 private class RecordingSocket(
     val event: (AgentEvent) -> Unit,
     private val onTts: (ByteArray, Long?, String?) -> Unit,
-    override val automaticLanguageDetectionSupported: Boolean,
     val onStart: () -> Unit,
 ) : FaceToFaceSocket {
     var finishes = 0
     var cancels = 0
     var languages: Pair<String, String>? = null
-    var candidateLanguages: List<String> = emptyList()
     var sendSucceeds = true
-    override fun start(source: String, target: String, grant: TranslationSessionGrant, candidateLanguages: List<String>): Boolean {
+    override fun start(source: String, target: String, grant: TranslationSessionGrant): Boolean {
         languages = source to target
-        this.candidateLanguages = candidateLanguages
         onStart()
         return true
     }

@@ -166,7 +166,6 @@ import com.verba.interpretation.ui.ProductScreen
 import com.verba.interpretation.ui.SessionPhase
 import com.verba.interpretation.ui.SubtitleTurn
 import com.verba.interpretation.ui.TranslationLanguage
-import com.verba.interpretation.ui.TranslationSettingsScreen
 import com.verba.interpretation.update.AppUpdateState
 import com.verba.interpretation.update.AppUpdateViewModel
 import com.verba.interpretation.update.ReadyToInstallLaunchGate
@@ -372,7 +371,6 @@ private fun InterpretationApp(
                 onBack = { stack = stack.pop() },
                 accountViewModel = accountViewModel,
                 onServiceSettings = { stack = stack.push(ProductNavigationPolicy.accountSecondaryScreen(AccountSecondaryDestination.SERVICE_SETTINGS)) },
-                onTranslationSettings = { stack = stack.push(ProductScreen.TRANSLATION_SETTINGS) },
                 themeMode = themeMode,
                 onSelectThemeMode = onSelectThemeMode,
             )
@@ -391,10 +389,6 @@ private fun InterpretationApp(
                 onEndpointSettings = { stack = stack.push(ProductScreen.ENDPOINT_SETTINGS) },
             )
             ProductScreen.ENDPOINT_SETTINGS -> EndpointSettingsPage(
-                modifier = Modifier.padding(padding),
-                onBack = { stack = stack.pop() },
-            )
-            ProductScreen.TRANSLATION_SETTINGS -> TranslationSettingsScreen(
                 modifier = Modifier.padding(padding),
                 onBack = { stack = stack.pop() },
             )
@@ -1050,7 +1044,6 @@ private fun AccountSettingsPage(
     onBack: () -> Unit,
     accountViewModel: AccountViewModel,
     onServiceSettings: () -> Unit = {},
-    onTranslationSettings: () -> Unit = {},
     themeMode: ThemeMode = ThemeMode.SYSTEM,
     onSelectThemeMode: (ThemeMode) -> Unit = {},
 ) {
@@ -1068,8 +1061,6 @@ private fun AccountSettingsPage(
         identityProfile = identityProfile,
         showServiceSettings = EndpointSettingsAccessPolicy.endpointEditingEnabled(BuildConfig.DEBUG),
         onServiceSettings = onServiceSettings,
-        showTranslationSettings = EndpointSettingsAccessPolicy.translationSettingsVisible(BuildConfig.DEBUG),
-        onTranslationSettings = onTranslationSettings,
         themeMode = themeMode,
         onSelectThemeMode = onSelectThemeMode,
     )

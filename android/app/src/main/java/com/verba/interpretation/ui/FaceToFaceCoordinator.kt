@@ -61,7 +61,7 @@ data class FaceToFaceState(
     val activeTurnId: Long? = null,
     val captureActive: Boolean = false,
     val captureLevel: Float = 0f,
-    /** Azure continuous LID owns side selection; manual right-side takeover is unavailable. */
+    /** Reserved for provider-backed automatic language detection. */
     val automaticLanguageDetection: Boolean = false,
     val turns: List<FaceToFaceTurn> = emptyList(),
     val error: String? = null,
@@ -306,7 +306,7 @@ class FaceToFaceCoordinator<S> {
         return Transition(accepted = true, stopCapture = true)
     }
 
-    /** Installs a new logical Azure segment without opening another transport socket. */
+    /** Installs a new logical segment without opening another transport socket. */
     @Synchronized
     fun beginContinuousAutoSegment(turnId: Long, session: S): Boolean {
         val transport = continuousTransport
@@ -705,7 +705,7 @@ class FaceToFaceCoordinator<S> {
 
     private fun claimPlaybackLocked(): PlaybackWork? {
         if (playbackInProgress) return null
-        // Preserve FIFO across independent sockets. A completed continuous Azure
+        // Preserve FIFO across independent sockets. A completed continuous provider
         // segment is the sole exception: its live transport may carry a later
         // segment's PCM, so it must not block that logical turn.
         val ready = entries.entries.firstOrNull { (_, entry) ->
@@ -719,7 +719,7 @@ class FaceToFaceCoordinator<S> {
             playbackInProgress = true
             return PlaybackWork.Chunk(turnId, entry.tts.removeFirst(), entry.route)
         }
-        // Azure synthesis emits one validated PCM event for each logical final.
+        // A segmented provider emits one validated PCM event for each logical final.
         // Drain it before reopening capture on the same live transport.
         if (entry.continuousAutoSegment && entry.logicalComplete && !entry.transport.finished) {
             playbackInProgress = true

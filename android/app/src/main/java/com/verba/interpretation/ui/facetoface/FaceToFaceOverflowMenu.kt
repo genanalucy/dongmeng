@@ -25,8 +25,6 @@ import androidx.compose.ui.semantics.semantics
 import com.verba.interpretation.ui.FaceToFaceMode
 import com.verba.interpretation.ui.FaceToFacePhase
 import com.verba.interpretation.ui.FaceToFaceState
-import com.verba.interpretation.ui.EndpointSettingsAccessPolicy
-import com.verba.interpretation.BuildConfig
 import androidx.compose.ui.unit.dp
 
 @Composable
@@ -34,8 +32,6 @@ internal fun FaceToFaceOverflowMenu(
     state: FaceToFaceState,
     onSelectMode: (FaceToFaceMode) -> Unit,
     onStopAuto: () -> Unit,
-    onStartAutomaticMode: () -> Unit,
-    showAutomaticMode: Boolean = EndpointSettingsAccessPolicy.automaticModeVisible(BuildConfig.DEBUG),
 ) {
     var expanded by remember { mutableStateOf(false) }
     IconButton(
@@ -79,13 +75,6 @@ internal fun FaceToFaceOverflowMenu(
         if (state.mode == FaceToFaceMode.AUTO && state.phase in setOf(FaceToFacePhase.LISTENING, FaceToFacePhase.PAUSED)) {
             // 主操作（播放/暂停）在双麦之间；结束是次要会话操作，保留在更多菜单。
             DropdownMenuItem(text = { Text("结束连续翻译") }, onClick = { onStopAuto(); expanded = false })
-        }
-        if (showAutomaticMode) {
-            HorizontalDivider()
-            DropdownMenuItem(
-                text = { Text("自动模式") },
-                onClick = { onStartAutomaticMode(); expanded = false },
-            )
         }
     }
 }
