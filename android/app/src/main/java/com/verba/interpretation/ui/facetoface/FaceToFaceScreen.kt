@@ -309,39 +309,52 @@ private fun FaceReadingHalf(
                 contentDescription = if (far) "远端右耳阅读区和麦克风，文字倒向对方，滑动方向自然" else "近端左耳阅读区和麦克风，正向"
             },
     ) {
-        ConversationTimeline(
-            turns = emptyList(),
-            activeMic = presentation.activeMic,
-            listeningPlaceholder = presentation.timelinePlaceholder,
-            phase = state.phase,
-            activeTurnId = state.activeTurnId,
-            contentDescription = "${earLabel(side)}对话记录",
-            visualSpec = ConversationTimelineVisualSpec.Face,
-            displayBubbles = faceToFacePanelBubbles(state, side),
-            bubbleModifier = if (far) Modifier.graphicsLayer { rotationZ = 180f } else Modifier,
-            modifier = Modifier.weight(1f),
-        )
-        EarMicControls(
-            state = state,
-            presentation = presentation,
-            requestMicrophone = requestMicrophone,
-            onManualPress = viewModel::manualPress,
-            onManualRelease = viewModel::manualRelease,
-            onManualCancel = viewModel::manualCancel,
-            clearMicrophoneRequest = clearMicrophoneRequest,
-            onStartAuto = viewModel::startAuto,
-            onPressRightAuto = viewModel::pressRightAuto,
-            onReleaseRightAuto = viewModel::releaseRightAuto,
-            onCancelRightAuto = viewModel::cancelRightAuto,
-            onPauseAuto = viewModel::pauseAuto,
-            onResumeAuto = viewModel::resumeAuto,
-            onStopAuto = { clearMicrophoneRequest(); viewModel.stopAuto() },
-            onSetLanguages = viewModel::setLanguages,
-            onSwapLanguages = viewModel::swapLanguages,
-            modifier = (if (far) Modifier.graphicsLayer { rotationZ = 180f } else Modifier)
-                .semantics { testTag = "face-to-face-mic-${position.name.lowercase()}" },
-            visibleSides = setOf(side),
-            showAutoControls = false,
-        )
+        val controls = @Composable {
+            EarMicControls(
+                state = state,
+                presentation = presentation,
+                requestMicrophone = requestMicrophone,
+                onManualPress = viewModel::manualPress,
+                onManualRelease = viewModel::manualRelease,
+                onManualCancel = viewModel::manualCancel,
+                clearMicrophoneRequest = clearMicrophoneRequest,
+                onStartAuto = viewModel::startAuto,
+                onPressRightAuto = viewModel::pressRightAuto,
+                onReleaseRightAuto = viewModel::releaseRightAuto,
+                onCancelRightAuto = viewModel::cancelRightAuto,
+                onPauseAuto = viewModel::pauseAuto,
+                onResumeAuto = viewModel::resumeAuto,
+                onStopAuto = { clearMicrophoneRequest(); viewModel.stopAuto() },
+                onSetLanguages = viewModel::setLanguages,
+                onSwapLanguages = viewModel::swapLanguages,
+                // The far-side controls remain physically at the top, while their
+                // contents are rotated for the person facing the opposite edge.
+                modifier = (if (far) Modifier.graphicsLayer { rotationZ = 180f } else Modifier)
+                    .semantics { testTag = "face-to-face-mic-${position.name.lowercase()}" },
+                visibleSides = setOf(side),
+                showAutoControls = false,
+            )
+        }
+        val timeline = @Composable {
+            ConversationTimeline(
+                turns = emptyList(),
+                activeMic = presentation.activeMic,
+                listeningPlaceholder = presentation.timelinePlaceholder,
+                phase = state.phase,
+                activeTurnId = state.activeTurnId,
+                contentDescription = "${earLabel(side)}对话记录",
+                visualSpec = ConversationTimelineVisualSpec.Face,
+                displayBubbles = faceToFacePanelBubbles(state, side),
+                bubbleModifier = if (far) Modifier.graphicsLayer { rotationZ = 180f } else Modifier,
+                modifier = Modifier.weight(1f),
+            )
+        }
+        if (far) {
+            controls()
+            timeline()
+        } else {
+            timeline()
+            controls()
+        }
     }
 }

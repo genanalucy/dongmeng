@@ -73,6 +73,20 @@ class FaceToFaceScreenTest {
     }
 
     @Test
+    fun farSideMicrophoneIsAboveItsConversationTimeline() {
+        val viewModel = FaceToFaceViewModel(application())
+        compose.setContent {
+            val state by viewModel.state.collectAsState()
+            MaterialTheme { FaceToFaceScreen(state, viewModel, requestMicrophone = {}) }
+        }
+
+        viewModel.setView(FaceToFaceView.FACE_TO_FACE)
+        val microphoneBounds = compose.onNodeWithTag("face-to-face-mic-far").fetchSemanticsNode().boundsInRoot
+        val timelineBounds = compose.onNodeWithContentDescription("右耳对话记录").fetchSemanticsNode().boundsInRoot
+        org.junit.Assert.assertTrue(microphoneBounds.top < timelineBounds.top)
+    }
+
+    @Test
     fun constrainedPanelsCanScrollToAndOperateBothEarControls() {
         val viewModel = FaceToFaceViewModel(application())
         compose.setContent {
