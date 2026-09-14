@@ -40,6 +40,7 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.filled.SwapVert
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -72,6 +73,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.verba.interpretation.BuildConfig
 import com.verba.interpretation.ui.SessionPhase
 import com.verba.interpretation.ui.TranslationLanguage
 import com.verba.interpretation.ui.design.TranslationVisualTokens
@@ -107,6 +109,8 @@ fun InterpretationScreen(
     onFinish: () -> Unit,
     onReset: () -> Unit,
     onSetLanguages: (String, String) -> Unit = { _, _ -> },
+    onSwapLanguages: () -> Unit = {},
+
     modifier: Modifier = Modifier,
     overlayContent: @Composable BoxScope.() -> Unit = {},
 ) {
@@ -201,6 +205,7 @@ fun InterpretationScreen(
             microphoneRunning = model.showMicrophoneRipple,
             onExit = { InterpretationActionDispatcher.exit(callbacks) },
             onSetLanguages = onSetLanguages,
+            onSwapLanguages = onSwapLanguages,
         )
         // Keep long transcript/error content scrollable so the pinned controls remain reachable.
         Box(modifier = Modifier.weight(1f)) {
@@ -274,6 +279,7 @@ private fun CompactHeader(
     microphoneRunning: Boolean,
     onExit: () -> Unit,
     onSetLanguages: (String, String) -> Unit,
+    onSwapLanguages: () -> Unit,
 ) {
     val languages = languageDirection.split(" → ", limit = 2)
     Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
@@ -301,7 +307,21 @@ private fun CompactHeader(
                 enabled = !sessionActive,
                 onSelect = { onSetLanguages(it, targetLanguage) },
             )
-            Text(" → ", fontSize = 13.sp, lineHeight = 18.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (BuildConfig.DEBUG) {
+                IconButton(
+                    onClick = onSwapLanguages,
+                    enabled = !sessionActive,
+                    modifier = Modifier.size(48.dp).semantics { contentDescription = "交换左右语言" },
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.SwapVert,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            } else {
+                Text(" → ", fontSize = 13.sp, lineHeight = 18.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
             LanguageSelector(
                 language = targetLanguage,
                 otherLanguage = sourceLanguage,

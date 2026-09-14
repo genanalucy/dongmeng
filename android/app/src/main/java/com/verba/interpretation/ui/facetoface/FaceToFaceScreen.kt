@@ -250,6 +250,7 @@ private fun ConversationLayout(
             onResumeAuto = viewModel::resumeAuto,
             onStopAuto = { clearMicrophoneRequest(); viewModel.stopAuto() },
             onSetLanguages = viewModel::setLanguages,
+            onSwapLanguages = viewModel::swapLanguages,
         )
     }
 }
@@ -336,6 +337,7 @@ private fun FaceReadingHalf(
             onResumeAuto = viewModel::resumeAuto,
             onStopAuto = { clearMicrophoneRequest(); viewModel.stopAuto() },
             onSetLanguages = viewModel::setLanguages,
+            onSwapLanguages = viewModel::swapLanguages,
             modifier = (if (far) Modifier.graphicsLayer { rotationZ = 180f } else Modifier)
                 .semantics { testTag = "face-to-face-mic-${position.name.lowercase()}" },
             visibleSides = setOf(side),

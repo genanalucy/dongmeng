@@ -57,6 +57,24 @@ class InterpretationScreenTest {
     }
 
     @Test
+    fun idleLanguageSwapExchangesTheSelectedPair() {
+        var selected: Pair<String, String>? = null
+        compose.setContent {
+            MaterialTheme {
+                InterpretationScreen(
+                    model = InterpretationUiMapper.map(InterpretationUiState(sourceLanguage = "zh", targetLanguage = "en")),
+                    onExit = {}, onStart = {}, onPause = {}, onResume = {}, onFinish = {}, onReset = {},
+                    onSetLanguages = { source, target -> selected = source to target },
+                    onSwapLanguages = { selected = "en" to "zh" },
+                )
+            }
+        }
+
+        compose.onNodeWithContentDescription("交换左右语言").performClick()
+        assertEquals("en" to "zh", selected)
+    }
+
+    @Test
     fun controlsExposeOnlyIconsWhileKeepingAccessibleLabels() {
         setScreen(state = InterpretationUiState(phase = SessionPhase.RUNNING))
 

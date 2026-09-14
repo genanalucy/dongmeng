@@ -27,6 +27,7 @@ import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.SwapVert
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -50,6 +51,7 @@ import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.verba.interpretation.BuildConfig
 import com.verba.interpretation.ui.design.TranslationVisualTokens
 import com.verba.interpretation.ui.design.VerbaColors
 import com.verba.interpretation.ui.FaceToFaceMode
@@ -198,6 +200,7 @@ internal fun EarMicControls(
     onResumeAuto: () -> Unit,
     onStopAuto: () -> Unit,
     onSetLanguages: (String, String) -> Unit,
+    onSwapLanguages: () -> Unit,
     clearMicrophoneRequest: () -> Unit = {},
     modifier: Modifier = Modifier,
     visibleSides: Set<FaceToFaceSide> = setOf(FaceToFaceSide.LEFT, FaceToFaceSide.RIGHT),
@@ -219,8 +222,11 @@ internal fun EarMicControls(
     ) {
         Row(
             Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(TranslationVisualTokens.MicGroupGap, Alignment.CenterHorizontally),
-            verticalAlignment = Alignment.Bottom,
+            horizontalArrangement = Arrangement.spacedBy(
+                if (BuildConfig.DEBUG) 20.dp else TranslationVisualTokens.MicGroupGap,
+                Alignment.CenterHorizontally,
+            ),
+            verticalAlignment = Alignment.Top,
         ) {
             if (FaceToFaceSide.LEFT in visibleSides) EarMicButton(
                 side = FaceToFaceSide.LEFT,
@@ -254,8 +260,11 @@ internal fun EarMicControls(
             )
             // 连续控制只属于已选中的连续翻译模式；手动模式不展示，避免误以为
             // 可以直接从双麦中间切换会话模式。
-            if (showAutoControls && visibleSides.size == 2 && !manual) {
-                ContinuousControls(
+            if (BuildConfig.DEBUG && visibleSides.size == 2) {
+                CenterLanguageControls(
+                    enabled = state.phase == FaceToFacePhase.IDLE,
+                    onSwapLanguages = onSwapLanguages,
+                    continuous = showAutoControls && !manual,
                     phase = state.phase,
                     requestMicrophone = requestMicrophone,
                     onPause = { clearMicrophoneRequest(); onPauseAuto() },
@@ -306,15 +315,46 @@ internal fun EarMicControls(
 }
 
 @Composable
-private fun LanguagePairRow(
-    state: FaceToFaceState,
+private fun CenterLanguageControls(
     enabled: Boolean,
-    onSetLanguages: (String, String) -> Unit,
+    onSwapLanguages: () -> Unit,
+    continuous: Boolean,
+    phase: FaceToFacePhase,
+    requestMicrophone: (MicrophonePermissionAction) -> Unit,
+    onPause: () -> Unit,
 ) {
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
-        LanguageEntry(FaceToFaceSide.LEFT, state.leftLanguage, state.rightLanguage, enabled) { onSetLanguages(it, state.rightLanguage) }
-        Text("↔", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelSmall)
-        LanguageEntry(FaceToFaceSide.RIGHT, state.rightLanguage, state.leftLanguage, enabled) { onSetLanguages(state.leftLanguage, it) }
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        LanguageSwapButton(enabled, onSwapLanguages)
+        if (continuous) {
+            androidx.compose.foundation.layout.Spacer(Modifier.height(4.dp))
+            ContinuousControls(phase, requestMicrophone, onPause)
+        }
+    }
+}
+
+@Composable
+private fun LanguageSwapButton(enabled: Boolean, onClick: () -> Unit) {
+    Surface(
+        modifier = Modifier
+            .size(48.dp)
+            .clip(CircleShape)
+            .clickable(enabled = enabled, role = Role.Button, onClick = onClick)
+            .semantics {
+                contentDescription = "交换左右语言"
+                role = Role.Button
+                if (!enabled) disabled()
+            },
+        shape = CircleShape,
+        color = MaterialTheme.colorScheme.secondaryContainer,
+        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+    ) {
+        Box(contentAlignment = Alignment.Center) {
+            Icon(
+                imageVector = Icons.Filled.SwapVert,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSecondaryContainer,
+            )
+        }
     }
 }
 

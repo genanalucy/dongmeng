@@ -91,6 +91,11 @@ class FaceToFaceViewModel @JvmOverloads constructor(
         if (coordinator.setLanguages(leftLanguage, rightLanguage)) publishState()
     }
 
+    fun swapLanguages() = synchronized(actionLock) {
+        val state = coordinator.state()
+        if (coordinator.setLanguages(state.rightLanguage, state.leftLanguage)) publishState()
+    }
+
     fun manualPress(side: FaceToFaceSide) = startWithCloudGrant(
         side = side,
         canStart = {
