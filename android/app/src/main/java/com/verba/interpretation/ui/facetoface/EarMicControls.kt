@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.border
 import androidx.compose.ui.draw.clip
+import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.RepeatMode
@@ -205,6 +206,7 @@ internal fun EarMicControls(
     modifier: Modifier = Modifier,
     visibleSides: Set<FaceToFaceSide> = setOf(FaceToFaceSide.LEFT, FaceToFaceSide.RIGHT),
     showAutoControls: Boolean = true,
+    compactLayout: Boolean = false,
 ) {
     val manual = state.mode == FaceToFaceMode.MANUAL
     val activeSide = presentation.activeMic
@@ -217,7 +219,9 @@ internal fun EarMicControls(
         if (manual) onManualCancel()
     }
     Column(
-        modifier.fillMaxWidth().height(TranslationVisualTokens.OperationHeight).padding(horizontal = 20.dp, vertical = 0.dp),
+        modifier.fillMaxWidth()
+            .then(if (compactLayout) Modifier.wrapContentHeight() else Modifier.height(TranslationVisualTokens.OperationHeight))
+            .padding(horizontal = 20.dp, vertical = 0.dp),
         verticalArrangement = Arrangement.Top,
     ) {
         Row(

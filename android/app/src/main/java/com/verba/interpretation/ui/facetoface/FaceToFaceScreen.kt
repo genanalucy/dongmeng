@@ -337,6 +337,7 @@ private fun FaceReadingHalf(
                     .semantics { testTag = "face-to-face-mic-${position.name.lowercase()}" },
                 visibleSides = setOf(side),
                 showAutoControls = false,
+                compactLayout = true,
             )
         }
         val timeline = @Composable {
