@@ -57,6 +57,17 @@ class AgentProtocolTest {
         assertEquals(" TRANSLATION_SESSION_REPLACED ", padded.code)
     }
 
+    @Test fun acceptsValidUnboundVolcengineTtsPcm16Frames() {
+        assertTrue(AgentSocket.isValidTtsPcm16(2))
+        assertTrue(AgentSocket.isValidTtsPcm16(2_560))
+    }
+
+    @Test fun rejectsEmptyOrOddLengthTtsPcm16Frames() {
+        assertTrue(!AgentSocket.isValidTtsPcm16(0))
+        assertTrue(!AgentSocket.isValidTtsPcm16(1))
+        assertTrue(!AgentSocket.isValidTtsPcm16(2_559))
+    }
+
     @Test(expected = ProtocolException::class)
     fun rejectsUnknownEvents() { AgentProtocol.parse("{\"type\":\"vendor_guess\"}") }
 }

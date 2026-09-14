@@ -89,8 +89,15 @@ class AgentSocket(
                     if (!ready || socket !== webSocket) null
                     else pendingTtsSegments.removeFirstOrNull()
                 }
-                if (segment != null && bytes.size > 0 && bytes.size % 2 == 0) onTts(bytes.toByteArray(), segment.segmentId, segment.targetLanguage)
-                else fail("TTS PCM16 音频包缺少匹配元数据或长度无效。")
+                if (!isValidTtsPcm16(bytes.size)) {
+                    fail("TTS PCM16 音频包长度无效。")
+                } else if (segment != null) {
+                    onTts(bytes.toByteArray(), segment.segmentId, segment.targetLanguage)
+                } else {
+                    // Volcengine sends a continuous PCM stream without the Azure-style
+                    // tts/tts_start metadata events. A valid unbound frame is still playable.
+                    onTts(bytes.toByteArray(), null, null)
+                }
             }
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
@@ -162,5 +169,9 @@ class AgentSocket(
         finishing = false
         pendingAudio.clear()
         pendingTtsSegments.clear()
+    }
+
+    companion object {
+        internal fun isValidTtsPcm16(byteCount: Int): Boolean = byteCount > 0 && byteCount % 2 == 0
     }
 }
