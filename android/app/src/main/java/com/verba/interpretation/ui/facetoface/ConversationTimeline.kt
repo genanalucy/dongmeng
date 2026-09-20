@@ -54,6 +54,7 @@ import com.verba.interpretation.ui.FaceToFaceSide
 import com.verba.interpretation.ui.FaceToFaceTurn
 import com.verba.interpretation.ui.TranslationLanguage
 import com.verba.interpretation.ui.design.ConversationTimelineVisualSpec
+import com.verba.interpretation.ui.design.GlassReveal
 import com.verba.interpretation.ui.design.LiquidGlassSurface
 import com.verba.interpretation.ui.design.TranslationVisualTokens
 import com.verba.interpretation.ui.display.EventBoundaryDisplay
@@ -290,7 +291,8 @@ private fun ConversationBubble(
         FaceToFacePhase.PROCESSING -> "${earLabel(bubble.side)} · 翻译中"
         else -> null
     }
-    Column(modifier.fillMaxWidth(), horizontalAlignment = if (isRight) Alignment.End else Alignment.Start) {
+    GlassReveal(modifier = modifier) {
+    Column(Modifier.fillMaxWidth(), horizontalAlignment = if (isRight) Alignment.End else Alignment.Start) {
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = if (isRight) Arrangement.End else Arrangement.Start,
@@ -372,6 +374,7 @@ private fun ConversationBubble(
         Spacer(Modifier.width(TranslationVisualTokens.BubbleGap))
         Spacer(Modifier.width(TranslationVisualTokens.BubbleOuterSlot).height(62.dp))
         }
+    }
     }
 }
 

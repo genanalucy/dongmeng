@@ -1,6 +1,6 @@
 package com.verba.interpretation.ui.design
 
-import android.animation.ValueAnimator
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
@@ -20,7 +20,6 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Shape
-import androidx.compose.ui.platform.LocalInspectionMode
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.ui.unit.dp
 
@@ -38,19 +37,23 @@ fun LiquidGlassSurface(
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val pressed by interactionSource.collectIsPressedAsState()
-    val animationsEnabled = ValueAnimator.areAnimatorsEnabled() && !LocalInspectionMode.current
+    val animationsEnabled = motionEnabled()
     val scale by animateFloatAsState(
         targetValue = if (animationsEnabled && pressed) 0.985f else 1f,
-        animationSpec = tween(durationMillis = 140, easing = FastOutSlowInEasing),
+        animationSpec = tween(durationMillis = MotionQuickMillis, easing = FastOutSlowInEasing),
         label = "liquidGlassPressScale",
     )
     val highlightAlpha by animateFloatAsState(
         targetValue = if (animationsEnabled && pressed) 0.20f else 0.10f,
-        animationSpec = tween(durationMillis = 140, easing = FastOutSlowInEasing),
+        animationSpec = tween(durationMillis = MotionQuickMillis, easing = FastOutSlowInEasing),
         label = "liquidGlassHighlight",
     )
     val colors = MaterialTheme.colorScheme
-    val glass = colors.surfaceContainerLow.copy(alpha = 0.84f)
+    val glass by animateColorAsState(
+        targetValue = colors.surfaceContainerLow.copy(alpha = if (pressed) 0.92f else 0.84f),
+        animationSpec = tween(durationMillis = MotionQuickMillis, easing = FastOutSlowInEasing),
+        label = "liquidGlassSurface",
+    )
     val border = Brush.linearGradient(
         listOf(
             colors.surfaceBright.copy(alpha = highlightAlpha + 0.25f),
@@ -59,7 +62,11 @@ fun LiquidGlassSurface(
         ),
     )
     val base = modifier
-        .graphicsLayer { scaleX = scale; scaleY = scale }
+        .graphicsLayer {
+            scaleX = scale
+            scaleY = scale
+            alpha = if (enabled) 1f else 0.62f
+        }
         .clip(shape)
         .background(glass)
         .border(1.dp, border, shape)

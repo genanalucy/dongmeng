@@ -62,6 +62,7 @@ import com.verba.interpretation.ui.HistorySyncDiagnostic
 import com.verba.interpretation.ui.HistorySyncStatus
 import com.verba.interpretation.ui.HistoryViewModel
 import com.verba.interpretation.ui.TranslationLanguage
+import com.verba.interpretation.ui.design.GlassReveal
 import com.verba.interpretation.ui.design.LiquidGlassSurface
 import java.time.Instant
 import java.time.ZoneId
@@ -211,6 +212,7 @@ private fun HistorySummary(
             item { HistoryEmptyState(query = state.query, hasSessions = state.sessions.isNotEmpty(), syncStatus = state.syncStatus, showSyncStatus = showSyncControls) }
         }
         items(state.visibleSessions, key = { it.id }) { session ->
+            GlassReveal {
             SessionSummaryCard(
                 session = session,
                 editing = editingId == session.id,
@@ -221,6 +223,7 @@ private fun HistorySummary(
                 onSaveRename = { onSaveRename(session.id) },
                 onDelete = { onDelete(session.id) },
             )
+            }
         }
     }
 }

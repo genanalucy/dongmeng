@@ -1,5 +1,8 @@
 package com.verba.interpretation.ui.navigation
 
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -19,6 +22,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -33,6 +37,7 @@ import androidx.compose.ui.unit.sp
 import com.verba.interpretation.ui.ProductDestination
 import com.verba.interpretation.ui.design.FaceToFaceConversationIcon
 import com.verba.interpretation.ui.design.LiquidGlassSurface
+import com.verba.interpretation.ui.design.MotionQuickMillis
 import com.verba.interpretation.ui.design.TranslationVisualTokens
 
 @Composable
@@ -69,14 +74,21 @@ fun ProductBottomBar(
         ) {
             destinations.forEach { destination ->
             val isSelected = destination == selected
+            val container by animateColorAsState(
+                targetValue = if (isSelected) selectedContainer else barContainer,
+                animationSpec = tween(MotionQuickMillis, easing = FastOutSlowInEasing),
+                label = "bottomNavContainer",
+            )
+            val content by animateColorAsState(
+                targetValue = if (isSelected) selectedContent else unselectedContent,
+                animationSpec = tween(MotionQuickMillis, easing = FastOutSlowInEasing),
+                label = "bottomNavContent",
+            )
             Row(
                 modifier = Modifier
                     .weight(1f)
                     .height(50.dp)
-                    .background(
-                        if (isSelected) selectedContainer else barContainer,
-                        RoundedCornerShape(25.dp),
-                    )
+                    .background(container, RoundedCornerShape(25.dp))
                     .semantics {
                         contentDescription = "${destination.visualLabel()}页"
                         this.selected = isSelected
@@ -96,11 +108,11 @@ fun ProductBottomBar(
                         imageVector = icon.image,
                         contentDescription = null,
                         modifier = Modifier.size(22.dp),
-                        tint = if (isSelected) selectedContent else unselectedContent,
+                        tint = content,
                     )
                     Text(
                         destination.visualLabel(),
-                        color = if (isSelected) selectedContent else unselectedContent,
+                        color = content,
                         fontSize = 10.sp,
                         lineHeight = 14.sp,
                         fontWeight = FontWeight.Medium,

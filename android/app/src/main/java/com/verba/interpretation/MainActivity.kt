@@ -11,6 +11,15 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
@@ -160,6 +169,9 @@ import com.verba.interpretation.ui.InterpretationViewModel
 import com.verba.interpretation.ui.ProductDestination
 import com.verba.interpretation.ui.navigation.ProductBottomBar
 import com.verba.interpretation.ui.design.LiquidGlassSurface
+import com.verba.interpretation.ui.design.MotionQuickMillis
+import com.verba.interpretation.ui.design.MotionScreenMillis
+import com.verba.interpretation.ui.design.motionEnabled
 import com.verba.interpretation.ui.ProductNavigationMode
 import com.verba.interpretation.ui.ProductNavigationPolicy
 import com.verba.interpretation.ui.ProductNavigationStack
@@ -280,7 +292,22 @@ private fun InterpretationApp(
             }
         },
     ) { padding ->
-        when (screen) {
+        val transitionsEnabled = motionEnabled()
+        AnimatedContent(
+            targetState = screen,
+            transitionSpec = {
+                if (!transitionsEnabled) {
+                    EnterTransition.None togetherWith ExitTransition.None
+                } else {
+                    (fadeIn(tween(MotionScreenMillis, easing = FastOutSlowInEasing)) +
+                        slideInHorizontally(tween(MotionScreenMillis, easing = FastOutSlowInEasing)) { it / 18 }) togetherWith
+                        (fadeOut(tween(MotionQuickMillis, easing = FastOutSlowInEasing)) +
+                            slideOutHorizontally(tween(MotionQuickMillis, easing = FastOutSlowInEasing)) { -it / 28 })
+                }
+            },
+            label = "productScreen",
+        ) { displayedScreen ->
+        when (displayedScreen) {
             ProductScreen.TRANSLATE -> TranslationHome(
                 modifier = Modifier.padding(padding),
                 interpretationPhase = interpretationState.phase,
@@ -393,6 +420,7 @@ private fun InterpretationApp(
                 modifier = Modifier.padding(padding),
                 onBack = { stack = stack.pop() },
             )
+        }
         }
     }
     automaticUpdatePrompt?.takeUnless { updateDownloading }?.let { update ->
