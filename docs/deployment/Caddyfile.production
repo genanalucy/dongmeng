@@ -2,11 +2,11 @@
 	encode zstd gzip
 
 	# Legacy Debug clients do not send a package/channel parameter.
-	# Install docs/deployment/ota/debug-v23.json at the path below before reload.
+	# Install docs/deployment/ota/debug-v24.json at the path below before reload.
 	# Keep the production yszn.nlplayer.org site's update route on Cloud API.
 	handle /api/v1/app-update {
 		root * /opt/dngmeng/ota
-		rewrite * /debug-v23.json
+		rewrite * /debug-v24.json
 		header Content-Type application/json
 		header Cache-Control "no-store"
 		file_server

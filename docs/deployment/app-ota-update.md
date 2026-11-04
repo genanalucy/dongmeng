@@ -45,6 +45,15 @@ APP_UPDATE_FORCE=false
 - GitHub [Pre-release](https://github.com/genanalucy/dongmeng/releases/tag/android-debug-nav-corners-20261105-v23) 已发布。公网验证 sslip 返回 Debug23，正式域名仍返回正式20；Caddy/Cloud API/Agent active。
 - Caddy 变更前备份：`/etc/caddy/Caddyfile.before-debug-v23-20261104T182456Z`；validate 与平滑 reload 成功。手机实际下载、覆盖与观感仍待用户确认。
 
+## Debug v24 手动下载进度修复
+
+- 当前 sslip Debug 更新路径指向 `/debug-v24.json`，源文件 [`ota/debug-v24.json`](ota/debug-v24.json)；正式域名继续返回正式 v20。
+- v24 `20261105.0314`，源码 `5a8ff7a`，APK SHA-256 `4f20c833b09c1756bc4ec7f449d17ac27a33a08a0bdd1e3ca6bcfb6d61488348`，既有 Debug 证书及 APK v2 签名验证通过。
+- 关于页进度字符串将字面百分比再传给 `.format()`，稳定抛出 `UnknownFormatConversionException`；改为先格式化数值再拼接百分比。3 项针对性回归修复前 2 项失败，修复后全量 388 项通过；lint 无错误（48 Warning / 2 Hint），Debug 构建通过。
+- 不改下载、哈希或安装路径；未重跑云端设备测试。手机崩溃栈未取得，真实下载完成/安装仍需用户验收。
+- 旧版手动下载仍有缺陷，请从启动更新弹窗升级此版，或使用 [GitHub 下载](https://github.com/genanalucy/dongmeng/releases/tag/android-debug-update-progress-20261105-v24)，不卸载、不清数据。
+- Caddy 备份 `/etc/caddy/Caddyfile.before-debug-v24-20261104T191652Z`，validate/reload 成功；公网核对 Debug24/正式20，三个服务 active。
+
 ## 安全边界
 
 - 客户端拒绝非 HTTPS、带凭据或片段的下载地址，并在安装前校验 SHA-256。
