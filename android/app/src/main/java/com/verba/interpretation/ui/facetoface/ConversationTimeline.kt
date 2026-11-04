@@ -291,7 +291,7 @@ private fun ConversationBubble(
         FaceToFacePhase.PROCESSING -> "${earLabel(bubble.side)} · 翻译中"
         else -> null
     }
-    GlassReveal(modifier = modifier) {
+    GlassReveal(revealKey = bubble.key, modifier = modifier) {
     Column(Modifier.fillMaxWidth(), horizontalAlignment = if (isRight) Alignment.End else Alignment.Start) {
         Row(
             modifier = Modifier.fillMaxWidth(),
