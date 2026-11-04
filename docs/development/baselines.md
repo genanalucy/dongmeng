@@ -11,7 +11,7 @@ Android 是主要开发方向，`main` 是共享集成基线。正式功能与�
 | 路径 | 用途 |
 |---|---|
 | `/home/genanalucy/work/dngmeng-ui/integration` | 原 Android 集成工作树，`android-ui-redesign` 固定在 `8e625a6`；保留作整合前对照，不在这里混合拉取旧远端分支 |
-| `/home/genanalucy/work/dngmeng-ui/main-baseline` | 本次整合与后续 Android 开发工作树，分支 `chore/android-main-baseline`；整合推送后以 `origin/main` 为共享基线 |
+| `/home/genanalucy/work/dngmeng-ui/main-baseline` | 后续 Android 开发工作树；基线整合分支 `chore/android-main-baseline`，第一阶段回归使用 `test/android-phase1-baseline`；共享基线仍为 `origin/main` |
 | `/home/genanalucy/dngmeng_project` | 旧本地 `main` 工作树，包含大量未跟踪源码/本地资料；本次不切换、不清理、不直接 pull |
 
 开始任务先运行 `git status --short`、`git branch --show-current`、`git log -1 --oneline`。在主基线上开任务分支；使用其他机器时，从 GitHub `main` 新 clone 即可，不依赖上述本机绝对路径。
@@ -42,6 +42,10 @@ Android 是主要开发方向，`main` 是共享集成基线。正式功能与�
 | 历史问题复现 | `com.verba.interpretation.debug` | `19` / `20260915.0225` | 从 `cde766d` 重建并固定版本名；[历史测试包](https://github.com/genanalucy/dongmeng/releases/tag/android-debug-internal-beta-20260915-0225)；不含液态玻璃 |
 | 已发布玻璃测试 | `com.verba.interpretation.debug` | `21` / `20260920.1415` | `c1ac3f1`；[玻璃测试包](https://github.com/genanalucy/dongmeng/releases/tag/android-debug-internal-beta-20260920-liquid-glass)；不含后续动画补丁 |
 | 动画开发对照 | `com.verba.interpretation.debug` | `21` / `20260920.1602` | `8e625a6`；曾本地构建安装到 Pixel 3，没有独立 GitHub Release；不要把玻璃 Release 当成此版本 |
+
+### 第一阶段新回归包
+
+Debug v22 `20261104.2216` 从 `8348e82` 构建（基于 `main` 的 `f26d690`，仅递增 Debug versionCode）。APK 和验证报告已本地留存，未发布 Release、未安装真机；详细校验值、位置、用例和待测状态见 [第一阶段核心回归记录](../reviews/android-phase1-regression.md)。该包与所有历史 Debug 包同包名，不与它们并存。
 
 ### 既有 APK SHA-256
 
