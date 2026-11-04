@@ -8,6 +8,7 @@ import androidx.compose.foundation.LocalIndication
 import androidx.compose.material3.ripple
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -82,8 +83,10 @@ fun ProductBottomBar(
             destinations.forEach { destination ->
             val isSelected = destination == selected
             val capsuleShape = RoundedCornerShape(25.dp)
+            val interactionSource = remember { MutableInteractionSource() }
+            val pressed by interactionSource.collectIsPressedAsState()
             val container by animateColorAsState(
-                targetValue = if (isSelected) selectedContainer else barContainer,
+                targetValue = if (isSelected || (BuildConfig.DEBUG && pressed)) selectedContainer else barContainer,
                 animationSpec = tween(MotionQuickMillis, easing = FastOutSlowInEasing),
                 label = "bottomNavContainer",
             )
@@ -104,7 +107,7 @@ fun ProductBottomBar(
                     }
                     .selectable(
                         selected = isSelected,
-                        interactionSource = remember { MutableInteractionSource() },
+                        interactionSource = interactionSource,
                         indication = if (BuildConfig.DEBUG) ripple(color = selectedContent) else LocalIndication.current,
                         role = Role.Tab,
                         onClick = { onSelect(destination) },
