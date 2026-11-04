@@ -4,6 +4,8 @@ import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.LocalIndication
+import androidx.compose.material3.ripple
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
@@ -103,6 +105,7 @@ fun ProductBottomBar(
                     .selectable(
                         selected = isSelected,
                         interactionSource = remember { MutableInteractionSource() },
+                        indication = if (BuildConfig.DEBUG) ripple(color = selectedContent) else LocalIndication.current,
                         role = Role.Tab,
                         onClick = { onSelect(destination) },
                     ),
