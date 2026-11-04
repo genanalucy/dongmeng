@@ -36,6 +36,15 @@ APP_UPDATE_FORCE=false
 
 回滚：恢复本次变更前的 Caddyfile 备份（本次为 `/etc/caddy/Caddyfile.before-debug-ota-20261104T165543Z`），先验证再 reload；先检查之后是否有其他配置变更，不覆盖后续修改。不删用户数据、不撤换已发布附件。
 
+## Debug v23 圆角反馈修复（2026-11-05 中国时间）
+
+- 当前旧 Debug 更新路径已从 `/debug-v22.json` 切到 `/debug-v23.json`，元数据源为 [`ota/debug-v23.json`](ota/debug-v23.json)。v22 文件保留作回溯。
+- v23 `20261105.0217`，源码 `e8c2ad1`，APK SHA-256 `d49a581f331820cc80872606c1364f4733d0dd6f33cbd6b92407546779267532`；同一 Debug 签名。
+- 修复 Debug 底部导航背景与按压涟漪的圆角裁剪，显式主题涟漪及按压底色保证深浅主题反馈可见；Release 交互分支不变。
+- 385 项 JVM 单测、lint 无错误及 Debug/AndroidTest 构建通过；[设备回归](https://github.com/genanalucy/dongmeng/actions/runs/41885970668)通过，含深浅主题圆角外像素不变、内部反馈可见与点击断言。之前失败记录保留：暗色系统涟漪截图内部无变化，增加明确按压态后通过，未移除断言。
+- GitHub [Pre-release](https://github.com/genanalucy/dongmeng/releases/tag/android-debug-nav-corners-20261105-v23) 已发布。公网验证 sslip 返回 Debug23，正式域名仍返回正式20；Caddy/Cloud API/Agent active。
+- Caddy 变更前备份：`/etc/caddy/Caddyfile.before-debug-v23-20261104T182456Z`；validate 与平滑 reload 成功。手机实际下载、覆盖与观感仍待用户确认。
+
 ## 安全边界
 
 - 客户端拒绝非 HTTPS、带凭据或片段的下载地址，并在安装前校验 SHA-256。
