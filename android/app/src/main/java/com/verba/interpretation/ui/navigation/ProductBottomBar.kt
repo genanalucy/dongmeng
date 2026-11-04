@@ -29,6 +29,7 @@ import androidx.compose.ui.graphics.Color
 import com.verba.interpretation.BuildConfig
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -78,6 +79,7 @@ fun ProductBottomBar(
         ) {
             destinations.forEach { destination ->
             val isSelected = destination == selected
+            val capsuleShape = RoundedCornerShape(25.dp)
             val container by animateColorAsState(
                 targetValue = if (isSelected) selectedContainer else barContainer,
                 animationSpec = tween(MotionQuickMillis, easing = FastOutSlowInEasing),
@@ -92,7 +94,8 @@ fun ProductBottomBar(
                 modifier = Modifier
                     .weight(1f)
                     .then(if (BuildConfig.DEBUG) Modifier.heightIn(min = 50.dp).padding(vertical = 4.dp) else Modifier.height(50.dp))
-                    .background(container, RoundedCornerShape(25.dp))
+                    .then(if (BuildConfig.DEBUG) Modifier.clip(capsuleShape) else Modifier)
+                    .background(container, capsuleShape)
                     .semantics {
                         contentDescription = "${destination.visualLabel()}页"
                         this.selected = isSelected
