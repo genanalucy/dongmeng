@@ -54,6 +54,18 @@
 - 当前仅单套正式 OTA 元数据；不替换为 Debug，不修改服务器。测试分支可发布独立测试附件，但 App 内 Debug OTA 需另行隔离通道并确认部署权限。
 - 下列产物登记仍是审核前的旧包；修复版必须重新固定 APK、源码和校验值，不复用其 SHA-256。
 
+## Debug 视觉试改包（取代上方审核前产物）
+
+- Release：`android-debug-visual-trial-20261105-v22`，GitHub Pre-release；不是 App 内 OTA 推送。
+- APK：`verba-debug-visual-v22-20261105.0031-21c9f50.apk`，包名 `com.verba.interpretation.debug`，versionCode `22`，versionName `20261105.0031`。
+- 源码：`21c9f50b2fd138b214c9b34a263b14c81f71e4a5`；设备测试修正提交 `d81b29d` 仅将预期导航文案改为实际“同传”，未改变运行时。
+- SHA-256：`93c47d42a0cae8599847d7cb6197a8bd8e32b5bc22f71f9651e18028a556a34e`；签名仍为既有 Debug 证书，APK v2 校验通过。
+- 本机目录：`/home/genanalucy/.local/share/verba-test-artifacts/debug-visual-v22-21c9f50-20261105.0031/`。
+- 改动仅 Debug 样式：深浅主题蓝绿色主色、实色无描边内容卡、轻量导航、较小中性麦克风、原文/译文排版、账户图标与分组线。Release 保留原主题和视觉分支；不改变业务协议。
+- 385 项 JVM 单测通过（新增深浅色对比度检查），lint 无错误（48 Warning / 2 Hint），Debug、Release 与 AndroidTest 构建通过。
+- [设备 UI 回归](https://github.com/genanalucy/dongmeng/actions/runs/41869794465)成功，包含上轮生命周期/列表4项用例及新增320dp、200%字体导航用例。首次运行因测试误写“同声传译”失败，改为实际“同传”后通过。
+- 用户真机视觉满意度、音频、登录及长期稳定性仍未测。正式 `main`、正式 v20 和服务端 OTA 均未改动。
+
 ## 执行记录
 
 所有真机项初始为“未测”。在成功连接设备并完成步骤后，再逐项填写实际结果，不批量改为通过。
