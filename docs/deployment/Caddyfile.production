@@ -1,6 +1,17 @@
 47-129-170-16.sslip.io {
 	encode zstd gzip
 
+	# Legacy Debug clients do not send a package/channel parameter.
+	# Install docs/deployment/ota/debug-v22.json at the path below before reload.
+	# Keep the production yszn.nlplayer.org site's update route on Cloud API.
+	handle /api/v1/app-update {
+		root * /opt/dngmeng/ota
+		rewrite * /debug-v22.json
+		header Content-Type application/json
+		header Cache-Control "no-store"
+		file_server
+	}
+
 	handle /healthz {
 		header Content-Type application/json
 		respond "{\"status\":\"edge-ready\"}" 200

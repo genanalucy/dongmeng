@@ -51,7 +51,7 @@
 - P2：GlassReveal 不再使用从零尺寸进入的 AnimatedVisibility，改为固定尺寸绘制层 alpha/位移；按稳定条目 key 使用 rememberSaveable 保留已入场状态。
 - 新增 ProductScreenContentTest 与 GlassRevealTest，覆盖离页即时 stop、动画中快速返回、后台停止/观察者移除、退出页语义屏蔽、首次布局高度及回收后首帧可见。
 - 本地 384 JVM 单测、lint（48 Warning / 2 Hint，无 Error）、Debug/AndroidTest APK 构建通过。新增设备测试已编译；本机无 KVM，软件模拟器启动 240 秒超时，因此尚未执行 UI 用例。使用独立 GitHub Motion Regression 工作流验证，不等于真实音频验收。
-- 当前仅单套正式 OTA 元数据；不替换为 Debug，不修改服务器。测试分支可发布独立测试附件，但 App 内 Debug OTA 需另行隔离通道并确认部署权限。
+- 审查时只有单套正式 OTA 元数据。后续经用户授权，在旧 Debug 默认 sslip 域名的精确更新路径增加 Caddy 兼容分流；正式域名及 Cloud API 正式更新环境保持不变，见 [OTA 运维说明](../deployment/app-ota-update.md)。
 - 下列产物登记仍是审核前的旧包；修复版必须重新固定 APK、源码和校验值，不复用其 SHA-256。
 
 ## Debug 视觉试改包（取代上方审核前产物）
@@ -64,7 +64,7 @@
 - 改动仅 Debug 样式：深浅主题蓝绿色主色、实色无描边内容卡、轻量导航、较小中性麦克风、原文/译文排版、账户图标与分组线。Release 保留原主题和视觉分支；不改变业务协议。
 - 385 项 JVM 单测通过（新增深浅色对比度检查），lint 无错误（48 Warning / 2 Hint），Debug、Release 与 AndroidTest 构建通过。
 - [设备 UI 回归](https://github.com/genanalucy/dongmeng/actions/runs/41869794465)成功，包含上轮生命周期/列表4项用例及新增320dp、200%字体导航用例。首次运行因测试误写“同声传译”失败，改为实际“同传”后通过。
-- 用户真机视觉满意度、音频、登录及长期稳定性仍未测。正式 `main`、正式 v20 和服务端 OTA 均未改动。
+- 用户真机视觉满意度、音频、登录及长期稳定性仍未测。正式 `main`、正式 v20 未改动；旧 Debug 域名的更新元数据已独立分流到 v22，正式域名仍返回 v20，手机实际升级尚待用户确认。
 
 ## 执行记录
 
