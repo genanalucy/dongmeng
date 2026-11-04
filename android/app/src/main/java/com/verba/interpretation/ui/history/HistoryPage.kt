@@ -212,7 +212,7 @@ private fun HistorySummary(
             item { HistoryEmptyState(query = state.query, hasSessions = state.sessions.isNotEmpty(), syncStatus = state.syncStatus, showSyncStatus = showSyncControls) }
         }
         items(state.visibleSessions, key = { it.id }) { session ->
-            GlassReveal {
+            GlassReveal(revealKey = session.id) {
             SessionSummaryCard(
                 session = session,
                 editing = editingId == session.id,

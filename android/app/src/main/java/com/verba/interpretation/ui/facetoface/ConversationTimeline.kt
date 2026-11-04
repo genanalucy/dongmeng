@@ -49,6 +49,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalDensity
+import com.verba.interpretation.BuildConfig
 import com.verba.interpretation.ui.FaceToFacePhase
 import com.verba.interpretation.ui.FaceToFaceSide
 import com.verba.interpretation.ui.FaceToFaceTurn
@@ -291,7 +292,7 @@ private fun ConversationBubble(
         FaceToFacePhase.PROCESSING -> "${earLabel(bubble.side)} · 翻译中"
         else -> null
     }
-    GlassReveal(modifier = modifier) {
+    GlassReveal(revealKey = bubble.key, modifier = modifier) {
     Column(Modifier.fillMaxWidth(), horizontalAlignment = if (isRight) Alignment.End else Alignment.Start) {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -301,7 +302,8 @@ private fun ConversationBubble(
         LiquidGlassSurface(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(start = if (isRight) 54.dp else 0.dp, end = if (isRight) 0.dp else 54.dp)
+                .padding(start = if (isRight) { if (BuildConfig.DEBUG) 24.dp else 54.dp } else 0.dp,
+                    end = if (isRight) 0.dp else { if (BuildConfig.DEBUG) 24.dp else 54.dp })
                 .semantics {
                 contentDescription = listOfNotNull(
                     liveLabel,
@@ -318,6 +320,7 @@ private fun ConversationBubble(
             ),
         ) {
             Column(Modifier.padding(horizontal = visualSpec.bubbleHorizontalPadding, vertical = visualSpec.bubbleVerticalPadding)) {
+                if (!BuildConfig.DEBUG || liveLabel != null) {
                 Box(Modifier.fillMaxWidth().height(22.dp)) {
                     if (liveLabel != null) {
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -327,15 +330,16 @@ private fun ConversationBubble(
                     }
                 }
                 Spacer(Modifier.height(8.dp))
+                }
                 if (bubble.sourceText != null) {
                     LiveText(
                         text = bubble.sourceText,
                         style = MaterialTheme.typography.bodyLarge.copy(
-                            fontSize = visualSpec.sourceFontSize,
-                            lineHeight = visualSpec.sourceLineHeight,
-                            fontWeight = FontWeight.Medium,
+                            fontSize = if (BuildConfig.DEBUG) 16.sp else visualSpec.sourceFontSize,
+                            lineHeight = if (BuildConfig.DEBUG) 24.sp else visualSpec.sourceLineHeight,
+                            fontWeight = if (BuildConfig.DEBUG) FontWeight.Normal else FontWeight.Medium,
                         ),
-                        color = sourceColor,
+                        color = if (BuildConfig.DEBUG) colorScheme.onSurfaceVariant else sourceColor,
                         cursor = bubble.isLive && bubble.livePhase == FaceToFacePhase.LISTENING,
                     )
                 } else {
@@ -347,14 +351,14 @@ private fun ConversationBubble(
                 }
                 if (!isSingleLanguage) {
                     Spacer(Modifier.height(12.dp))
-                    Spacer(Modifier.fillMaxWidth().height(1.dp).background(colorScheme.outlineVariant))
+                    if (!BuildConfig.DEBUG) Spacer(Modifier.fillMaxWidth().height(1.dp).background(colorScheme.outlineVariant))
                     Spacer(Modifier.height(12.dp))
                     bubble.translationText?.let { translation ->
                         LiveText(
                             text = translation,
                             style = MaterialTheme.typography.titleLarge.copy(
-                                fontSize = visualSpec.translationFontSize,
-                                lineHeight = visualSpec.translationLineHeight,
+                                fontSize = if (BuildConfig.DEBUG) 21.sp else visualSpec.translationFontSize,
+                                lineHeight = if (BuildConfig.DEBUG) 30.sp else visualSpec.translationLineHeight,
                                 fontWeight = FontWeight.Medium,
                             ),
                             color = translationColor,
@@ -372,7 +376,7 @@ private fun ConversationBubble(
         // No playback callback is available in this model. Keep the outside slot empty rather than
         // exposing a fake control or changing the article's geometry when playback is added.
         Spacer(Modifier.width(TranslationVisualTokens.BubbleGap))
-        Spacer(Modifier.width(TranslationVisualTokens.BubbleOuterSlot).height(62.dp))
+        Spacer(Modifier.width(if (BuildConfig.DEBUG) 4.dp else TranslationVisualTokens.BubbleOuterSlot).height(62.dp))
         }
     }
     }

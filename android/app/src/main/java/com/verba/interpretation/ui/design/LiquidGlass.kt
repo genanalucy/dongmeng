@@ -22,6 +22,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.ui.unit.dp
+import com.verba.interpretation.BuildConfig
 
 /**
  * A lightweight glass treatment: translucent layers and a moving press highlight,
@@ -50,7 +51,9 @@ fun LiquidGlassSurface(
     )
     val colors = MaterialTheme.colorScheme
     val glass by animateColorAsState(
-        targetValue = colors.surfaceContainerLow.copy(alpha = if (pressed) 0.92f else 0.84f),
+        targetValue = if (BuildConfig.DEBUG) {
+            if (pressed) colors.surfaceContainer else colors.surface
+        } else colors.surfaceContainerLow.copy(alpha = if (pressed) 0.92f else 0.84f),
         animationSpec = tween(durationMillis = MotionQuickMillis, easing = FastOutSlowInEasing),
         label = "liquidGlassSurface",
     )
@@ -69,7 +72,7 @@ fun LiquidGlassSurface(
         }
         .clip(shape)
         .background(glass)
-        .border(1.dp, border, shape)
+        .then(if (BuildConfig.DEBUG) Modifier else Modifier.border(1.dp, border, shape))
     Box(
         modifier = if (onClick != null) {
             base.clickable(

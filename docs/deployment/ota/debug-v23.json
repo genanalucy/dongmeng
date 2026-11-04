@@ -1,0 +1,10 @@
+{
+  "available": true,
+  "package_name": "com.verba.interpretation.debug",
+  "version_code": 23,
+  "version_name": "20261105.0217",
+  "apk_url": "https://github.com/genanalucy/dongmeng/releases/download/android-debug-nav-corners-20261105-v23/verba-debug-v23-20261105.0217-e8c2ad1.apk",
+  "apk_sha256": "d49a581f331820cc80872606c1364f4733d0dd6f33cbd6b92407546779267532",
+  "release_notes": "修复底部导航按压反馈不贴合圆角的问题；深浅主题保留可见反馈，正式版不变。",
+  "force_update": false
+}

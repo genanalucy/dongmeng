@@ -111,13 +111,14 @@ private fun DownloadProgressIndicator(progress: AppUpdateProgress?, verifying: B
     }
 }
 
-private fun formatDownloadProgress(progress: AppUpdateProgress?): String {
+internal fun formatDownloadProgress(progress: AppUpdateProgress?): String {
     val downloaded = progress?.downloadedBytes ?: 0L
     val total = progress?.totalBytes
     val downloadedLabel = "%.1f MB".format(java.util.Locale.ROOT, downloaded / 1024f / 1024f)
     return if (total != null && total > 0) {
         val percentage = (downloaded * 100 / total).coerceIn(0, 100)
-        "$downloadedLabel / %.1f MB（$percentage%）${formatDownloadSpeed(progress)}".format(java.util.Locale.ROOT, total / 1024f / 1024f)
+        val totalLabel = "%.1f MB".format(java.util.Locale.ROOT, total / 1024f / 1024f)
+        "$downloadedLabel / $totalLabel（$percentage%）${formatDownloadSpeed(progress)}"
     } else {
         "已下载 $downloadedLabel${formatDownloadSpeed(progress)}"
     }

@@ -1,0 +1,10 @@
+{
+  "available": true,
+  "package_name": "com.verba.interpretation.debug",
+  "version_code": 22,
+  "version_name": "20261105.0031",
+  "apk_url": "https://github.com/genanalucy/dongmeng/releases/download/android-debug-visual-trial-20261105-v22/verba-debug-visual-v22-20261105.0031-21c9f50.apk",
+  "apk_sha256": "93c47d42a0cae8599847d7cb6197a8bd8e32b5bc22f71f9651e18028a556a34e",
+  "release_notes": "测试版视觉升级：精简卡片描边、优化深浅主题、对话字幕、麦克风和账户页；修复切页会话清理与列表入场。真实翻译稳定性仍待测试反馈。",
+  "force_update": false
+}

@@ -1,6 +1,10 @@
 package com.verba.interpretation.ui.account
 
 import androidx.compose.foundation.clickable
+import com.verba.interpretation.BuildConfig
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.outlined.Info
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -182,11 +186,11 @@ fun AccountScreen(
                         AccountEntryRow("历史记录", "查看本机保存的翻译记录", Icons.Outlined.History) {
                             AccountActionDispatcher.dispatch(AccountAction.HISTORY, callbacks)
                         }
-                        Divider(color = MaterialTheme.colorScheme.outlineVariant)
+                        AccountEntryDivider()
                         AccountEntryRow("权益详情", "权益状态、使用与兑换", Icons.Outlined.WorkspacePremium) {
                             AccountActionDispatcher.dispatch(AccountAction.USAGE, callbacks)
                         }
-                        Divider(color = MaterialTheme.colorScheme.outlineVariant)
+                        AccountEntryDivider()
                         AccountEntryRow(
                             title = "账户设置",
                             detail = "查看账户状态或删除账户",
@@ -194,12 +198,12 @@ fun AccountScreen(
                         ) {
                             AccountActionDispatcher.dispatch(AccountAction.SETTINGS, callbacks)
                         }
-                        Divider(color = MaterialTheme.colorScheme.outlineVariant)
+                        AccountEntryDivider()
                         AccountEntryRow("安全与登录", "管理登录状态与安全选项", Icons.Outlined.Security) {
                             AccountActionDispatcher.dispatch(AccountAction.SECURITY, callbacks)
                         }
-                        Divider(color = MaterialTheme.colorScheme.outlineVariant)
-                        AccountEntryRow("关于", "版本信息与检查更新", Icons.Outlined.ManageAccounts) {
+                        AccountEntryDivider()
+                        AccountEntryRow("关于", "版本信息与检查更新", if (BuildConfig.DEBUG) Icons.Outlined.Info else Icons.Outlined.ManageAccounts) {
                             AccountActionDispatcher.dispatch(AccountAction.ABOUT, callbacks)
                         }
                     }
@@ -216,7 +220,13 @@ private fun AccountIdentityHeader(displayName: String, roleLabel: String) {
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier.fillMaxWidth().semantics(mergeDescendants = true) {},
     ) {
-        BrandConfig.Logo(Modifier.size(44.dp))
+        if (BuildConfig.DEBUG) {
+            Surface(shape = RoundedCornerShape(22.dp), color = MaterialTheme.colorScheme.primaryContainer) {
+                Box(Modifier.size(64.dp), contentAlignment = Alignment.Center) {
+                    Icon(Icons.Outlined.ManageAccounts, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(30.dp))
+                }
+            }
+        } else BrandConfig.Logo(Modifier.size(44.dp))
         Column(Modifier.padding(start = 14.dp)) {
             Text(
                 displayName,
@@ -228,7 +238,7 @@ private fun AccountIdentityHeader(displayName: String, roleLabel: String) {
                 roleLabel,
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(top = 2.dp),
+                modifier = Modifier.padding(top = if (BuildConfig.DEBUG) 6.dp else 2.dp),
             )
         }
     }
@@ -563,14 +573,34 @@ private fun AccountEntryRow(
     ListItem(
         headlineContent = { Text(title, fontWeight = FontWeight.Medium) },
         supportingContent = { Text(detail) },
-        leadingContent = { Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
-        trailingContent = { Icon(Icons.Outlined.ChevronRight, contentDescription = null) },
+        leadingContent = {
+            if (BuildConfig.DEBUG) {
+                Surface(shape = RoundedCornerShape(14.dp), color = MaterialTheme.colorScheme.surfaceContainer) {
+                    Box(Modifier.size(42.dp), contentAlignment = Alignment.Center) {
+                        Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(21.dp))
+                    }
+                }
+            } else Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+        },
+        trailingContent = {
+            Icon(Icons.Outlined.ChevronRight, contentDescription = null,
+                tint = if (BuildConfig.DEBUG) MaterialTheme.colorScheme.onSurfaceVariant else Color.Unspecified,
+                modifier = Modifier.size(if (BuildConfig.DEBUG) 18.dp else 24.dp))
+        },
         colors = ListItemDefaults.colors(containerColor = Color.Transparent),
         modifier = Modifier
             .fillMaxWidth()
             .heightIn(min = 64.dp)
             .clickable(onClick = onClick)
             .semantics { contentDescription = "$title。$detail" },
+    )
+}
+
+@Composable
+private fun AccountEntryDivider() {
+    Divider(
+        modifier = if (BuildConfig.DEBUG) Modifier.padding(start = 74.dp, end = 18.dp) else Modifier,
+        color = MaterialTheme.colorScheme.outlineVariant,
     )
 }
 
