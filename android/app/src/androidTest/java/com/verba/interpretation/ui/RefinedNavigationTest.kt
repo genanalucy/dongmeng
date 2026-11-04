@@ -38,7 +38,7 @@ class RefinedNavigationTest {
         }
         compose.onNodeWithText("对话").assertIsDisplayed()
         compose.onNodeWithText("我的").assertIsDisplayed()
-        compose.onNodeWithText("同声传译").assertIsDisplayed().performClick()
+        compose.onNodeWithText("同传").assertIsDisplayed().performClick()
         compose.runOnIdle { assertEquals(ProductDestination.INTERPRETATION, selected) }
     }
 }
