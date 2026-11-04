@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.navigationBarsPadding
@@ -23,6 +24,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
+import androidx.compose.ui.graphics.Color
+import com.verba.interpretation.BuildConfig
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -50,7 +54,7 @@ fun ProductBottomBar(
     // VerbaColors values (Navigation -> surfaceContainerLowest, Raised ->
     // primaryContainer, Translation -> primary, Muted -> onSurfaceVariant,
     // ShellStroke -> outline), while light mode follows BrandLightColors.
-    val barContainer = MaterialTheme.colorScheme.surfaceContainerLowest
+    val barContainer = if (BuildConfig.DEBUG) Color.Transparent else MaterialTheme.colorScheme.surfaceContainerLowest
     val selectedContainer = MaterialTheme.colorScheme.primaryContainer
     val selectedContent = MaterialTheme.colorScheme.primary
     val unselectedContent = MaterialTheme.colorScheme.onSurfaceVariant
@@ -59,16 +63,16 @@ fun ProductBottomBar(
             .fillMaxWidth()
             .navigationBarsPadding()
             .padding(
-                start = TranslationVisualTokens.NavigationHorizontalMargin,
-                end = TranslationVisualTokens.NavigationHorizontalMargin,
+                start = if (BuildConfig.DEBUG) 20.dp else TranslationVisualTokens.NavigationHorizontalMargin,
+                end = if (BuildConfig.DEBUG) 20.dp else TranslationVisualTokens.NavigationHorizontalMargin,
                 top = TranslationVisualTokens.NavigationGap,
                 bottom = TranslationVisualTokens.NavigationBottomMargin,
             )
-            .height(TranslationVisualTokens.NavigationHeight),
-        shape = RoundedCornerShape(30.dp),
+            .then(if (BuildConfig.DEBUG) Modifier.heightIn(min = 68.dp) else Modifier.height(TranslationVisualTokens.NavigationHeight)),
+        shape = RoundedCornerShape(if (BuildConfig.DEBUG) 26.dp else 30.dp),
     ) {
         Row(
-            modifier = Modifier.fillMaxWidth().padding(4.dp).semantics { selectableGroup() },
+            modifier = Modifier.fillMaxWidth().padding(if (BuildConfig.DEBUG) 8.dp else 4.dp).semantics { selectableGroup() },
             horizontalArrangement = Arrangement.spacedBy(3.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -87,7 +91,7 @@ fun ProductBottomBar(
             Row(
                 modifier = Modifier
                     .weight(1f)
-                    .height(50.dp)
+                    .then(if (BuildConfig.DEBUG) Modifier.heightIn(min = 50.dp).padding(vertical = 4.dp) else Modifier.height(50.dp))
                     .background(container, RoundedCornerShape(25.dp))
                     .semantics {
                         contentDescription = "${destination.visualLabel()}页"
@@ -95,7 +99,7 @@ fun ProductBottomBar(
                     }
                     .selectable(
                         selected = isSelected,
-                        interactionSource = MutableInteractionSource(),
+                        interactionSource = remember { MutableInteractionSource() },
                         role = Role.Tab,
                         onClick = { onSelect(destination) },
                     ),
@@ -113,9 +117,9 @@ fun ProductBottomBar(
                     Text(
                         destination.visualLabel(),
                         color = content,
-                        fontSize = 10.sp,
-                        lineHeight = 14.sp,
-                        fontWeight = FontWeight.Medium,
+                        fontSize = if (BuildConfig.DEBUG) 11.sp else 10.sp,
+                        lineHeight = if (BuildConfig.DEBUG) 16.sp else 14.sp,
+                        fontWeight = if (BuildConfig.DEBUG && isSelected) FontWeight.SemiBold else FontWeight.Medium,
                         modifier = Modifier.padding(top = 2.dp),
                     )
                 }

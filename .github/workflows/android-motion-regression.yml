@@ -45,7 +45,7 @@ jobs:
           arch: x86_64
           disable-animations: false
           working-directory: android
-          script: ./gradlew --no-daemon connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=com.verba.interpretation.ui.ProductScreenContentTest,com.verba.interpretation.ui.design.GlassRevealTest
+          script: ./gradlew --no-daemon connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=com.verba.interpretation.ui.ProductScreenContentTest,com.verba.interpretation.ui.design.GlassRevealTest,com.verba.interpretation.ui.RefinedNavigationTest
       - name: Upload regression reports
         if: always()
         uses: actions/upload-artifact@v4

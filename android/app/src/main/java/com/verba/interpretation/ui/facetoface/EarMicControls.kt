@@ -379,7 +379,7 @@ private fun LanguageEntry(side: FaceToFaceSide, language: String, otherLanguage:
         ) {
             Text(
                 TranslationLanguage.displayName(language),
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                color = if (BuildConfig.DEBUG) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
                 fontSize = 13.sp,
                 lineHeight = 18.sp,
                 fontWeight = FontWeight.Medium,
@@ -420,7 +420,13 @@ internal fun EarMicButton(
     val currentOnCancel by rememberUpdatedState(onCancel)
     val gate = remember(side) { MicPressGate(currentOnPress, currentOnRelease, currentOnCancel) }
     gate.updateCallbacks(currentOnPress, currentOnRelease, currentOnCancel)
-    val color = if (side == FaceToFaceSide.LEFT) VerbaColors.LeftMic else VerbaColors.RightMic
+    val identityColor = if (side == FaceToFaceSide.LEFT) VerbaColors.LeftMic else VerbaColors.RightMic
+    val color = if (BuildConfig.DEBUG) {
+        if (active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceContainerHigh
+    } else identityColor
+    val micInk = if (BuildConfig.DEBUG) {
+        if (active) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface
+    } else VerbaColors.Canvas
     // LeftMic/RightMic are the ear-identity accents (theme-stable per VerbaColors docs);
     // the dark canvas ink painted on them keeps >= 7:1 contrast in both themes.
     val target = targetEarLabel(side)
@@ -443,7 +449,7 @@ internal fun EarMicButton(
         androidx.compose.foundation.layout.Spacer(Modifier.height(5.dp))
         Box(
             modifier = Modifier
-                .size(TranslationVisualTokens.MicDiameter)
+                .size(if (BuildConfig.DEBUG) 72.dp else TranslationVisualTokens.MicDiameter)
                 .drawBehind {
                     if (visualPolicy.breathing) {
                         val scaledRadius = size.minDimension / 2f * visualPolicy.scale
@@ -463,7 +469,7 @@ internal fun EarMicButton(
         ) {
             Surface(
                 modifier = Modifier
-                    .size(TranslationVisualTokens.MicDiameter)
+                    .size(if (BuildConfig.DEBUG) 72.dp else TranslationVisualTokens.MicDiameter)
                     .graphicsLayer { scaleX = activeScale; scaleY = activeScale }
                     .then(if (active && !motionEnabled) Modifier.border(2.dp, color.copy(alpha = 0.8f), CircleShape) else Modifier)
                     .semantics {
@@ -489,10 +495,10 @@ internal fun EarMicButton(
             tonalElevation = 0.dp,
         ) {
             Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
-                Icon(Icons.Filled.Mic, contentDescription = null, tint = VerbaColors.Canvas, modifier = Modifier.size(26.dp))
+                Icon(Icons.Filled.Mic, contentDescription = null, tint = micInk, modifier = Modifier.size(26.dp))
                 Text(
                     if (side == FaceToFaceSide.LEFT) "L" else "R",
-                    color = VerbaColors.Canvas,
+                    color = if (BuildConfig.DEBUG && !active) MaterialTheme.colorScheme.primary else micInk,
                     style = MaterialTheme.typography.labelSmall,
                     fontWeight = FontWeight.SemiBold,
                     maxLines = 1,
