@@ -1,5 +1,11 @@
 .codebase-memory/
 
+# Local agent workspaces, caches, and scratch data (not shared project source).
+.scratch/
+.pi/git/
+.pi/remote-pi/
+.pi/subagent-schedules/
+
 # Official Volcengine AST attachments and generated code (local-only; no redistribution license)
 agent/.official-ast/
 agent/internal/officialastproto/

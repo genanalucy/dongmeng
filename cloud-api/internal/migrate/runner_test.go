@@ -101,16 +101,17 @@ func TestRepositoryMigrationsClassifyConcurrentIndexOutsideTransaction(t *testin
 	if err != nil {
 		t.Fatalf("discover repository migrations: %v", err)
 	}
-	if len(migrations) != 13 {
-		t.Fatalf("migration count = %d, want 13", len(migrations))
+	versions := []string{"000001", "000002", "000003", "000004", "000005", "000006", "000007", "000008", "000009", "000010", "000011", "000012", "000013", "000014"}
+	if len(migrations) != len(versions) {
+		t.Fatalf("migration count = %d, want %d", len(migrations), len(versions))
 	}
-	for index, version := range []string{"000001", "000002", "000003", "000004", "000005", "000006", "000007", "000008", "000009", "000010", "000011", "000012", "000013"} {
+	for index, version := range versions {
 		if migrations[index].Version != version {
 			t.Fatalf("migration[%d].Version = %q, want %q", index, migrations[index].Version, version)
 		}
-	}
-	if migrations[0].OutsideTransaction || !migrations[1].OutsideTransaction || migrations[2].OutsideTransaction || migrations[3].OutsideTransaction || migrations[4].OutsideTransaction || migrations[5].OutsideTransaction || migrations[6].OutsideTransaction || migrations[7].OutsideTransaction {
-		t.Fatalf("repository migration transaction classification mismatch")
+		if migrations[index].OutsideTransaction != (version == "000002") {
+			t.Fatalf("migration[%d] transaction classification mismatch", index)
+		}
 	}
 	index := migrations[1].ConcurrentIndex
 	if index.Name != "refresh_tokens_expiry_idx" || index.Table != "refresh_tokens" || index.Method != "btree" || index.Unique || index.NullsNotDistinct || !index.Immediate || strings.Join(index.Columns, ",") != "expires_at,id" {

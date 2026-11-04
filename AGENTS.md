@@ -22,6 +22,24 @@ ALWAYS prefer MCP graph tools over grep/glob/file-search for code discovery.
 - Read source: `get_code_snippet(qualified_name="pkg/orders.OrderHandler")`
 <!-- codebase-memory-mcp:end -->
 
+## Development baseline
+
+Android 是主要开发方向；恢复开发、切换工作树、选择测试包或发布前，阅读 `docs/development/baselines.md`。共享基线为 GitHub `main`，旧 `android-ui-redesign` 远端含实验分叉，按基线文档选择来源。
+
+## Agent skills
+
+### Issue tracker
+
+工作项使用本地 Markdown，位于 `.scratch/<feature>/`。见 `docs/agents/issue-tracker.md`。
+
+### Triage labels
+
+使用默认五个 triage 标签。见 `docs/agents/triage-labels.md`。
+
+### Domain docs
+
+采用单一上下文：根目录 `CONTEXT.md` 与 `docs/adr/`。见 `docs/agents/domain.md`。
+
 ## superpowers skills overrides
 
 ### subagent-driven-development

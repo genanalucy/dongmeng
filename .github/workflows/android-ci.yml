@@ -2,7 +2,7 @@ name: Android CI
 
 on:
   push:
-    branches: [android, android-ui-redesign]
+    branches: [main, android, android-ui-redesign]
     paths:
       - 'android/**'
       - '.github/workflows/android-ci.yml'
