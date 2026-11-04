@@ -3,8 +3,6 @@ package com.verba.interpretation.ui
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.CompositionLocalProvider
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.test.assertIsDisplayed
@@ -29,8 +27,11 @@ import org.junit.Test
 class RefinedNavigationTest {
     @get:Rule val compose = createComposeRule()
 
-    @Test fun pressedNavigationFeedbackStaysInsideCapsuleInBothThemes() {
-        var dark by androidx.compose.runtime.mutableStateOf(false)
+    @Test fun lightNavigationFeedbackStaysInsideCapsule() = assertPressedFeedback(dark = false)
+
+    @Test fun darkNavigationFeedbackStaysInsideCapsule() = assertPressedFeedback(dark = true)
+
+    private fun assertPressedFeedback(dark: Boolean) {
         var selected: ProductDestination? = null
         compose.setContent {
             BrandTheme(darkTheme = dark) {
@@ -43,9 +44,8 @@ class RefinedNavigationTest {
                 }
             }
         }
-        listOf(false, true).forEach { darkTheme ->
-            compose.runOnIdle { dark = darkTheme }
-            compose.waitForIdle()
+        compose.waitForIdle()
+        run {
             val tab = compose.onNodeWithContentDescription("同传页")
             val before = tab.captureToImage().toPixelMap()
             tab.performTouchInput { down(center) }
@@ -62,8 +62,8 @@ class RefinedNavigationTest {
             val innerChange = distance(before[innerX, innerY], pressed[innerX, innerY])
             tab.performTouchInput { up() }
             compose.runOnIdle {
-                assertTrue("Ripple painted rectangular corner (dark=$darkTheme): $cornerChange", cornerChange < 0.025f)
-                assertTrue("Press feedback disappeared (dark=$darkTheme)", innerChange > 0.005f)
+                assertTrue("Ripple painted rectangular corner (dark=$dark): $cornerChange", cornerChange < 0.025f)
+                assertTrue("Press feedback disappeared (dark=$dark): $innerChange", innerChange > 0.005f)
                 assertEquals(ProductDestination.INTERPRETATION, selected)
             }
         }
