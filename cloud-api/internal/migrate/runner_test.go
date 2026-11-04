@@ -386,8 +386,8 @@ func TestRunRecordsRepositoryChecksumsIsIdempotentAndFailsBeforeLaterMigration(t
 	if err := conn.QueryRow(ctx, "SELECT count(*) FROM "+ledger).Scan(&count); err != nil {
 		t.Fatal("count repository migration ledger")
 	}
-	if count != 9 {
-		t.Fatalf("ledger count = %d, want 9", count)
+	if count != 14 {
+		t.Fatalf("ledger count = %d, want 14", count)
 	}
 	var valid bool
 	if err := conn.QueryRow(ctx, `SELECT i.indisvalid FROM pg_catalog.pg_index i JOIN pg_catalog.pg_class c ON c.oid=i.indexrelid JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=$1 AND c.relname='refresh_tokens_expiry_idx'`, schema).Scan(&valid); err != nil {
