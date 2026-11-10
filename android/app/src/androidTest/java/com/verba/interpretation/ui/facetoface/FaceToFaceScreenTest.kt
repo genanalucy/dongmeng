@@ -42,8 +42,8 @@ class FaceToFaceScreenTest {
             }
         }
 
-        compose.onNodeWithText("左耳").assertIsDisplayed()
-        compose.onNodeWithText("右耳").assertIsDisplayed()
+        compose.onNodeWithText("左耳一方").assertIsDisplayed()
+        compose.onNodeWithText("右耳一方").assertIsDisplayed()
         compose.onNodeWithText("中文").assertIsDisplayed()
         compose.onNodeWithText("English").assertIsDisplayed()
         compose.onNodeWithContentDescription("左耳，中文，按住说话，译文送至右耳").assertIsDisplayed()

@@ -10,6 +10,36 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class FaceToFaceCoordinatorTest {
+    @Test fun playbackIndicatorTracksAudioUntilAudibleDrain() {
+        val coordinator = FaceToFaceCoordinator<String>()
+        coordinator.manualPress(1L, FaceToFaceSide.LEFT, "socket")
+        coordinator.updateSubtitle(1L, SubtitleKind.SOURCE_FINAL, "你好")
+        coordinator.endManualInput()
+        coordinator.offerTts(1L, byteArrayOf(1, 0))
+        assertTrue(coordinator.state().playbackActive)
+        coordinator.transportFinished("socket")
+        coordinator.playbackWorkFinished(1L, drained = false)
+        assertTrue(coordinator.state().playbackActive)
+        coordinator.playbackWorkFinished(1L, drained = true)
+        assertFalse(coordinator.state().playbackActive)
+    }
+
+    @Test fun configurationStaysLockedUntilBackgroundTurnAndPlaybackDrain() {
+        val coordinator = FaceToFaceCoordinator<String>()
+        assertTrue(coordinator.state().configurationEditable)
+        coordinator.manualPress(1L, FaceToFaceSide.LEFT, "socket")
+        assertFalse(coordinator.state().configurationEditable)
+        coordinator.updateSubtitle(1L, SubtitleKind.SOURCE_FINAL, "你好")
+        coordinator.endManualInput()
+        assertFalse(coordinator.state().configurationEditable)
+        val work = coordinator.transportFinished("socket")
+        assertTrue(work != null)
+        assertFalse(coordinator.state().playbackActive)
+        coordinator.playbackWorkFinished(1L, drained = true)
+        assertTrue(coordinator.state().configurationEditable)
+        assertFalse(coordinator.state().playbackActive)
+    }
+
     @Test fun rejectedRestoreIsAtomicAndReturnsNewSessionForCancellation() {
         val coordinator = FaceToFaceCoordinator<String>()
         coordinator.setMode(FaceToFaceMode.AUTO)

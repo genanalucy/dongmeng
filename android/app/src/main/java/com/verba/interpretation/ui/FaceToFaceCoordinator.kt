@@ -61,6 +61,10 @@ data class FaceToFaceState(
     val activeTurnId: Long? = null,
     val captureActive: Boolean = false,
     val captureLevel: Float = 0f,
+    /** UI projection only: never used to select a source or change session ordering. */
+    val configurationEditable: Boolean = true,
+    val connectionPending: Boolean = false,
+    val playbackActive: Boolean = false,
     /** Reserved for provider-backed automatic language detection. */
     val automaticLanguageDetection: Boolean = false,
     val turns: List<FaceToFaceTurn> = emptyList(),
@@ -107,6 +111,7 @@ class FaceToFaceCoordinator<S> {
         var continuousAutoSegment: Boolean = false,
         var logicalComplete: Boolean = false,
         val tts: ArrayDeque<ByteArray> = ArrayDeque(),
+        var audioPendingDrain: Boolean = false,
     )
 
     private val entries = linkedMapOf<Long, Entry<S>>()
@@ -117,7 +122,11 @@ class FaceToFaceCoordinator<S> {
     private var playbackInProgress = false
 
     @Synchronized
-    fun state(): FaceToFaceState = current.copy(activeTurnId = activeTurnId)
+    fun state(): FaceToFaceState = current.copy(
+        activeTurnId = activeTurnId,
+        configurationEditable = current.phase == FaceToFacePhase.IDLE && entries.isEmpty() && !playbackInProgress,
+        playbackActive = entries.values.any { it.audioPendingDrain },
+    )
 
     @Synchronized
     fun setMode(mode: FaceToFaceMode): Boolean {
@@ -549,6 +558,7 @@ class FaceToFaceCoordinator<S> {
         playbackInProgress = false
         val first = entries[turnId]
         if (drained) {
+            first?.audioPendingDrain = false
             if (first?.transport?.finished == true && first.tts.isEmpty()) entries.remove(turnId)
             if (first?.continuousAutoSegment == true && first.logicalComplete && !first.transport.finished && first.tts.isEmpty()) {
                 return null
@@ -717,7 +727,9 @@ class FaceToFaceCoordinator<S> {
         val (turnId, entry) = ready
         if (entry.tts.isNotEmpty()) {
             playbackInProgress = true
-            return PlaybackWork.Chunk(turnId, entry.tts.removeFirst(), entry.route)
+            val pcm = entry.tts.removeFirst()
+            if (pcm.isNotEmpty()) entry.audioPendingDrain = true
+            return PlaybackWork.Chunk(turnId, pcm, entry.route)
         }
         // A segmented provider emits one validated PCM event for each logical final.
         // Drain it before reopening capture on the same live transport.

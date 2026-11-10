@@ -1,5 +1,6 @@
 package com.verba.interpretation.ui.facetoface
 
+import com.verba.interpretation.BuildConfig
 import androidx.compose.material.icons.Icons
 import androidx.compose.foundation.Canvas
 import androidx.compose.material3.DropdownMenu
@@ -32,6 +33,8 @@ internal fun FaceToFaceOverflowMenu(
     state: FaceToFaceState,
     onSelectMode: (FaceToFaceMode) -> Unit,
     onStopAuto: () -> Unit,
+    subtitleSize: SubtitleSize = SubtitleSize.STANDARD,
+    onSubtitleSize: (SubtitleSize) -> Unit = {},
 ) {
     var expanded by remember { mutableStateOf(false) }
     IconButton(
@@ -65,13 +68,17 @@ internal fun FaceToFaceOverflowMenu(
         DropdownMenuItem(
             text = { Text(if (state.mode == FaceToFaceMode.MANUAL) "✓  按住说话模式" else "按住说话模式", color = if (state.mode == FaceToFaceMode.MANUAL) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface) },
             onClick = { onSelectMode(FaceToFaceMode.MANUAL); expanded = false },
-            enabled = state.phase == FaceToFacePhase.IDLE,
+            enabled = if (BuildConfig.DEBUG) state.configurationEditable else state.phase == FaceToFacePhase.IDLE,
         )
         DropdownMenuItem(
             text = { Text(if (state.mode == FaceToFaceMode.AUTO) "✓  连续翻译模式" else "连续翻译模式", color = if (state.mode == FaceToFaceMode.AUTO) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface) },
             onClick = { onSelectMode(FaceToFaceMode.AUTO); expanded = false },
-            enabled = state.phase == FaceToFacePhase.IDLE,
+            enabled = if (BuildConfig.DEBUG) state.configurationEditable else state.phase == FaceToFacePhase.IDLE,
         )
+        if (BuildConfig.DEBUG) {
+            HorizontalDivider()
+            SubtitleSizeSelector(subtitleSize, onSubtitleSize)
+        }
         if (state.mode == FaceToFaceMode.AUTO && state.phase in setOf(FaceToFacePhase.LISTENING, FaceToFacePhase.PAUSED)) {
             // 主操作（播放/暂停）在双麦之间；结束是次要会话操作，保留在更多菜单。
             DropdownMenuItem(text = { Text("结束连续翻译") }, onClick = { onStopAuto(); expanded = false })

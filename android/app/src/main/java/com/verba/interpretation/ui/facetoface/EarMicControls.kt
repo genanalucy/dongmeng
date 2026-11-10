@@ -220,7 +220,7 @@ internal fun EarMicControls(
     }
     Column(
         modifier.fillMaxWidth()
-            .then(if (compactLayout) Modifier.wrapContentHeight() else Modifier.height(TranslationVisualTokens.OperationHeight))
+            .then(if (compactLayout || BuildConfig.DEBUG) Modifier.wrapContentHeight() else Modifier.height(TranslationVisualTokens.OperationHeight))
             .padding(horizontal = 20.dp, vertical = 0.dp),
         verticalArrangement = Arrangement.Top,
     ) {
@@ -264,7 +264,7 @@ internal fun EarMicControls(
             )
             // 连续控制只属于已选中的连续翻译模式；手动模式不展示，避免误以为
             // 可以直接从双麦中间切换会话模式。
-            if (BuildConfig.DEBUG && visibleSides.size == 2) {
+            if (BuildConfig.DEBUG && visibleSides.size == 2 && !manual) {
                 CenterLanguageControls(
                     enabled = state.phase == FaceToFacePhase.IDLE,
                     onSwapLanguages = onSwapLanguages,
@@ -328,7 +328,7 @@ private fun CenterLanguageControls(
     onPause: () -> Unit,
 ) {
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        LanguageSwapButton(enabled, onSwapLanguages)
+        // Debug language editing is consolidated in the top language-pair card.
         if (continuous) {
             androidx.compose.foundation.layout.Spacer(Modifier.height(4.dp))
             ContinuousControls(phase, requestMicrophone, onPause)
@@ -364,12 +364,12 @@ private fun LanguageSwapButton(enabled: Boolean, onClick: () -> Unit) {
 }
 
 @Composable
-private fun LanguageEntry(side: FaceToFaceSide, language: String, otherLanguage: String, enabled: Boolean, onSelect: (String) -> Unit) {
+internal fun LanguageEntry(side: FaceToFaceSide, language: String, otherLanguage: String, enabled: Boolean, onSelect: (String) -> Unit) {
     var expanded by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
     androidx.compose.material3.TextButton(
         onClick = { expanded = true },
         enabled = enabled,
-        modifier = Modifier.heightIn(min = 44.dp).semantics {
+        modifier = Modifier.heightIn(min = if (BuildConfig.DEBUG) 48.dp else 44.dp).semantics {
             contentDescription = "选择${TranslationLanguage.displayName(language)}语言"
         },
     ) {
@@ -445,7 +445,11 @@ internal fun EarMicButton(
         modifier = Modifier.width(TranslationVisualTokens.MicGroupWidth),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        LanguageEntry(side, language, otherLanguage, actionEnabled && !active, onLanguage)
+        if (BuildConfig.DEBUG) {
+            Text(if (side == FaceToFaceSide.LEFT) "左侧发言" else "右侧发言",
+                style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(vertical = 6.dp))
+        } else LanguageEntry(side, language, otherLanguage, actionEnabled && !active, onLanguage)
         androidx.compose.foundation.layout.Spacer(Modifier.height(5.dp))
         Box(
             modifier = Modifier

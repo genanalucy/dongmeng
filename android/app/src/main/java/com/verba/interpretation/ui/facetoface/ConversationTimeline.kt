@@ -170,6 +170,7 @@ internal fun ConversationTimeline(
     visualSpec: ConversationTimelineVisualSpec = ConversationTimelineVisualSpec.Conversation,
     displayBubbles: List<ConversationDisplayBubble>? = null,
     bubbleModifier: Modifier = Modifier,
+    preparationContinuous: Boolean = false,
 ) {
     // The old arguments remain source-compatible for continuous mode callers. Live content is
     // now represented by the actual unfinished turn, never by a fixed input row.
@@ -243,6 +244,17 @@ internal fun ConversationTimeline(
             ),
             verticalArrangement = Arrangement.spacedBy(visualSpec.turnSpacing),
         ) {
+            if (BuildConfig.DEBUG && bubbles.isEmpty() && phase != FaceToFacePhase.ERROR) {
+                item(key = "conversation-preparation") {
+                    if (displayBubbles == null && phase == FaceToFacePhase.IDLE) {
+                        ConversationPreparation(preparationContinuous)
+                    } else {
+                        Text(if (phase == FaceToFacePhase.IDLE) "此处显示双方的原文与译文" else "等待本轮字幕…",
+                            style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = bubbleModifier.fillMaxWidth().padding(vertical = 24.dp))
+                    }
+                }
+            }
             items(bubbles, key = { it.key }) { bubble -> ConversationBubble(bubble, visualSpec, bubbleModifier) }
             if (phase == FaceToFacePhase.ERROR) {
                 item(key = "conversation-error") {
@@ -286,7 +298,8 @@ private fun ConversationBubble(
     val sourceLanguage = TranslationLanguage.displayName(bubble.sourceLanguage)
     val targetLanguage = TranslationLanguage.displayName(bubble.targetLanguage)
     val targetEar = targetEarLabel(bubble.side)
-    val sourceLineHeight = visualSpec.sourceLineHeight.value.dp
+    val subtitleFactor = if (BuildConfig.DEBUG) LocalSubtitleSize.current.factor else 1f
+    val sourceLineHeight = (visualSpec.sourceLineHeight.value * subtitleFactor).dp
     val liveLabel = when (bubble.livePhase) {
         FaceToFacePhase.LISTENING -> "${earLabel(bubble.side)} · 收音中"
         FaceToFacePhase.PROCESSING -> "${earLabel(bubble.side)} · 翻译中"
@@ -335,11 +348,11 @@ private fun ConversationBubble(
                     LiveText(
                         text = bubble.sourceText,
                         style = MaterialTheme.typography.bodyLarge.copy(
-                            fontSize = if (BuildConfig.DEBUG) 16.sp else visualSpec.sourceFontSize,
-                            lineHeight = if (BuildConfig.DEBUG) 24.sp else visualSpec.sourceLineHeight,
+                            fontSize = if (BuildConfig.DEBUG) (if (isSingleLanguage) 21.sp else 16.sp) * subtitleFactor else visualSpec.sourceFontSize,
+                            lineHeight = if (BuildConfig.DEBUG) (if (isSingleLanguage) 30.sp else 24.sp) * subtitleFactor else visualSpec.sourceLineHeight,
                             fontWeight = if (BuildConfig.DEBUG) FontWeight.Normal else FontWeight.Medium,
                         ),
-                        color = if (BuildConfig.DEBUG) colorScheme.onSurfaceVariant else sourceColor,
+                        color = if (BuildConfig.DEBUG && !isSingleLanguage) colorScheme.onSurfaceVariant else sourceColor,
                         cursor = bubble.isLive && bubble.livePhase == FaceToFacePhase.LISTENING,
                     )
                 } else {
@@ -350,15 +363,17 @@ private fun ConversationBubble(
                     )
                 }
                 if (!isSingleLanguage) {
-                    Spacer(Modifier.height(12.dp))
-                    if (!BuildConfig.DEBUG) Spacer(Modifier.fillMaxWidth().height(1.dp).background(colorScheme.outlineVariant))
-                    Spacer(Modifier.height(12.dp))
+                    Spacer(Modifier.height(if (BuildConfig.DEBUG) 10.dp else 12.dp))
+                    if (!BuildConfig.DEBUG) {
+                        Spacer(Modifier.fillMaxWidth().height(1.dp).background(colorScheme.outlineVariant))
+                        Spacer(Modifier.height(12.dp))
+                    }
                     bubble.translationText?.let { translation ->
                         LiveText(
                             text = translation,
                             style = MaterialTheme.typography.titleLarge.copy(
-                                fontSize = if (BuildConfig.DEBUG) 21.sp else visualSpec.translationFontSize,
-                                lineHeight = if (BuildConfig.DEBUG) 30.sp else visualSpec.translationLineHeight,
+                                fontSize = if (BuildConfig.DEBUG) 21.sp * subtitleFactor else visualSpec.translationFontSize,
+                                lineHeight = if (BuildConfig.DEBUG) 30.sp * subtitleFactor else visualSpec.translationLineHeight,
                                 fontWeight = FontWeight.Medium,
                             ),
                             color = translationColor,
