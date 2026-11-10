@@ -42,8 +42,8 @@ class FaceToFaceScreenTest {
             }
         }
 
-        compose.onNodeWithText("左耳一方").assertIsDisplayed()
-        compose.onNodeWithText("右耳一方").assertIsDisplayed()
+        compose.onNodeWithText("左耳一方").assertDoesNotExist()
+        compose.onNodeWithText("右耳一方").assertDoesNotExist()
         compose.onNodeWithText("中文").assertIsDisplayed()
         compose.onNodeWithText("English").assertIsDisplayed()
         compose.onNodeWithContentDescription("左耳，中文，按住说话，译文送至右耳").assertIsDisplayed()
@@ -60,11 +60,11 @@ class FaceToFaceScreenTest {
             MaterialTheme { FaceToFaceScreen(state, viewModel, requestMicrophone = {}) }
         }
 
-        compose.onNodeWithTag("face-view-menu").assertIsDisplayed().performClick()
-        compose.onNodeWithTag("face-view-option-conversation").assertIsDisplayed()
-        compose.onNodeWithTag("face-view-option-face_to_face").assertIsDisplayed()
+        compose.onNodeWithContentDescription("面对面翻译更多选项").assertIsDisplayed().performClick()
+        compose.onNodeWithContentDescription("切换对话视图").assertIsDisplayed()
+        compose.onNodeWithContentDescription("切换面对面视图").assertIsDisplayed()
         compose.onNodeWithTag("face-to-face-panels").assertDoesNotExist()
-        compose.onNodeWithTag("face-view-option-face_to_face").performClick()
+        compose.onNodeWithContentDescription("切换面对面视图").performClick()
         compose.onNodeWithTag("face-to-face-panels").assertIsDisplayed()
         compose.onNodeWithTag("face-to-face-panel-far")
             .assertContentDescriptionEquals("远端右耳阅读区和麦克风，文字倒向对方，滑动方向自然")

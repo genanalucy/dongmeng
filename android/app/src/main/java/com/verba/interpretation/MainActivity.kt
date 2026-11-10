@@ -250,10 +250,10 @@ private fun InterpretationApp(
     var historyTargetSessionId by remember(accountState.user?.id) { mutableStateOf<String?>(null) }
     LaunchedEffect(accountState.user?.id) { historyViewModel.load(accountState.user?.id) }
     var stack by remember(navigationMode) {
-        mutableStateOf(ProductNavigationStack.initial(navigationMode))
+        mutableStateOf(ProductNavigationStack.initial(navigationMode, homeFirst = BuildConfig.DEBUG))
     }
     LaunchedEffect(navigationMode) {
-        stack = ProductNavigationStack.initial(navigationMode)
+        stack = ProductNavigationStack.initial(navigationMode, homeFirst = BuildConfig.DEBUG)
     }
     val screen = stack.current
     val currentScreen by rememberUpdatedState(screen)
@@ -302,7 +302,7 @@ private fun InterpretationApp(
             }
         }
     }
-    val productShell = ProductNavigationPolicy.shellFor(navigationMode, screen)
+    val productShell = ProductNavigationPolicy.shellFor(navigationMode, screen, homeFirst = BuildConfig.DEBUG)
     BackHandler(enabled = stack.canPop) {
         stack = stack.pop()
     }
@@ -338,16 +338,17 @@ private fun InterpretationApp(
                 interpretationPhase = interpretationState.phase,
                 onLanguagePair = { source, target ->
                     viewModel.setLanguages(source, target)
-                    stack = stack.selectPrimary(ProductDestination.INTERPRETATION)
+                    stack = if (BuildConfig.DEBUG) stack.push(ProductScreen.INTERPRETATION_WORKBENCH) else stack.selectPrimary(ProductDestination.INTERPRETATION)
                 },
-                onInterpretation = { stack = stack.selectPrimary(ProductDestination.INTERPRETATION) },
-                onFaceToFace = { stack = stack.selectPrimary(ProductDestination.FACE_TO_FACE) },
+                onInterpretation = { stack = if (BuildConfig.DEBUG) stack.push(ProductScreen.INTERPRETATION_WORKBENCH) else stack.selectPrimary(ProductDestination.INTERPRETATION) },
+                onFaceToFace = { stack = if (BuildConfig.DEBUG) stack.push(ProductScreen.FACE_TO_FACE_WORKBENCH) else stack.selectPrimary(ProductDestination.FACE_TO_FACE) },
+                onProfile = { stack = stack.push(ProductScreen.ACCOUNT) },
             )
             ProductScreen.INTERPRETATION_WORKBENCH -> SoloWorkbench(
                 modifier = Modifier.padding(padding),
                 viewModel = viewModel,
                 startWithPermission = startSolo,
-                onExit = { stack = stack.selectPrimary(ProductDestination.FACE_TO_FACE) },
+                onExit = { stack = if (BuildConfig.DEBUG) stack.pop() else stack.selectPrimary(ProductDestination.FACE_TO_FACE) },
                 onViewHistory = { id ->
                     historyTargetSessionId = id
                     stack = stack.push(ProductScreen.HISTORY)
@@ -357,6 +358,7 @@ private fun InterpretationApp(
                 modifier = Modifier.padding(padding),
                 faceViewModel = faceViewModel,
                 requestMicrophone = requestFaceMicrophone,
+                onExit = { stack = stack.pop() },
                 onViewHistory = { id ->
                     historyTargetSessionId = id
                     stack = stack.push(ProductScreen.HISTORY)
@@ -563,12 +565,26 @@ private fun TranslationHome(
     onLanguagePair: (String, String) -> Unit,
     onInterpretation: () -> Unit,
     onFaceToFace: () -> Unit,
+    onProfile: () -> Unit,
 ) {
     LazyColumn(
         modifier = modifier.fillMaxSize(),
         contentPadding = PaddingValues(horizontal = 20.dp, vertical = 18.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
+        if (BuildConfig.DEBUG) {
+            item {
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("翻译", style = MaterialTheme.typography.headlineMedium)
+                        Text("选择一种交流方式", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    IconButton(onClick = onProfile, modifier = Modifier.semantics { contentDescription = "我的" }) {
+                        Icon(Icons.Outlined.PersonOutline, contentDescription = null)
+                    }
+                }
+            }
+        } else {
         item { ConnectionStatusCard(interpretationPhase) }
         item { SectionLabel("语言快捷入口", "常用语言对") }
         item {
@@ -587,7 +603,8 @@ private fun TranslationHome(
                 )
             }
         }
-        item { SectionLabel("选择模式", "适合不同交流场景") }
+        }
+        if (!BuildConfig.DEBUG) item { SectionLabel("选择模式", "适合不同交流场景") }
         item {
             ProductModeCard(
                 icon = Icons.Outlined.GraphicEq,
@@ -602,7 +619,7 @@ private fun TranslationHome(
             ProductModeCard(
                 icon = Icons.Outlined.Groups,
                 eyebrow = "双向交流",
-                title = "面对面翻译",
+                title = if (BuildConfig.DEBUG) "对话翻译" else "面对面翻译",
                 description = "双方按方向自然交谈，字幕分侧显示并定向播放。",
                 actionLabel = "进入面对面工作台",
                 onClick = onFaceToFace,
@@ -885,6 +902,7 @@ private fun FaceToFaceWorkbench(
     onViewHistory: (String) -> Unit,
     faceViewModel: FaceToFaceViewModel,
     requestMicrophone: (MicrophonePermissionAction) -> Unit,
+    onExit: () -> Unit,
 ) {
     val state by faceViewModel.state.collectAsStateWithLifecycle()
     val permissionPolicy = faceViewModel.microphonePermissionPolicy
@@ -895,6 +913,7 @@ private fun FaceToFaceWorkbench(
             viewModel = faceViewModel,
             requestMicrophone = requestMicrophone,
             clearMicrophoneRequest = permissionPolicy::clear,
+            onExit = onExit,
             modifier = Modifier.fillMaxSize(),
         )
         LocalHistorySaveFeedback(

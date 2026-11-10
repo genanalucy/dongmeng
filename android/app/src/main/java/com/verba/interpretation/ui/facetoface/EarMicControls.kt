@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.border
 import androidx.compose.ui.draw.clip
@@ -227,10 +228,10 @@ internal fun EarMicControls(
         Row(
             Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(
-                if (BuildConfig.DEBUG) 20.dp else TranslationVisualTokens.MicGroupGap,
+                if (BuildConfig.DEBUG) 10.dp else TranslationVisualTokens.MicGroupGap,
                 Alignment.CenterHorizontally,
             ),
-            verticalAlignment = Alignment.Top,
+            verticalAlignment = if (BuildConfig.DEBUG) Alignment.CenterVertically else Alignment.Top,
         ) {
             if (FaceToFaceSide.LEFT in visibleSides) EarMicButton(
                 side = FaceToFaceSide.LEFT,
@@ -330,7 +331,6 @@ private fun CenterLanguageControls(
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         // Debug language editing is consolidated in the top language-pair card.
         if (continuous) {
-            androidx.compose.foundation.layout.Spacer(Modifier.height(4.dp))
             ContinuousControls(phase, requestMicrophone, onPause)
         }
     }
@@ -445,17 +445,15 @@ internal fun EarMicButton(
         modifier = Modifier.width(TranslationVisualTokens.MicGroupWidth),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        if (BuildConfig.DEBUG) {
-            Text(if (side == FaceToFaceSide.LEFT) "左侧发言" else "右侧发言",
-                style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(vertical = 6.dp))
-        } else LanguageEntry(side, language, otherLanguage, actionEnabled && !active, onLanguage)
-        androidx.compose.foundation.layout.Spacer(Modifier.height(5.dp))
+        if (!BuildConfig.DEBUG) {
+            LanguageEntry(side, language, otherLanguage, actionEnabled && !active, onLanguage)
+            androidx.compose.foundation.layout.Spacer(Modifier.height(5.dp))
+        }
         Box(
             modifier = Modifier
-                .size(if (BuildConfig.DEBUG) 72.dp else TranslationVisualTokens.MicDiameter)
+                .then(if (BuildConfig.DEBUG) Modifier.width(TranslationVisualTokens.MicGroupWidth).height(48.dp) else Modifier.size(TranslationVisualTokens.MicDiameter))
                 .drawBehind {
-                    if (visualPolicy.breathing) {
+                    if (visualPolicy.breathing && !BuildConfig.DEBUG) {
                         val scaledRadius = size.minDimension / 2f * visualPolicy.scale
                         val extra = if (motionEnabled) {
                             (5.dp + 4.dp * breathing).toPx()
@@ -473,9 +471,12 @@ internal fun EarMicButton(
         ) {
             Surface(
                 modifier = Modifier
-                    .size(if (BuildConfig.DEBUG) 72.dp else TranslationVisualTokens.MicDiameter)
-                    .graphicsLayer { scaleX = activeScale; scaleY = activeScale }
-                    .then(if (active && !motionEnabled) Modifier.border(2.dp, color.copy(alpha = 0.8f), CircleShape) else Modifier)
+                    .then(if (BuildConfig.DEBUG) Modifier.width(TranslationVisualTokens.MicGroupWidth).height(48.dp) else Modifier.size(TranslationVisualTokens.MicDiameter))
+                    .graphicsLayer {
+                        scaleX = if (BuildConfig.DEBUG) 1f else activeScale
+                        scaleY = if (BuildConfig.DEBUG) 1f else activeScale
+                    }
+                    .then(if (active && !motionEnabled && !BuildConfig.DEBUG) Modifier.border(2.dp, color.copy(alpha = 0.8f), CircleShape) else Modifier)
                     .semantics {
                     role = Role.Button
                     contentDescription = description
@@ -494,11 +495,16 @@ internal fun EarMicButton(
                         finishMicPress(gate, token) { tryAwaitRelease() }
                     })
                 },
-            shape = CircleShape,
+            shape = if (BuildConfig.DEBUG) RoundedCornerShape(16.dp) else CircleShape,
             color = color,
             tonalElevation = 0.dp,
         ) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+            if (BuildConfig.DEBUG) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Filled.Mic, contentDescription = null, tint = micInk, modifier = Modifier.size(22.dp))
+                    Text(if (side == FaceToFaceSide.LEFT) "L" else "R", color = micInk, style = MaterialTheme.typography.labelLarge)
+                }
+            } else Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
                 Icon(Icons.Filled.Mic, contentDescription = null, tint = micInk, modifier = Modifier.size(26.dp))
                 Text(
                     if (side == FaceToFaceSide.LEFT) "L" else "R",
@@ -541,8 +547,8 @@ private fun ContinuousControls(
     }
     Surface(
         modifier = Modifier
-            .size(56.dp)
-            .clip(CircleShape)
+            .size(if (BuildConfig.DEBUG) 48.dp else 56.dp)
+            .clip(if (BuildConfig.DEBUG) RoundedCornerShape(16.dp) else CircleShape)
             .clickable(enabled = action != null, role = Role.Button, onClick = ::runAction)
             .semantics {
                 contentDescription = label
@@ -550,9 +556,9 @@ private fun ContinuousControls(
                 if (action == null) disabled()
                 onClick(label = label) { runAction(); true }
             },
-        shape = CircleShape,
+        shape = if (BuildConfig.DEBUG) RoundedCornerShape(16.dp) else CircleShape,
         color = MaterialTheme.colorScheme.secondaryContainer,
-        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+        border = if (BuildConfig.DEBUG) null else androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
     ) {
         Box(contentAlignment = Alignment.Center) {
             Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.onSecondaryContainer)
