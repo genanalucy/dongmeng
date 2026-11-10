@@ -143,11 +143,13 @@ class FaceToFaceScreenTest {
     fun languagePickerCanChangeBeforeListening() {
         val viewModel = FaceToFaceViewModel(application())
         compose.setContent {
-            MaterialTheme { FaceToFaceScreen(FaceToFaceState(), viewModel, requestMicrophone = { _: MicrophonePermissionAction -> }) }
+            val state by viewModel.state.collectAsState()
+            MaterialTheme { FaceToFaceScreen(state, viewModel, requestMicrophone = { _: MicrophonePermissionAction -> }) }
         }
 
         compose.onNodeWithContentDescription("选择中文语言").performClick()
-        compose.onNodeWithText("日语").performClick()
+        compose.onNodeWithText("Tiếng Việt").performClick()
+        compose.runOnIdle { org.junit.Assert.assertEquals("vi", viewModel.state.value.leftLanguage) }
     }
 
     private fun application(): Application = ApplicationProvider.getApplicationContext()
