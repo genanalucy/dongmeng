@@ -1,0 +1,10 @@
+{
+  "available": true,
+  "package_name": "com.verba.interpretation.debug",
+  "version_code": 26,
+  "version_name": "20261110.1930",
+  "apk_url": "https://github.com/genanalucy/dongmeng/releases/download/android-debug-workbench-20261110-v26/verba-debug-v26-20261110.1930-a59644b.apk",
+  "apk_sha256": "591ed169b34b75c6c3bf4cd83d423ec94f10b49fb80460b8693109f59fd604c3",
+  "release_notes": "功能首页与独立翻译工作台，移除工作台全局底栏；简化L/R语言栏与扁平麦克风，字幕占据主要区域。正式版不变。",
+  "force_update": false
+}

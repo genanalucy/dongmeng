@@ -64,6 +64,15 @@ APP_UPDATE_FORCE=false
 - 正式源站经本机TLS/Host核验仍返回正式20；但当次正式域名经Cloudflare访问出现同URL 308循环，跟随3次仍失败，正式公网入口不得标记通过，须另排查边缘/回源配置。本轮未擅改该配置。
 - 真机观感、真实音频、下载覆盖安装、长期稳定性仍需用户验收；模拟器不调用真实翻译。
 
+## Debug v26 独立工作台
+
+- Debug更新入口改为 `/debug-v26.json`，见 [`ota/debug-v26.json`](ota/debug-v26.json)，v26 `20261110.1930`。
+- 源码 `a59644b`；`e16de23`仅修正无障碍测试调用。APK SHA-256 `591ed169b34b75c6c3bf4cd83d423ec94f10b49fb80460b8693109f59fd604c3`，既有Debug签名、APK v2验证通过。
+- Debug登录后功能首页，提供对话/同传与我的入口；工作台无全局底栏，返回弹栈触发原根会话清理。语言外侧L/R，移除角色标题；麦克风为48dp高扁圆角矩形，连续模式中间开始/暂停，视图/字号/结束保留更多菜单。Release导航和样式保持原条件分支。
+- 395项单测、lint无错误（48 Warning/2 Hint）、Debug/Release/AndroidTest构建通过；[设备回归](https://github.com/genanalucy/dongmeng/actions/runs/42809984257)通过，包括手势release/cancel、无障碍、L/R几何、小屏和会话生命周期。首轮旧测试把触摸用于关闭指针输入的无障碍测试而失败，改用SemanticsActions.OnClick后通过，实际触摸用例保留。
+- [Pre-release](https://github.com/genanalucy/dongmeng/releases/tag/android-debug-workbench-20261110-v26)已发布，公网测试OTA返回26；源站正式Host核验仍20。正式公网域名既有重定向风险不因该源站检查视为解决。
+- Caddy备份 `/etc/caddy/Caddyfile.before-debug-v26-20261110T115121Z`，validate/reload通过，三个服务active。真机布局、真实翻译、升级数据保留等待用户验收。
+
 ## 安全边界
 
 - 客户端拒绝非 HTTPS、带凭据或片段的下载地址，并在安装前校验 SHA-256。
