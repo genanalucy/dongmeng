@@ -1,0 +1,10 @@
+{
+  "available": true,
+  "package_name": "com.verba.interpretation.debug",
+  "version_code": 25,
+  "version_name": "20261110.0226",
+  "apk_url": "https://github.com/genanalucy/dongmeng/releases/download/android-debug-guidance-20261110-v25/verba-debug-v25-20261110.0226-25c38e3.apk",
+  "apk_sha256": "b350d84b57f0e9d9b2857e3143621938cbbf6e1e9b78870a8b08f39d0399beeb",
+  "release_notes": "优化翻译界面与状态引导：顶部语言对、真实状态、切换等待说明、三档字幕字号及待机帮助。仍为系统单路收音，不增加双麦或自动识别；正式版不变。",
+  "force_update": false
+}

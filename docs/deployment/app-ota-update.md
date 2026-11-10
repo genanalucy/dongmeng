@@ -54,6 +54,16 @@ APP_UPDATE_FORCE=false
 - 旧版手动下载仍有缺陷，请从启动更新弹窗升级此版，或使用 [GitHub 下载](https://github.com/genanalucy/dongmeng/releases/tag/android-debug-update-progress-20261105-v24)，不卸载、不清数据。
 - Caddy 备份 `/etc/caddy/Caddyfile.before-debug-v24-20261104T191652Z`，validate/reload 成功；公网核对 Debug24/正式20，三个服务 active。
 
+## Debug v25 界面与状态引导
+
+- 当前旧Debug更新入口指向 `/debug-v25.json`，源文件 [`ota/debug-v25.json`](ota/debug-v25.json)，versionCode25，versionName20261110.0226。
+- APK来源 `25c38e3`；`abf3d73`仅修正UI测试的受支持语言选择，无运行时差异。SHA-256 `b350d84b57f0e9d9b2857e3143621938cbbf6e1e9b78870a8b08f39d0399beeb`，既有Debug证书，APK v2验证通过。
+- Debug优化顶部语言对、切换等待原因、系统单路收音说明、状态/待机/恢复引导、三档字幕字号与主操作文案。不增加双麦或自动语言识别。状态投影补充连接取消清理、待播放/排空标记；不改供应商协议。
+- 394项JVM单测、lint无错误（48 Warning/2 Hint）、Debug/Release/AndroidTest构建通过；[设备回归](https://github.com/genanalucy/dongmeng/actions/runs/42768121087)成功。首轮旧用例选择不存在的日语失败，改为越南语并断言实际状态后通过。
+- [Pre-release](https://github.com/genanalucy/dongmeng/releases/tag/android-debug-guidance-20261110-v25)已发布，测试OTA公网返回25。Caddy备份 `/etc/caddy/Caddyfile.before-debug-v25-20261110T062945Z`，validate/reload通过，三个服务active；未改正式站点与Cloud API环境。
+- 正式源站经本机TLS/Host核验仍返回正式20；但当次正式域名经Cloudflare访问出现同URL 308循环，跟随3次仍失败，正式公网入口不得标记通过，须另排查边缘/回源配置。本轮未擅改该配置。
+- 真机观感、真实音频、下载覆盖安装、长期稳定性仍需用户验收；模拟器不调用真实翻译。
+
 ## 安全边界
 
 - 客户端拒绝非 HTTPS、带凭据或片段的下载地址，并在安装前校验 SHA-256。
