@@ -73,7 +73,7 @@ fun AppAboutScreen(
             item {
                 Surface(modifier = Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.medium, color = MaterialTheme.colorScheme.surfaceContainerLow) {
                     Column(Modifier.padding(16.dp)) {
-                        Text("言枢智能翻译", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                        Text(com.verba.interpretation.brand.BrandConfig.appName, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                         Text("版本 ${BuildConfig.VERSION_NAME}", color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 6.dp))
                     }
                 }
