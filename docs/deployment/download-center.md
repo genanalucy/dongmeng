@@ -45,6 +45,14 @@ bash scripts/deploy-download-release.sh <new-bundle-directory>
 - 回滚快照：检查目标目录与旧APK存在，通过临时symlink+rename恢复原current；previous-snapshot.txt记录上个指针。首次路由回滚则恢复变更前Caddyfile并validate/reload，先检查之后有无其他配置变更。
 - 不删用户数据、不撤换旧附件。服务器承担带宽成本；无需APK重打包或App升级。
 
+## 译路随行改名发布（2026-11-13）
+
+- 用户调整Cloudflare配置后，正式域名/download、版本清单、API/Agent health、管理后台均公网200，不再循环；旧两APK也经正式域名完整下载哈希匹配。以下初次上线阻塞记录仅作历史。
+- 正式v21 `20261113.1836`，源码`20da583`，隔离分支`release/yilu-production-v21`基于正式v20，仅名称/版本变化；测试v27同版本名，源码`46fa5cf`，保留测试v26功能。包名、原证书及图标不变，名称分别“译路随行”和“译路随行 Debug”；关于页引用BrandConfig统一名称。
+- 正式Release单测384、测试Debug单测395均通过；各自lint无错误，构建成功，aapt确认label/package/version，apksigner确认原证书。未运行实际手机覆盖安装，不承诺设备数据保留已实测。
+- APK与网页/两OTA已通过统一发布工具切换到快照`downloads-20261113T104226Z-1445042`；两APK完整公网下载SHA匹配，正式公网OTA21/测试OTA27核对通过。新下载URL使用`https://yszn.nlplayer.org/downloads/`，旧sslip文件和链接继续保留。
+- 仅改名，不换域名、不变包、不把Debug界面功能带入正式。用户旧版首次安装仍显示旧名，覆盖升级后才显示新名。源码签名配置、私钥和APK构建产物未入Git。
+
 ## 初次上线状态
 
 正式v20 /20260915.0232和Debug v26 /20261110.1930原包下载并核验成功。4项发布工具回归与shell语法检查通过；实际核验APK哈希、包名、版本和既有签名。

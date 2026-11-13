@@ -3,23 +3,23 @@
   "channels": {
     "production": {
       "package_name": "com.verba.interpretation",
-      "version_code": 20,
-      "version_name": "20260915.0232",
-      "file_name": "verba-production-v20-20260915.0232.apk",
-      "sha256": "5fb3e8e10640ff8d9a18a4a6423d65f6561fa14428c084c5433755de9bdd2330",
+      "version_code": 21,
+      "version_name": "20261113.1836",
+      "file_name": "yilu-production-v21-20261113.1836.apk",
+      "sha256": "898347c3a707a92d9ea1e0aca3a666111fa98861c9af036f4776c93e2f97acc4",
       "certificate_sha256": "7872862cd69928394d87e7a975763d187a772d11dff7b1e90ce60c4a198215f1",
-      "notes": "修复火山实时翻译音频兼容性，提升翻译稳定性。",
-      "source_url": "https://github.com/genanalucy/dongmeng/releases/download/android-production-20260915-v20/app-release.apk"
+      "notes": "软件更名为译路随行，保留原包名和签名，可覆盖安装。正式功能保持v20基线。",
+      "source_url": "https://github.com/genanalucy/dongmeng/releases/download/android-production-yilu-20261113-v21/yilu-production-v21-20261113.1836.apk"
     },
     "debug": {
       "package_name": "com.verba.interpretation.debug",
-      "version_code": 26,
-      "version_name": "20261110.1930",
-      "file_name": "verba-debug-v26-20261110.1930.apk",
-      "sha256": "591ed169b34b75c6c3bf4cd83d423ec94f10b49fb80460b8693109f59fd604c3",
+      "version_code": 27,
+      "version_name": "20261113.1836",
+      "file_name": "yilu-debug-v27-20261113.1836.apk",
+      "sha256": "c3a7ce72dd0e08610d081975351609c989f0275c4c98c8cc1abe5c921daebcd2",
       "certificate_sha256": "a01bd76290417cdce645c2ff5d35e95b0286a58e194d7c39a6cfcd994638e5b4",
-      "notes": "功能首页与独立翻译工作台，简化 L/R 语言栏和麦克风。内部测试版本，真实翻译稳定性与观感仍待验收。",
-      "source_url": "https://github.com/genanalucy/dongmeng/releases/download/android-debug-workbench-20261110-v26/verba-debug-v26-20261110.1930-a59644b.apk"
+      "notes": "软件更名为译路随行，保留原包名和签名，可覆盖安装。保留独立翻译工作台等测试功能，可能存在不稳定。",
+      "source_url": "https://github.com/genanalucy/dongmeng/releases/download/android-debug-yilu-20261113-v27/yilu-debug-v27-20261113.1836.apk"
     }
   }
 }
