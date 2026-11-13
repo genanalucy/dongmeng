@@ -1,5 +1,7 @@
 # Android OTA 更新发布
 
+> **当前发布入口已迁移**：2026-11-13起，官网页面和正式/测试OTA由同一个快照生成。后续请使用 [下载中心同步流程](download-center.md) 更新 `site/download/releases.json` 并部署，不再仅替换旧 `/ota/debug-v*.json` 或只改Cloud API环境，否则与官网不同步。下文保留历史操作记录供回溯。
+
 应用从 `GET /api/v1/app-update` 获取公开的更新元数据。未配置完整更新变量时接口固定返回 `{"available":false}`，不会向用户推送不完整更新。
 
 ## 发布步骤
