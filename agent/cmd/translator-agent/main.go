@@ -72,10 +72,18 @@ func main() {
 		cloudAuthorizer = cloudClient
 	}
 
+	astClient := ast.NewConfiguredClient(cfg)
+	if _, unavailable := astClient.(ast.UnavailableClient); unavailable {
+		environment, _ := config.LoadEnvironment(os.Getenv)
+		if environment == "production" {
+			logger.Error("official AST codec required in production", "error_code", "AST_CODEC_UNAVAILABLE")
+			os.Exit(1)
+		}
+	}
 	httpServer := &http.Server{
 		Addr: server.DefaultAddress,
 		Handler: server.New(server.Options{
-			ASTClient: ast.NewRoutingClient(ast.NewConfiguredClient(cfg), cfg),
+			ASTClient: ast.NewRoutingClient(astClient, cfg),
 			Origins:   allowedOrigins(os.Getenv("TRANSLATOR_AGENT_EXTRA_ORIGINS")),
 			Logger:    logger, SessionVerifier: sessionVerifier,
 			CloudAuthorizer: cloudAuthorizer,
@@ -96,7 +104,7 @@ func main() {
 		logger.Error("agent failed to bind", "error_code", "BIND_FAILED")
 		os.Exit(1)
 	}
-	logger.Info("agent started", "event", "listening")
+	logger.Info("agent started", "event", "listening", "provider", "volcengine")
 
 	errCh := make(chan error, 1)
 	go func() { errCh <- httpServer.Serve(listener) }()

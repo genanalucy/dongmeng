@@ -21,18 +21,11 @@ type QwenError struct{ Code string }
 
 func (e QwenError) Error() string { return e.Code }
 
-type routingClient struct{ volc, qwen Client }
-
-// NewRoutingClient uses the configured Qwen realtime client for every shipped
-// language pair. The Volcengine client remains injectable for an official AST
-// codec build, but the default Agent build deliberately has no such codec and
-// must never route a supported product pair to ErrCodecUnavailable.
-func NewRoutingClient(volc Client, cfg config.Config) Client {
-	return routingClient{volc: volc, qwen: NewQwenClient(cfg)}
-}
-
-func (c routingClient) Start(ctx context.Context, request StartRequest, sink EventSink) (Session, error) {
-	return c.qwen.Start(ctx, request, sink)
+// NewRoutingClient uses Volcengine exclusively. Qwen credentials must never
+// select a provider or enable fallback, even when Volcengine returns an error.
+// The unused configuration argument retains compatibility with existing callers.
+func NewRoutingClient(volc Client, _ config.Config) Client {
+	return volc
 }
 
 type qwenClient struct{ apiKey, host string }

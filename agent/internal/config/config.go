@@ -113,8 +113,6 @@ func Load(getenv func(string) string) (Config, error) {
 		return cfg, nil
 	case hasLegacyPair:
 		return cfg, nil
-	case cfg.DashScopeAPIKey != "" && cfg.QwenAPIHost != "":
-		return cfg, nil
 	case hasLegacyPart:
 		return Config{}, errors.New("invalid legacy Volcengine authentication configuration: both App ID and access token are required")
 	default:
