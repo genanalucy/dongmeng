@@ -73,7 +73,7 @@ func main() {
 	}
 
 	astClient := ast.NewConfiguredClient(cfg)
-	if _, unavailable := astClient.(ast.UnavailableClient); unavailable {
+	if _, unavailable := astClient.(ast.UnavailableClient); unavailable && cfg.TranslationProvider != "qwen" {
 		environment, _ := config.LoadEnvironment(os.Getenv)
 		if environment == "production" {
 			logger.Error("official AST codec required in production", "error_code", "AST_CODEC_UNAVAILABLE")
@@ -104,7 +104,10 @@ func main() {
 		logger.Error("agent failed to bind", "error_code", "BIND_FAILED")
 		os.Exit(1)
 	}
-	logger.Info("agent started", "event", "listening", "provider", "volcengine")
+	logger.Info("agent started", "event", "listening", "provider", cfg.TranslationProvider)
+	if cfg.TranslationProvider == "qwen" {
+		logger.Info("translation model selected", "model", "qwen3.8-livetranslate-flash-realtime")
+	}
 
 	errCh := make(chan error, 1)
 	go func() { errCh <- httpServer.Serve(listener) }()
