@@ -56,6 +56,11 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.saveable.rememberSaveable
+import com.verba.interpretation.ui.facetoface.LocalSubtitleSize
+import com.verba.interpretation.ui.facetoface.SubtitleSize
+import com.verba.interpretation.ui.facetoface.SubtitleSizeSelector
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -196,7 +201,22 @@ fun InterpretationScreen(
         previousToken = timelineToken
     }
 
+    var subtitleSizeName by rememberSaveable { mutableStateOf(SubtitleSize.STANDARD.name) }
+    var fontMenu by remember { mutableStateOf(false) }
+    CompositionLocalProvider(LocalSubtitleSize provides if (BuildConfig.DEBUG) SubtitleSize.valueOf(subtitleSizeName) else SubtitleSize.STANDARD) {
     Column(modifier = modifier.fillMaxSize()) {
+        if (BuildConfig.DEBUG) {
+            Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("系统麦克风 · 实时同传", style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
+                Box {
+                    TextButton(onClick = { fontMenu = true }, modifier = Modifier.heightIn(min = 48.dp)) { Text("字号") }
+                    DropdownMenu(expanded = fontMenu, onDismissRequest = { fontMenu = false }) {
+                        SubtitleSizeSelector(SubtitleSize.valueOf(subtitleSizeName)) { subtitleSizeName = it.name }
+                    }
+                }
+            }
+        }
         CompactHeader(
             sourceLanguage = model.sourceLanguage,
             targetLanguage = model.targetLanguage,
@@ -217,6 +237,9 @@ fun InterpretationScreen(
                 contentPadding = PaddingValues(horizontal = 14.dp, vertical = 12.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp),
             ) {
+                if (BuildConfig.DEBUG && model.bubbles.isEmpty() && model.errorMessage == null) {
+                    item(key = "interpretation-preparation") { InterpretationEmptyState(model.phase, model.statusLabel) }
+                }
                 items(model.bubbles, key = InterpretationDisplayBubble::key) { bubble ->
                     InterpretationBubble(bubble)
                 }
@@ -268,6 +291,7 @@ fun InterpretationScreen(
             onAction = { action -> InterpretationActionDispatcher.dispatch(action, callbacks) },
         )
     }
+    }
 }
 
 @Composable
@@ -299,7 +323,7 @@ private fun CompactHeader(
             }
         }
         Row(
-            Modifier.fillMaxWidth().height(TranslationVisualTokens.InterpretationDirectionRowHeight),
+            Modifier.fillMaxWidth().then(if (BuildConfig.DEBUG) Modifier.heightIn(min = 48.dp) else Modifier.height(TranslationVisualTokens.InterpretationDirectionRowHeight)),
             horizontalArrangement = Arrangement.Center,
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -396,16 +420,23 @@ private fun InterpretationEmptyState(phase: SessionPhase, statusLabel: String) {
             verticalArrangement = Arrangement.Center,
         ) {
             Text(
-                text = statusLabel,
+                text = statusLabel.ifBlank { "准备开始" },
                 style = MaterialTheme.typography.titleLarge,
                 color = MaterialTheme.colorScheme.onSurface,
             )
+            Text(if (phase == SessionPhase.IDLE) "选择原文与译文语言，点下方开始。将设备靠近讲话者，字幕会持续显示。" else "等待本轮字幕；可在下方暂停或结束。",
+                style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 12.dp))
+            Text("输入和播放设备由系统路由决定，不是双耳独立收音。",
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 8.dp))
         }
     }
 }
 
 @Composable
 private fun InterpretationBubble(bubble: InterpretationDisplayBubble) {
+    val factor = if (BuildConfig.DEBUG) LocalSubtitleSize.current.factor else 1f
     LiquidGlassSurface(
         modifier = Modifier.fillMaxWidth().semantics {
             contentDescription = listOfNotNull(
@@ -419,8 +450,8 @@ private fun InterpretationBubble(bubble: InterpretationDisplayBubble) {
             if (bubble.sourceText != null) {
                 Text(
                     text = bubble.sourceText,
-                    style = MaterialTheme.typography.bodyLarge.copy(fontSize = 19.sp, lineHeight = 26.sp, fontWeight = FontWeight.Medium),
-                    color = MaterialTheme.colorScheme.onSurface,
+                    style = MaterialTheme.typography.bodyLarge.copy(fontSize = (if (BuildConfig.DEBUG) 16.sp else 19.sp) * factor, lineHeight = (if (BuildConfig.DEBUG) 24.sp else 26.sp) * factor, fontWeight = if (BuildConfig.DEBUG) FontWeight.Normal else FontWeight.Medium),
+                    color = if (BuildConfig.DEBUG) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface,
                 )
             } else {
                 Text(
@@ -434,13 +465,15 @@ private fun InterpretationBubble(bubble: InterpretationDisplayBubble) {
                     color = MaterialTheme.colorScheme.onSurface,
                 )
             }
-            Spacer(Modifier.height(12.dp))
-            Spacer(Modifier.fillMaxWidth().height(1.dp).background(MaterialTheme.colorScheme.outlineVariant))
-            Spacer(Modifier.height(12.dp))
+            Spacer(Modifier.height(if (BuildConfig.DEBUG) 10.dp else 12.dp))
+            if (!BuildConfig.DEBUG) {
+                Spacer(Modifier.fillMaxWidth().height(1.dp).background(MaterialTheme.colorScheme.outlineVariant))
+                Spacer(Modifier.height(12.dp))
+            }
             bubble.translationText?.let { translation ->
                 Text(
                     text = translation,
-                    style = MaterialTheme.typography.titleLarge.copy(fontSize = 22.sp, lineHeight = 29.sp, fontWeight = FontWeight.Medium),
+                    style = MaterialTheme.typography.titleLarge.copy(fontSize = 22.sp * factor, lineHeight = (if (BuildConfig.DEBUG) 30.sp else 29.sp) * factor, fontWeight = FontWeight.Medium),
                     color = MaterialTheme.colorScheme.primary,
                     modifier = Modifier.heightIn(min = TranslationVisualTokens.TranslationMinHeight),
                 )
@@ -461,7 +494,7 @@ private fun PinnedControls(
     val finishAction = actions.firstOrNull { it == InterpretationAction.FINISH }
     val visiblePrimary = primaryAction?.takeIf { it in actions }
     LiquidGlassSurface(
-        modifier = Modifier.fillMaxWidth().height(76.dp),
+        modifier = Modifier.fillMaxWidth().then(if (BuildConfig.DEBUG) Modifier.heightIn(min = 76.dp) else Modifier.height(76.dp)),
         shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
     ) {
         Row(
@@ -540,7 +573,7 @@ private fun ActionButton(action: InterpretationAction, onClick: () -> Unit) {
     }
     Button(
         onClick = onClick,
-        modifier = Modifier.size(48.dp)
+        modifier = (if (BuildConfig.DEBUG) Modifier.heightIn(min = 48.dp).widthIn(min = 112.dp) else Modifier.size(48.dp))
             .semantics {
             contentDescription = when (action) {
                 InterpretationAction.START -> "开始同传"
@@ -554,11 +587,12 @@ private fun ActionButton(action: InterpretationAction, onClick: () -> Unit) {
         // LeftMic/Canvas is the left-ear identity accent pair (see VerbaColors: tokens are
         // intentionally theme-stable). There is no colorScheme role for it, and the dark
         // canvas ink keeps >= 7:1 contrast on the accent in both themes.
-        colors = ButtonDefaults.buttonColors(containerColor = VerbaColors.LeftMic, contentColor = VerbaColors.Canvas),
+        colors = if (BuildConfig.DEBUG) ButtonDefaults.buttonColors() else ButtonDefaults.buttonColors(containerColor = VerbaColors.LeftMic, contentColor = VerbaColors.Canvas),
         // Icon-only actions must not retain Button's horizontal text padding:
         // 48dp width minus 48dp padding leaves no measurable space for the icon.
         contentPadding = PaddingValues(0.dp),
     ) {
-        Icon(icon, contentDescription = null, modifier = Modifier.size(22.dp), tint = VerbaColors.Canvas)
+        Icon(icon, contentDescription = null, modifier = Modifier.size(22.dp), tint = if (BuildConfig.DEBUG) MaterialTheme.colorScheme.onPrimary else VerbaColors.Canvas)
+        if (BuildConfig.DEBUG) Text(label, modifier = Modifier.padding(start = 8.dp))
     }
 }

@@ -1,6 +1,10 @@
 package com.verba.interpretation.ui.facetoface
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
@@ -12,15 +16,22 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.Button
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.material.icons.filled.SwapHoriz
+import com.verba.interpretation.BuildConfig
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -59,9 +70,16 @@ internal fun FaceToFaceScreen(
     requestMicrophone: (MicrophonePermissionAction) -> Unit,
     clearMicrophoneRequest: () -> Unit = {},
     modifier: Modifier = Modifier,
+    onExit: () -> Unit = {},
 ) {
     val presentation = faceToFacePresentation(state)
-    Column(modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
+    var subtitleSizeName by rememberSaveable { mutableStateOf(SubtitleSize.STANDARD.name) }
+    val subtitleSize = SubtitleSize.valueOf(subtitleSizeName)
+    CompositionLocalProvider(LocalSubtitleSize provides if (BuildConfig.DEBUG) subtitleSize else SubtitleSize.STANDARD) {
+    BoxWithConstraints(modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
+    // Small split-screen and large fonts retain scroll access to the complete workbench.
+    val cramped = BuildConfig.DEBUG && maxHeight < 520.dp
+    Column(if (cramped) Modifier.verticalScroll(rememberScrollState()).height(640.dp) else Modifier.fillMaxSize()) {
         TranslationTopBar(
             title = if (state.view == FaceToFaceView.FACE_TO_FACE) null else "对话",
             state = state,
@@ -82,8 +100,15 @@ internal fun FaceToFaceScreen(
             onPauseAuto = viewModel::pauseAuto,
             onResumeAuto = { requestMicrophone(MicrophonePermissionAction.ContinuousResume) },
             onStopAuto = { clearMicrophoneRequest(); viewModel.stopAuto() },
+            subtitleSize = subtitleSize,
+            onSubtitleSize = { subtitleSizeName = it.name },
+            onExit = onExit,
         )
 
+        if (BuildConfig.DEBUG) {
+            DebugLanguagePair(state, viewModel::setLanguages, viewModel::swapLanguages)
+            ConversationStatus(state)
+        }
         recoveryLabel(presentation)?.let { message ->
             Surface(
                 color = MaterialTheme.colorScheme.errorContainer,
@@ -96,7 +121,7 @@ internal fun FaceToFaceScreen(
                         modifier = Modifier.semantics { contentDescription = FACE_TO_FACE_RECOVERY_ACTION_LABEL },
                     ) {
                         Icon(Icons.Filled.Refresh, contentDescription = null)
-                        Text(FACE_TO_FACE_RECOVERY_ACTION_LABEL, modifier = Modifier.padding(start = 5.dp))
+                        Text(if (BuildConfig.DEBUG) "恢复到待机" else FACE_TO_FACE_RECOVERY_ACTION_LABEL, modifier = Modifier.padding(start = 5.dp))
                     }
                 }
             }
@@ -122,6 +147,30 @@ internal fun FaceToFaceScreen(
             )
         }
     }
+    }
+    }
+}
+
+@Composable
+private fun DebugLanguagePair(state: FaceToFaceState, onSelect: (String, String) -> Unit, onSwap: () -> Unit) {
+    Surface(shape = androidx.compose.foundation.shape.RoundedCornerShape(24.dp),
+        color = MaterialTheme.colorScheme.surface,
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)) {
+        Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Row(Modifier.weight(1f), horizontalArrangement = androidx.compose.foundation.layout.Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
+                Text("L", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                LanguageEntry(FaceToFaceSide.LEFT, state.leftLanguage, state.rightLanguage, state.configurationEditable) { onSelect(it, state.rightLanguage) }
+            }
+            IconButton(onClick = onSwap, enabled = state.configurationEditable,
+                modifier = Modifier.size(48.dp).semantics { contentDescription = "交换左右语言" }) {
+                Icon(Icons.Filled.SwapHoriz, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+            }
+            Row(Modifier.weight(1f), horizontalArrangement = androidx.compose.foundation.layout.Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
+                LanguageEntry(FaceToFaceSide.RIGHT, state.rightLanguage, state.leftLanguage, state.configurationEditable) { onSelect(state.leftLanguage, it) }
+                Text("R", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+            }
+        }
+    }
 }
 
 @Composable
@@ -134,13 +183,20 @@ private fun TranslationTopBar(
     onPauseAuto: () -> Unit,
     onResumeAuto: () -> Unit,
     onStopAuto: () -> Unit,
+    subtitleSize: SubtitleSize,
+    onSubtitleSize: (SubtitleSize) -> Unit,
+    onExit: () -> Unit,
 ) {
     Box(
         Modifier.fillMaxWidth()
             .height(if (title == null) 48.dp else TranslationVisualTokens.TopBarHeight)
             .padding(horizontal = 16.dp),
     ) {
-        FaceToFaceViewMenu(
+        if (BuildConfig.DEBUG) {
+            IconButton(onClick = onExit, modifier = Modifier.align(Alignment.CenterStart).semantics { contentDescription = "返回翻译首页" }) {
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null)
+            }
+        } else FaceToFaceViewMenu(
             selectedView = state.view,
             enabled = state.phase != FaceToFacePhase.PROCESSING && state.phase != FaceToFacePhase.STOPPING && state.phase != FaceToFacePhase.ERROR,
             onSelectView = onSelectView,
@@ -156,6 +212,9 @@ private fun TranslationTopBar(
                 state = state,
                 onSelectMode = onSelectMode,
                 onStopAuto = onStopAuto,
+                subtitleSize = subtitleSize,
+                onSubtitleSize = onSubtitleSize,
+                onSelectView = onSelectView,
             )
         }
     }
@@ -236,6 +295,7 @@ private fun ConversationLayout(
             listeningPlaceholder = presentation.timelinePlaceholder,
             phase = state.phase,
             activeTurnId = state.activeTurnId,
+            preparationContinuous = state.mode == FaceToFaceMode.AUTO,
             modifier = Modifier.weight(1f),
         )
         EarMicControls(

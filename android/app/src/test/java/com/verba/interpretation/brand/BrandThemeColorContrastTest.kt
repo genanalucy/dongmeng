@@ -77,6 +77,11 @@ class BrandThemeColorContrastTest {
         ContentPair("error on surface", scheme.error, scheme.surface),
     )
 
+    @Test fun refinedDebugSchemesKeepReadableContentInBothThemes() {
+        assertWcagAa(contentPairs(RefinedLightColors), "refined light")
+        assertWcagAa(contentPairs(RefinedDarkColors), "refined dark")
+    }
+
     @Test fun darkSchemeContentPairsMeetWcagAa() {
         assertWcagAa(contentPairs(BrandDarkColors), "dark")
     }

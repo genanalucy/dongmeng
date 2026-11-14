@@ -1,0 +1,10 @@
+{
+  "available": true,
+  "package_name": "com.verba.interpretation.debug",
+  "version_code": 24,
+  "version_name": "20261105.0314",
+  "apk_url": "https://github.com/genanalucy/dongmeng/releases/download/android-debug-update-progress-20261105-v24/verba-debug-v24-20261105.0314-5a8ff7a.apk",
+  "apk_sha256": "4f20c833b09c1756bc4ec7f449d17ac27a33a08a0bdd1e3ca6bcfb6d61488348",
+  "release_notes": "修复关于页手动更新下载进度格式化异常。旧版建议使用启动更新弹窗完成此次升级；正式版不变。",
+  "force_update": false
+}

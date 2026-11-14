@@ -62,6 +62,39 @@ class FaceToFaceViewModelTest {
         effects.drain()
     }
 
+    @Test fun cancelBeforeReadyUnlocksConfigurationEvenWhenSocketNeverCallsBack() {
+        vm.startAuto()
+        dispatcher.scheduler.runCurrent()
+        effects.drain()
+        assertTrue(vm.state.value.connectionPending)
+        vm.cancel()
+        effects.drain()
+        assertFalse(vm.state.value.connectionPending)
+        assertTrue(vm.state.value.configurationEditable)
+        vm.swapLanguages()
+        assertEquals("en", vm.state.value.leftLanguage)
+        vm.setMode(FaceToFaceMode.MANUAL)
+        assertEquals(FaceToFaceMode.MANUAL, vm.state.value.mode)
+    }
+
+    @Test fun connectingGrantAndSocketLockLanguageChangesUntilReadyOrCancel() {
+        vm.startAuto()
+        assertTrue(vm.state.value.connectionPending)
+        assertFalse(vm.state.value.configurationEditable)
+        vm.swapLanguages()
+        assertEquals("zh", vm.state.value.leftLanguage)
+        dispatcher.scheduler.runCurrent()
+        effects.drain()
+        assertTrue(vm.state.value.connectionPending)
+        runtime.sockets.single().event(AgentEvent.Ready)
+        assertFalse(vm.state.value.connectionPending)
+        assertTrue(vm.state.value.captureActive)
+        vm.cancel()
+        effects.drain()
+        assertFalse(vm.state.value.connectionPending)
+        assertTrue(vm.state.value.configurationEditable)
+    }
+
     @Test fun manualModeStartsNextPressBeforePreviousTurnFinishes() {
         vm.setMode(FaceToFaceMode.MANUAL)
         assertEquals(FaceToFaceMode.MANUAL, vm.state.value.mode)

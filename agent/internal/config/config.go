@@ -17,12 +17,13 @@ const DefaultResourceID = "volc.service_type.10053"
 // Config contains upstream configuration loaded from the local environment.
 // Credentials are passed only to their respective client constructors and never logged.
 type Config struct {
-	APIKey          string
-	AppID           string
-	AccessToken     string
-	ResourceID      string
-	DashScopeAPIKey string
-	QwenAPIHost     string
+	APIKey              string
+	AppID               string
+	AccessToken         string
+	ResourceID          string
+	DashScopeAPIKey     string
+	QwenAPIHost         string
+	TranslationProvider string
 }
 
 // SessionAuth contains the caller-supplied trust contract for translation-session
@@ -91,12 +92,26 @@ func Load(getenv func(string) string) (Config, error) {
 	}
 
 	cfg := Config{
-		APIKey:          getenv("VOLCENGINE_API_KEY"),
-		AppID:           getenv("VOLCENGINE_APP_ID"),
-		AccessToken:     getenv("VOLCENGINE_ACCESS_TOKEN"),
-		ResourceID:      getenv("VOLCENGINE_RESOURCE_ID"),
-		DashScopeAPIKey: getenv("DASHSCOPE_API_KEY"),
-		QwenAPIHost:     getenv("QWEN_API_HOST"),
+		APIKey:              getenv("VOLCENGINE_API_KEY"),
+		AppID:               getenv("VOLCENGINE_APP_ID"),
+		AccessToken:         getenv("VOLCENGINE_ACCESS_TOKEN"),
+		ResourceID:          getenv("VOLCENGINE_RESOURCE_ID"),
+		DashScopeAPIKey:     getenv("DASHSCOPE_API_KEY"),
+		QwenAPIHost:         getenv("QWEN_API_HOST"),
+		TranslationProvider: strings.TrimSpace(getenv("TRANSLATION_PROVIDER")),
+	}
+	if cfg.TranslationProvider == "" {
+		cfg.TranslationProvider = "volcengine"
+	}
+	if cfg.TranslationProvider != "volcengine" && cfg.TranslationProvider != "qwen" {
+		return Config{}, errors.New("unsupported translation provider")
+	}
+	if cfg.TranslationProvider == "qwen" {
+		parsed, err := url.Parse("https://" + cfg.QwenAPIHost)
+		if err != nil || parsed.Hostname() == "" || parsed.Host != cfg.QwenAPIHost || parsed.User != nil || parsed.Path != "" || parsed.RawQuery != "" || parsed.Fragment != "" || cfg.DashScopeAPIKey == "" {
+			return Config{}, errors.New("incomplete Qwen authentication or endpoint configuration")
+		}
+		return cfg, nil
 	}
 	if cfg.ResourceID == "" {
 		cfg.ResourceID = DefaultResourceID
@@ -112,8 +127,6 @@ func Load(getenv func(string) string) (Config, error) {
 	case hasAPIKey:
 		return cfg, nil
 	case hasLegacyPair:
-		return cfg, nil
-	case cfg.DashScopeAPIKey != "" && cfg.QwenAPIHost != "":
 		return cfg, nil
 	case hasLegacyPart:
 		return Config{}, errors.New("invalid legacy Volcengine authentication configuration: both App ID and access token are required")

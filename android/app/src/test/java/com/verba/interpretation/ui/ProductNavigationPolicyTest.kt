@@ -13,6 +13,19 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ProductNavigationPolicyTest {
+    @Test fun homeFirstUserNavigationKeepsWorkbenchAndAccountReturnsOnAStackWithoutGlobalBar() {
+        val home = ProductNavigationStack.initial(ProductNavigationMode.USER, homeFirst = true)
+        assertEquals(ProductScreen.TRANSLATE, home.current)
+        for (screen in listOf(ProductScreen.FACE_TO_FACE_WORKBENCH, ProductScreen.INTERPRETATION_WORKBENCH, ProductScreen.ACCOUNT)) {
+            val entered = home.push(screen)
+            assertTrue(entered.canPop)
+            assertEquals(ProductScreen.TRANSLATE, entered.pop().current)
+            assertFalse(ProductNavigationPolicy.shellFor(ProductNavigationMode.USER, screen, homeFirst = true).showBottomBar)
+        }
+        assertFalse(ProductNavigationPolicy.shellFor(ProductNavigationMode.USER, ProductScreen.TRANSLATE, homeFirst = true).showBottomBar)
+        assertEquals(ProductScreen.FACE_TO_FACE_WORKBENCH, ProductNavigationStack.initial(ProductNavigationMode.USER).current)
+    }
+
     @Test
     fun userPrimaryDestinationsHaveExactSupportedOrder() {
         val destinations = ProductNavigationPolicy.destinationsFor(ProductNavigationMode.USER)

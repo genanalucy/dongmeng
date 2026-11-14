@@ -321,9 +321,52 @@ func (p *Postgres) RevokeRefreshToken(ctx context.Context, hash []byte, now time
 func (p *Postgres) RedeemCode(ctx context.Context, user uuid.UUID, hash []byte, now time.Time) (domain.Entitlement, error) {
 	var e domain.Entitlement
 	err := p.tx(ctx, func(t pgx.Tx) error {
+		var codeID uuid.UUID
+		var shared bool
+		var expiresAt *time.Time
+		// SHARE permits parallel accounts but serializes campaign disablement
+		// against successful claims. Hashes remain the only code material here.
+		err := t.QueryRow(ctx, `SELECT rc.id,rc.shared,rc.claim_expires_at FROM redemption_codes rc JOIN code_batches cb ON cb.id=rc.batch_id WHERE rc.code_hash=$1 AND cb.disabled_at IS NULL FOR SHARE OF cb`, hash).Scan(&codeID, &shared, &expiresAt)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return domain.ErrConflict
+		}
+		if err != nil {
+			return err
+		}
+		if shared {
+			if expiresAt == nil || !now.Before(*expiresAt) {
+				return domain.ErrConflict
+			}
+			if err := t.QueryRow(ctx, `SELECT id FROM users WHERE id=$1 AND disabled_at IS NULL FOR UPDATE`, user).Scan(new(uuid.UUID)); err != nil {
+				return storeErr(err)
+			}
+			// Recheck the database wall clock after lock waits: a request
+			// queued before the deadline must not claim after it has passed.
+			var withinDeadline bool
+			if err := t.QueryRow(ctx, `SELECT $1::timestamptz > GREATEST($2::timestamptz,clock_timestamp())`, *expiresAt, now.UTC()).Scan(&withinDeadline); err != nil {
+				return err
+			}
+			if !withinDeadline {
+				return domain.ErrConflict
+			}
+			var claimed bool
+			if err := t.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM redemption_claims WHERE code_id=$1 AND user_id=$2)`, codeID, user).Scan(&claimed); err != nil {
+				return err
+			}
+			if claimed {
+				return domain.ErrConflict
+			}
+			// Shared invitations grant immediate access for 365 days; existing
+			// entitlements are neither revoked nor used to postpone the grant.
+			if err := t.QueryRow(ctx, `INSERT INTO entitlements(user_id,kind,starts_at,expires_at) VALUES($1,'package',$2,$2::timestamptz+interval '365 days') RETURNING id,user_id,kind,starts_at,expires_at`, user, now.UTC()).Scan(&e.ID, &e.UserID, &e.Kind, &e.StartsAt, &e.ExpiresAt); err != nil {
+				return err
+			}
+			_, err := t.Exec(ctx, `INSERT INTO redemption_claims(code_id,user_id,entitlement_id,claimed_at) VALUES($1,$2,$3,$4)`, codeID, user, e.ID, now.UTC())
+			return storeErr(err)
+		}
 		var batch uuid.UUID
 		var days int
-		err := t.QueryRow(ctx, `UPDATE redemption_codes rc SET redeemed_by=$2,redeemed_at=GREATEST($3::timestamptz,rc.created_at) FROM code_batches cb WHERE rc.code_hash=$1 AND rc.redeemed_at IS NULL AND cb.id=rc.batch_id AND cb.disabled_at IS NULL RETURNING rc.batch_id`, hash, user, now.UTC()).Scan(&batch)
+		err = t.QueryRow(ctx, `UPDATE redemption_codes rc SET redeemed_by=$2,redeemed_at=GREATEST($3::timestamptz,rc.created_at) FROM code_batches cb WHERE rc.code_hash=$1 AND rc.redeemed_at IS NULL AND cb.id=rc.batch_id AND cb.disabled_at IS NULL RETURNING rc.batch_id`, hash, user, now.UTC()).Scan(&batch)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return domain.ErrConflict
 		}

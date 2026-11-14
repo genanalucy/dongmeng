@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.border
 import androidx.compose.ui.draw.clip
@@ -220,17 +221,17 @@ internal fun EarMicControls(
     }
     Column(
         modifier.fillMaxWidth()
-            .then(if (compactLayout) Modifier.wrapContentHeight() else Modifier.height(TranslationVisualTokens.OperationHeight))
+            .then(if (compactLayout || BuildConfig.DEBUG) Modifier.wrapContentHeight() else Modifier.height(TranslationVisualTokens.OperationHeight))
             .padding(horizontal = 20.dp, vertical = 0.dp),
         verticalArrangement = Arrangement.Top,
     ) {
         Row(
             Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(
-                if (BuildConfig.DEBUG) 20.dp else TranslationVisualTokens.MicGroupGap,
+                if (BuildConfig.DEBUG) 10.dp else TranslationVisualTokens.MicGroupGap,
                 Alignment.CenterHorizontally,
             ),
-            verticalAlignment = Alignment.Top,
+            verticalAlignment = if (BuildConfig.DEBUG) Alignment.CenterVertically else Alignment.Top,
         ) {
             if (FaceToFaceSide.LEFT in visibleSides) EarMicButton(
                 side = FaceToFaceSide.LEFT,
@@ -264,7 +265,7 @@ internal fun EarMicControls(
             )
             // 连续控制只属于已选中的连续翻译模式；手动模式不展示，避免误以为
             // 可以直接从双麦中间切换会话模式。
-            if (BuildConfig.DEBUG && visibleSides.size == 2) {
+            if (BuildConfig.DEBUG && visibleSides.size == 2 && !manual) {
                 CenterLanguageControls(
                     enabled = state.phase == FaceToFacePhase.IDLE,
                     onSwapLanguages = onSwapLanguages,
@@ -328,9 +329,8 @@ private fun CenterLanguageControls(
     onPause: () -> Unit,
 ) {
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        LanguageSwapButton(enabled, onSwapLanguages)
+        // Debug language editing is consolidated in the top language-pair card.
         if (continuous) {
-            androidx.compose.foundation.layout.Spacer(Modifier.height(4.dp))
             ContinuousControls(phase, requestMicrophone, onPause)
         }
     }
@@ -364,12 +364,12 @@ private fun LanguageSwapButton(enabled: Boolean, onClick: () -> Unit) {
 }
 
 @Composable
-private fun LanguageEntry(side: FaceToFaceSide, language: String, otherLanguage: String, enabled: Boolean, onSelect: (String) -> Unit) {
+internal fun LanguageEntry(side: FaceToFaceSide, language: String, otherLanguage: String, enabled: Boolean, onSelect: (String) -> Unit) {
     var expanded by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
     androidx.compose.material3.TextButton(
         onClick = { expanded = true },
         enabled = enabled,
-        modifier = Modifier.heightIn(min = 44.dp).semantics {
+        modifier = Modifier.heightIn(min = if (BuildConfig.DEBUG) 48.dp else 44.dp).semantics {
             contentDescription = "选择${TranslationLanguage.displayName(language)}语言"
         },
     ) {
@@ -379,7 +379,7 @@ private fun LanguageEntry(side: FaceToFaceSide, language: String, otherLanguage:
         ) {
             Text(
                 TranslationLanguage.displayName(language),
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                color = if (BuildConfig.DEBUG) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
                 fontSize = 13.sp,
                 lineHeight = 18.sp,
                 fontWeight = FontWeight.Medium,
@@ -420,7 +420,13 @@ internal fun EarMicButton(
     val currentOnCancel by rememberUpdatedState(onCancel)
     val gate = remember(side) { MicPressGate(currentOnPress, currentOnRelease, currentOnCancel) }
     gate.updateCallbacks(currentOnPress, currentOnRelease, currentOnCancel)
-    val color = if (side == FaceToFaceSide.LEFT) VerbaColors.LeftMic else VerbaColors.RightMic
+    val identityColor = if (side == FaceToFaceSide.LEFT) VerbaColors.LeftMic else VerbaColors.RightMic
+    val color = if (BuildConfig.DEBUG) {
+        if (active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceContainerHigh
+    } else identityColor
+    val micInk = if (BuildConfig.DEBUG) {
+        if (active) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface
+    } else VerbaColors.Canvas
     // LeftMic/RightMic are the ear-identity accents (theme-stable per VerbaColors docs);
     // the dark canvas ink painted on them keeps >= 7:1 contrast in both themes.
     val target = targetEarLabel(side)
@@ -439,13 +445,15 @@ internal fun EarMicButton(
         modifier = Modifier.width(TranslationVisualTokens.MicGroupWidth),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        LanguageEntry(side, language, otherLanguage, actionEnabled && !active, onLanguage)
-        androidx.compose.foundation.layout.Spacer(Modifier.height(5.dp))
+        if (!BuildConfig.DEBUG) {
+            LanguageEntry(side, language, otherLanguage, actionEnabled && !active, onLanguage)
+            androidx.compose.foundation.layout.Spacer(Modifier.height(5.dp))
+        }
         Box(
             modifier = Modifier
-                .size(TranslationVisualTokens.MicDiameter)
+                .then(if (BuildConfig.DEBUG) Modifier.width(TranslationVisualTokens.MicGroupWidth).height(48.dp) else Modifier.size(TranslationVisualTokens.MicDiameter))
                 .drawBehind {
-                    if (visualPolicy.breathing) {
+                    if (visualPolicy.breathing && !BuildConfig.DEBUG) {
                         val scaledRadius = size.minDimension / 2f * visualPolicy.scale
                         val extra = if (motionEnabled) {
                             (5.dp + 4.dp * breathing).toPx()
@@ -463,9 +471,12 @@ internal fun EarMicButton(
         ) {
             Surface(
                 modifier = Modifier
-                    .size(TranslationVisualTokens.MicDiameter)
-                    .graphicsLayer { scaleX = activeScale; scaleY = activeScale }
-                    .then(if (active && !motionEnabled) Modifier.border(2.dp, color.copy(alpha = 0.8f), CircleShape) else Modifier)
+                    .then(if (BuildConfig.DEBUG) Modifier.width(TranslationVisualTokens.MicGroupWidth).height(48.dp) else Modifier.size(TranslationVisualTokens.MicDiameter))
+                    .graphicsLayer {
+                        scaleX = if (BuildConfig.DEBUG) 1f else activeScale
+                        scaleY = if (BuildConfig.DEBUG) 1f else activeScale
+                    }
+                    .then(if (active && !motionEnabled && !BuildConfig.DEBUG) Modifier.border(2.dp, color.copy(alpha = 0.8f), CircleShape) else Modifier)
                     .semantics {
                     role = Role.Button
                     contentDescription = description
@@ -484,15 +495,20 @@ internal fun EarMicButton(
                         finishMicPress(gate, token) { tryAwaitRelease() }
                     })
                 },
-            shape = CircleShape,
+            shape = if (BuildConfig.DEBUG) RoundedCornerShape(16.dp) else CircleShape,
             color = color,
             tonalElevation = 0.dp,
         ) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
-                Icon(Icons.Filled.Mic, contentDescription = null, tint = VerbaColors.Canvas, modifier = Modifier.size(26.dp))
+            if (BuildConfig.DEBUG) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Filled.Mic, contentDescription = null, tint = micInk, modifier = Modifier.size(22.dp))
+                    Text(if (side == FaceToFaceSide.LEFT) "L" else "R", color = micInk, style = MaterialTheme.typography.labelLarge)
+                }
+            } else Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+                Icon(Icons.Filled.Mic, contentDescription = null, tint = micInk, modifier = Modifier.size(26.dp))
                 Text(
                     if (side == FaceToFaceSide.LEFT) "L" else "R",
-                    color = VerbaColors.Canvas,
+                    color = if (BuildConfig.DEBUG && !active) MaterialTheme.colorScheme.primary else micInk,
                     style = MaterialTheme.typography.labelSmall,
                     fontWeight = FontWeight.SemiBold,
                     maxLines = 1,
@@ -531,8 +547,8 @@ private fun ContinuousControls(
     }
     Surface(
         modifier = Modifier
-            .size(56.dp)
-            .clip(CircleShape)
+            .size(if (BuildConfig.DEBUG) 48.dp else 56.dp)
+            .clip(if (BuildConfig.DEBUG) RoundedCornerShape(16.dp) else CircleShape)
             .clickable(enabled = action != null, role = Role.Button, onClick = ::runAction)
             .semantics {
                 contentDescription = label
@@ -540,9 +556,9 @@ private fun ContinuousControls(
                 if (action == null) disabled()
                 onClick(label = label) { runAction(); true }
             },
-        shape = CircleShape,
+        shape = if (BuildConfig.DEBUG) RoundedCornerShape(16.dp) else CircleShape,
         color = MaterialTheme.colorScheme.secondaryContainer,
-        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+        border = if (BuildConfig.DEBUG) null else androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
     ) {
         Box(contentAlignment = Alignment.Center) {
             Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.onSecondaryContainer)

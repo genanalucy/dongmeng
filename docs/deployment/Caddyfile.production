@@ -1,6 +1,18 @@
 47-129-170-16.sslip.io {
 	encode zstd gzip
 
+	# Legacy Debug clients do not send a package/channel parameter.
+	# Download page and both channel metadata now share an atomic snapshot.
+	# See docs/deployment/download-center.md and site/download/Caddyfile.snippet.
+	# Add the snippet to this site and the production site after initial staging.
+	handle /api/v1/app-update {
+		root * /opt/dngmeng/downloads/current
+		rewrite * /debug.json
+		header Content-Type application/json
+		header Cache-Control "no-store"
+		file_server
+	}
+
 	handle /healthz {
 		header Content-Type application/json
 		respond "{\"status\":\"edge-ready\"}" 200

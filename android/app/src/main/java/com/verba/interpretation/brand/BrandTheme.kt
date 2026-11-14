@@ -11,6 +11,7 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
+import com.verba.interpretation.BuildConfig
 import com.verba.interpretation.ui.design.VerbaColors
 
 /**
@@ -103,6 +104,55 @@ internal val BrandLightColors = lightColorScheme(
     surfaceTint = Color(0xFF8A4F00),
 )
 
+// Debug-only visual trial. Release keeps the established brand palettes.
+internal val RefinedLightColors = BrandLightColors.copy(
+    primary = Color(0xFF176B63),
+    onPrimary = Color.White,
+    primaryContainer = Color(0xFFE1F1EC),
+    onPrimaryContainer = Color(0xFF123D38),
+    background = Color(0xFFF4F6F5),
+    onBackground = Color(0xFF202A29),
+    surface = Color.White,
+    onSurface = Color(0xFF202A29),
+    surfaceVariant = Color(0xFFEAF0ED),
+    onSurfaceVariant = Color(0xFF566561),
+    secondaryContainer = Color(0xFFEAF0ED),
+    onSecondaryContainer = Color(0xFF253D37),
+    outline = Color(0xFF879690),
+    outlineVariant = Color(0xFFDEE6E1),
+    surfaceContainerLowest = Color.White,
+    surfaceContainerLow = Color(0xFFFCFDFC),
+    surfaceContainer = Color(0xFFF0F4F1),
+    surfaceContainerHigh = Color(0xFFEAF0ED),
+    surfaceContainerHighest = Color(0xFFE1E9E4),
+    surfaceBright = Color.White,
+    surfaceTint = Color(0xFF176B63),
+)
+
+internal val RefinedDarkColors = BrandDarkColors.copy(
+    primary = Color(0xFF92D8C5),
+    onPrimary = Color(0xFF102F27),
+    primaryContainer = Color(0xFF263E36),
+    onPrimaryContainer = Color(0xFFE0F3EB),
+    background = Color(0xFF101715),
+    onBackground = Color(0xFFE8EFEB),
+    surface = Color(0xFF1A2420),
+    onSurface = Color(0xFFE8EFEB),
+    onSurfaceVariant = Color(0xFFB1C0B8),
+    surfaceVariant = Color(0xFF283730),
+    secondaryContainer = Color(0xFF25332C),
+    onSecondaryContainer = Color(0xFFE8EFEB),
+    outline = Color(0xFF84978C),
+    outlineVariant = Color(0xFF33463B),
+    surfaceContainerLowest = Color(0xFF17201B),
+    surfaceContainerLow = Color(0xFF1A2420),
+    surfaceContainer = Color(0xFF202D25),
+    surfaceContainerHigh = Color(0xFF283730),
+    surfaceContainerHighest = Color(0xFF304137),
+    surfaceBright = Color(0xFF304137),
+    surfaceTint = Color(0xFF92D8C5),
+)
+
 private val BrandTypography = Typography(
     displaySmall = TextStyle(
         fontFamily = FontFamily.SansSerif,
@@ -164,6 +214,14 @@ fun BrandTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
     content: @Composable () -> Unit,
 ) {
-    val colorScheme = if (darkTheme) BrandDarkColors else BrandLightColors
-    MaterialTheme(colorScheme = colorScheme, typography = BrandTypography, content = content)
+    val colorScheme = if (BuildConfig.DEBUG) {
+        if (darkTheme) RefinedDarkColors else RefinedLightColors
+    } else {
+        if (darkTheme) BrandDarkColors else BrandLightColors
+    }
+    val typography = if (BuildConfig.DEBUG) BrandTypography.copy(
+        bodyLarge = BrandTypography.bodyLarge.copy(fontSize = 17.sp, lineHeight = 25.sp, fontWeight = FontWeight.Normal),
+        bodyMedium = BrandTypography.bodyMedium.copy(fontSize = 15.sp, lineHeight = 22.sp, fontWeight = FontWeight.Normal),
+    ) else BrandTypography
+    MaterialTheme(colorScheme = colorScheme, typography = typography, content = content)
 }

@@ -11,15 +11,6 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.EnterTransition
-import androidx.compose.animation.ExitTransition
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.togetherWith
-import androidx.compose.animation.slideInHorizontally
-import androidx.compose.animation.slideOutHorizontally
-import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
@@ -92,7 +83,6 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
@@ -100,6 +90,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -123,7 +114,6 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -169,9 +159,7 @@ import com.verba.interpretation.ui.InterpretationViewModel
 import com.verba.interpretation.ui.ProductDestination
 import com.verba.interpretation.ui.navigation.ProductBottomBar
 import com.verba.interpretation.ui.design.LiquidGlassSurface
-import com.verba.interpretation.ui.design.MotionQuickMillis
-import com.verba.interpretation.ui.design.MotionScreenMillis
-import com.verba.interpretation.ui.design.motionEnabled
+import com.verba.interpretation.ui.ProductScreenContent
 import com.verba.interpretation.ui.ProductNavigationMode
 import com.verba.interpretation.ui.ProductNavigationPolicy
 import com.verba.interpretation.ui.ProductNavigationStack
@@ -240,6 +228,7 @@ private fun InterpretationApp(
     appUpdateViewModel: AppUpdateViewModel,
     onInstallUpdate: (android.content.Intent) -> Unit,
     historyViewModel: HistoryViewModel = viewModel(),
+    faceViewModel: FaceToFaceViewModel = viewModel(),
     themeMode: ThemeMode,
     onSelectThemeMode: (ThemeMode) -> Unit,
 ) {
@@ -261,13 +250,59 @@ private fun InterpretationApp(
     var historyTargetSessionId by remember(accountState.user?.id) { mutableStateOf<String?>(null) }
     LaunchedEffect(accountState.user?.id) { historyViewModel.load(accountState.user?.id) }
     var stack by remember(navigationMode) {
-        mutableStateOf(ProductNavigationStack.initial(navigationMode))
+        mutableStateOf(ProductNavigationStack.initial(navigationMode, homeFirst = BuildConfig.DEBUG))
     }
     LaunchedEffect(navigationMode) {
-        stack = ProductNavigationStack.initial(navigationMode)
+        stack = ProductNavigationStack.initial(navigationMode, homeFirst = BuildConfig.DEBUG)
     }
     val screen = stack.current
-    val productShell = ProductNavigationPolicy.shellFor(navigationMode, screen)
+    val currentScreen by rememberUpdatedState(screen)
+    val lifecycleOwner = LocalLifecycleOwner.current
+    val context = LocalContext.current
+    val facePermissionPolicy = faceViewModel.microphonePermissionPolicy
+    val soloPermissionPolicy = remember { MicrophonePermissionPolicy() }
+    val soloPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        val result = soloPermissionPolicy.consumeResult(granted)
+        if (result != null && currentScreen == ProductScreen.INTERPRETATION_WORKBENCH &&
+            lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)
+        ) {
+            if (result.granted) viewModel.start() else viewModel.microphonePermissionDenied()
+        }
+    }
+    val facePermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (currentScreen == ProductScreen.FACE_TO_FACE_WORKBENCH &&
+            lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)
+        ) {
+            faceViewModel.microphonePermissionResult(granted)
+        } else {
+            facePermissionPolicy.clear()
+            facePermissionPolicy.consumeResult(granted)
+        }
+    }
+    val startSolo: () -> Unit = {
+        if (currentScreen == ProductScreen.INTERPRETATION_WORKBENCH &&
+            lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)
+        ) {
+            if (context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+                viewModel.start()
+            } else if (soloPermissionPolicy.request(MicrophonePermissionAction.ContinuousStart)) {
+                soloPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+            }
+        }
+    }
+    val requestFaceMicrophone: (MicrophonePermissionAction) -> Unit = { action ->
+        if (currentScreen == ProductScreen.FACE_TO_FACE_WORKBENCH &&
+            lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)
+        ) {
+            if (context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+                facePermissionPolicy.clear()
+                faceViewModel.runMicrophoneAction(action)
+            } else if (facePermissionPolicy.request(action)) {
+                facePermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+            }
+        }
+    }
+    val productShell = ProductNavigationPolicy.shellFor(navigationMode, screen, homeFirst = BuildConfig.DEBUG)
     BackHandler(enabled = stack.canPop) {
         stack = stack.pop()
     }
@@ -292,36 +327,28 @@ private fun InterpretationApp(
             }
         },
     ) { padding ->
-        val transitionsEnabled = motionEnabled()
-        AnimatedContent(
-            targetState = screen,
-            transitionSpec = {
-                if (!transitionsEnabled) {
-                    EnterTransition.None togetherWith ExitTransition.None
-                } else {
-                    (fadeIn(tween(MotionScreenMillis, easing = FastOutSlowInEasing)) +
-                        slideInHorizontally(tween(MotionScreenMillis, easing = FastOutSlowInEasing)) { it / 18 }) togetherWith
-                        (fadeOut(tween(MotionQuickMillis, easing = FastOutSlowInEasing)) +
-                            slideOutHorizontally(tween(MotionQuickMillis, easing = FastOutSlowInEasing)) { -it / 28 })
-                }
-            },
-            label = "productScreen",
-        ) { displayedScreen ->
+        ProductScreenContent(
+            screen = screen,
+            onStopInterpretation = { soloPermissionPolicy.clear(); viewModel.cancel() },
+            onStopFaceToFace = { facePermissionPolicy.clear(); faceViewModel.cancel() },
+        ) { displayedScreen, _ ->
         when (displayedScreen) {
             ProductScreen.TRANSLATE -> TranslationHome(
                 modifier = Modifier.padding(padding),
                 interpretationPhase = interpretationState.phase,
                 onLanguagePair = { source, target ->
                     viewModel.setLanguages(source, target)
-                    stack = stack.selectPrimary(ProductDestination.INTERPRETATION)
+                    stack = if (BuildConfig.DEBUG) stack.push(ProductScreen.INTERPRETATION_WORKBENCH) else stack.selectPrimary(ProductDestination.INTERPRETATION)
                 },
-                onInterpretation = { stack = stack.selectPrimary(ProductDestination.INTERPRETATION) },
-                onFaceToFace = { stack = stack.selectPrimary(ProductDestination.FACE_TO_FACE) },
+                onInterpretation = { stack = if (BuildConfig.DEBUG) stack.push(ProductScreen.INTERPRETATION_WORKBENCH) else stack.selectPrimary(ProductDestination.INTERPRETATION) },
+                onFaceToFace = { stack = if (BuildConfig.DEBUG) stack.push(ProductScreen.FACE_TO_FACE_WORKBENCH) else stack.selectPrimary(ProductDestination.FACE_TO_FACE) },
+                onProfile = { stack = stack.push(ProductScreen.ACCOUNT) },
             )
             ProductScreen.INTERPRETATION_WORKBENCH -> SoloWorkbench(
                 modifier = Modifier.padding(padding),
                 viewModel = viewModel,
-                onExit = { stack = stack.selectPrimary(ProductDestination.FACE_TO_FACE) },
+                startWithPermission = startSolo,
+                onExit = { stack = if (BuildConfig.DEBUG) stack.pop() else stack.selectPrimary(ProductDestination.FACE_TO_FACE) },
                 onViewHistory = { id ->
                     historyTargetSessionId = id
                     stack = stack.push(ProductScreen.HISTORY)
@@ -329,6 +356,9 @@ private fun InterpretationApp(
             )
             ProductScreen.FACE_TO_FACE_WORKBENCH -> FaceToFaceWorkbench(
                 modifier = Modifier.padding(padding),
+                faceViewModel = faceViewModel,
+                requestMicrophone = requestFaceMicrophone,
+                onExit = { stack = stack.pop() },
                 onViewHistory = { id ->
                     historyTargetSessionId = id
                     stack = stack.push(ProductScreen.HISTORY)
@@ -535,12 +565,26 @@ private fun TranslationHome(
     onLanguagePair: (String, String) -> Unit,
     onInterpretation: () -> Unit,
     onFaceToFace: () -> Unit,
+    onProfile: () -> Unit,
 ) {
     LazyColumn(
         modifier = modifier.fillMaxSize(),
         contentPadding = PaddingValues(horizontal = 20.dp, vertical = 18.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
+        if (BuildConfig.DEBUG) {
+            item {
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("翻译", style = MaterialTheme.typography.headlineMedium)
+                        Text("选择一种交流方式", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    IconButton(onClick = onProfile, modifier = Modifier.semantics { contentDescription = "我的" }) {
+                        Icon(Icons.Outlined.PersonOutline, contentDescription = null)
+                    }
+                }
+            }
+        } else {
         item { ConnectionStatusCard(interpretationPhase) }
         item { SectionLabel("语言快捷入口", "常用语言对") }
         item {
@@ -559,7 +603,8 @@ private fun TranslationHome(
                 )
             }
         }
-        item { SectionLabel("选择模式", "适合不同交流场景") }
+        }
+        if (!BuildConfig.DEBUG) item { SectionLabel("选择模式", "适合不同交流场景") }
         item {
             ProductModeCard(
                 icon = Icons.Outlined.GraphicEq,
@@ -574,7 +619,7 @@ private fun TranslationHome(
             ProductModeCard(
                 icon = Icons.Outlined.Groups,
                 eyebrow = "双向交流",
-                title = "面对面翻译",
+                title = if (BuildConfig.DEBUG) "对话翻译" else "面对面翻译",
                 description = "双方按方向自然交谈，字幕分侧显示并定向播放。",
                 actionLabel = "进入面对面工作台",
                 onClick = onFaceToFace,
@@ -731,27 +776,14 @@ private fun WorkbenchHeader(title: String, status: String, onExit: () -> Unit, o
 }
 
 @Composable
-private fun SoloWorkbench(modifier: Modifier, viewModel: InterpretationViewModel, onExit: () -> Unit, onViewHistory: (String) -> Unit) {
+private fun SoloWorkbench(
+    modifier: Modifier,
+    viewModel: InterpretationViewModel,
+    startWithPermission: () -> Unit,
+    onExit: () -> Unit,
+    onViewHistory: (String) -> Unit,
+) {
     val state by viewModel.state.collectAsStateWithLifecycle()
-    val lifecycleOwner = LocalLifecycleOwner.current
-    DisposableEffect(lifecycleOwner, viewModel) {
-        val observer = LifecycleEventObserver { _, event -> if (event == Lifecycle.Event.ON_STOP) viewModel.cancel() }
-        lifecycleOwner.lifecycle.addObserver(observer)
-        onDispose {
-            lifecycleOwner.lifecycle.removeObserver(observer)
-            viewModel.cancel()
-        }
-    }
-    val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        if (granted) viewModel.start() else viewModel.microphonePermissionDenied()
-    }
-    val startWithPermission = {
-        if (viewModel.getApplication<android.app.Application>().checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
-            viewModel.start()
-        } else {
-            permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
-        }
-    }
     Box(modifier.fillMaxSize()) {
     InterpretationScreen(
         model = InterpretationUiMapper.map(state),
@@ -868,46 +900,20 @@ private fun SoloPrimaryAction(phase: SessionPhase, startWithPermission: () -> Un
 private fun FaceToFaceWorkbench(
     modifier: Modifier,
     onViewHistory: (String) -> Unit,
-    faceViewModel: FaceToFaceViewModel = viewModel(),
+    faceViewModel: FaceToFaceViewModel,
+    requestMicrophone: (MicrophonePermissionAction) -> Unit,
+    onExit: () -> Unit,
 ) {
     val state by faceViewModel.state.collectAsStateWithLifecycle()
     val permissionPolicy = faceViewModel.microphonePermissionPolicy
-    val lifecycleOwner = LocalLifecycleOwner.current
-    DisposableEffect(lifecycleOwner, faceViewModel, permissionPolicy) {
-        val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_STOP) {
-                permissionPolicy.clear()
-                faceViewModel.cancel()
-            }
-        }
-        lifecycleOwner.lifecycle.addObserver(observer)
-        onDispose {
-            lifecycleOwner.lifecycle.removeObserver(observer)
-            permissionPolicy.clear()
-            faceViewModel.cancel()
-        }
-    }
-    val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        faceViewModel.microphonePermissionResult(granted)
-    }
-    val hasPermission = {
-        faceViewModel.getApplication<android.app.Application>().checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
-    }
-    val requestOrRun: ((MicrophonePermissionAction) -> Unit) = { action ->
-        if (hasPermission()) {
-            permissionPolicy.clear()
-            faceViewModel.runMicrophoneAction(action)
-        } else if (permissionPolicy.request(action)) {
-            permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
-        }
-    }
 
     Box(modifier.fillMaxSize()) {
         FaceToFaceScreen(
             state = state,
             viewModel = faceViewModel,
-            requestMicrophone = requestOrRun,
+            requestMicrophone = requestMicrophone,
             clearMicrophoneRequest = permissionPolicy::clear,
+            onExit = onExit,
             modifier = Modifier.fillMaxSize(),
         )
         LocalHistorySaveFeedback(
