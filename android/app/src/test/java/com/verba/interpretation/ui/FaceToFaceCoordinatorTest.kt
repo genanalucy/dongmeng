@@ -436,17 +436,17 @@ class FaceToFaceCoordinatorTest {
         assertEquals(FaceToFacePhase.IDLE, coordinator.state().phase)
     }
 
-    @Test fun emptyManualInputIsDiscardedWithoutLeavingATranscript() {
+    @Test fun manualReleaseWithoutSubtitleWaitsForFinalOutput() {
         val coordinator = FaceToFaceCoordinator<String>()
         coordinator.manualPress(1, FaceToFaceSide.LEFT, "left")
 
         val release = coordinator.endManualInput()
 
         assertTrue(release.accepted)
-        assertEquals(listOf("left"), release.cancelSessions)
-        assertTrue(release.finishSessions.isEmpty())
-        assertTrue(coordinator.state().turns.isEmpty())
-        assertEquals(FaceToFacePhase.IDLE, coordinator.state().phase)
+        assertTrue(release.cancelSessions.isEmpty())
+        assertEquals(listOf("left"), release.finishSessions)
+        assertEquals(1, coordinator.state().turns.size)
+        assertEquals(FaceToFacePhase.PROCESSING, coordinator.state().phase)
     }
 
     @Test fun cancelledManualInputCancelsOnlyPressedTurnAndKeepsEarlierFinishedTurn() {

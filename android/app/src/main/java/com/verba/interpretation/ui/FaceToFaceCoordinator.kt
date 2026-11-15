@@ -196,23 +196,20 @@ class FaceToFaceCoordinator<S> {
         // Finished is terminal at the socket. Keep the entry so queued TTS can drain; the
         // release must not send a second finish or discard the terminal session.
         val terminal = entry.transport.finishing || entry.transport.finished || turn.finished
-        val discard = !terminal && shouldDiscardTurnLocked(activeId)
-        if (discard) entries.remove(activeId)
+        // A delayed transcript does not mean empty audio. Normal release always
+        // drains input; only pointer cancellation discards an unfinished turn.
         activeTurnId = null
         current = current.copy(
-            phase = if (discard) FaceToFacePhase.IDLE else FaceToFacePhase.PROCESSING,
+            phase = FaceToFacePhase.PROCESSING,
             activeSide = null,
             captureActive = false,
             captureLevel = 0f,
-            turns = if (discard) current.turns.filterNot { it.id == activeId } else current.turns,
         )
         return Transition(
             accepted = true,
-            finishSessions = if (discard || terminal) emptyList() else finishTransportLocked(entry.transport),
-            cancelSessions = if (discard) listOf(entry.transport.session) else emptyList(),
+            finishSessions = if (terminal) emptyList() else finishTransportLocked(entry.transport),
             stopCapture = true,
             cancelTimer = true,
-            closeCloudSession = discard,
         )
     }
 
