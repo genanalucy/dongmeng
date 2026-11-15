@@ -1,5 +1,5 @@
 {
-  "updated_at": "2026-11-13",
+  "updated_at": "2026-11-15",
   "channels": {
     "production": {
       "package_name": "com.verba.interpretation",
@@ -13,13 +13,13 @@
     },
     "debug": {
       "package_name": "com.verba.interpretation.debug",
-      "version_code": 27,
-      "version_name": "20261113.1836",
-      "file_name": "yilu-debug-v27-20261113.1836.apk",
-      "sha256": "c3a7ce72dd0e08610d081975351609c989f0275c4c98c8cc1abe5c921daebcd2",
+      "version_code": 28,
+      "version_name": "20261115.2103",
+      "file_name": "yilu-debug-v28-20261115.2103.apk",
+      "sha256": "9feec005ad8ae3a89178d268fddecb6f657af6a12f987ec5ac525615ce5bb499",
       "certificate_sha256": "a01bd76290417cdce645c2ff5d35e95b0286a58e194d7c39a6cfcd994638e5b4",
-      "notes": "软件更名为译路随行，保留原包名和签名，可覆盖安装。保留独立翻译工作台等测试功能，可能存在不稳定。",
-      "source_url": "https://github.com/genanalucy/dongmeng/releases/download/android-debug-yilu-20261113-v27/yilu-debug-v27-20261113.1836.apk"
+      "notes": "修复按住说话在字幕出现前松手丢失结果；连续模式每句播完自动继续，暂停/退出阻止旧任务重启录音。保留原包名和签名，可覆盖安装。",
+      "source_url": "https://github.com/genanalucy/dongmeng/releases/download/android-debug-yilu-20261115-v28/yilu-debug-v28-20261115.2103.apk"
     }
   }
 }

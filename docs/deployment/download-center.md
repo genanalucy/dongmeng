@@ -53,6 +53,15 @@ bash scripts/deploy-download-release.sh <new-bundle-directory>
 - APK与网页/两OTA已通过统一发布工具切换到快照`downloads-20261113T104226Z-1445042`；两APK完整公网下载SHA匹配，正式公网OTA21/测试OTA27核对通过。新下载URL使用`https://yszn.nlplayer.org/downloads/`，旧sslip文件和链接继续保留。
 - 仅改名，不换域名、不变包、不把Debug界面功能带入正式。用户旧版首次安装仍显示旧名，覆盖升级后才显示新名。源码签名配置、私钥和APK构建产物未入Git。
 
+## Debug v28输入与连续模式修复（2026-11-15）
+
+- 实现`064b789`，Debug28/`20261115.2103`，固定原Debug包名及证书。正式21/`20261113.1836`整个清单及APK保持不变。
+- 正常松手不再依赖首字幕决定取消，保留已采集输入并finish等待结果；pointer cancel仍取消。AUTO完整final pair后封口，Finished及可听播放drain后自动开启下一句、复用Cloud grant；pause/stop/cancel/error不自动重开。录音任务/回调及返回值带代次门槛，逆序final pair也能处理，提前Finished明确停止错误，不无限重连。
+- 405项Debug单测通过（包含原先两项红色诊断及新增无字幕松手/连续三句/停止/迟到回调/提前结束边界）；lint0error/48warning，Debug及AndroidTest包构建通过。GitHub Android CI `43717131072`、模拟器UI回归`43717131067`均成功。现无ADB设备，未做真实录音/模型调用/真机覆盖安装；用户声音、长时稳定性仍待验收，Ready前缓存顺序沿用既有Socket实现，未新增真实WebSocket端到端测试。
+- GitHub预发布tag `android-debug-yilu-20261115-v28`指向实现提交；APK SHA256 `9feec005ad8ae3a89178d268fddecb6f657af6a12f987ec5ac525615ce5bb499`。
+- 统一工具部署快照`downloads-20261115T131258Z-1708481`，两APK公网完整下载hash、网页/清单/Debug OTA和正式源站OTA严格对照bundle通过；另核对正式公网OTA仍21、测试28及hash相符，正式下载页/Agent/Cloud/admin均200。4项发布脚本单测与shell语法检查通过。
+- 不更改线上Qwen3.8服务、不重建正式包、不清数据。测试版通过App内检查更新或官网下载覆盖安装。
+
 ## 初次上线状态
 
 正式v20 /20260915.0232和Debug v26 /20261110.1930原包下载并核验成功。4项发布工具回归与shell语法检查通过；实际核验APK哈希、包名、版本和既有签名。
