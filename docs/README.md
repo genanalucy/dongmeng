@@ -8,6 +8,9 @@
 | --- | --- | --- |
 | 产品、版本与用户日常入口 | [项目首页](../README.md)、[工作树与环境](development/workspace.md) | v30 用户已更新但尚未测试；临时任务工作树不是日常入口 |
 | 模块职责、依赖和改动影响 | [模块与依赖地图](architecture/README.md) | 源码关系；不证明线上开关、部署或真实端到端可用 |
+| 运行检查、读取结果与人工验收 | [统一入口与选择矩阵](testing/README.md)、[CI 触发与覆盖](testing/ci.md)、[本轮实测](testing/repo-organization-20261117.md)、[人工清单](testing/manual-acceptance.md) | 08 的 DB 跳过与 09 的真实隔离 PostgreSQL 结果分开；GitHub 运行以对应提交为准 |
+| 代理工具安装与检查 | [Pi 工具](../.pi/README.md) | 固定公开上游，37 个技能；忽略缓存不作为产品源码 |
+| 剩余问题与后续打磨 | [独立后续条目](development/follow-ups.md) | UI/音频耦合、跨模块接口和文档残留独立跟进；不是本轮已实施功能 |
 | 领域概念与既有决策 | [单一领域上下文](../CONTEXT.md)、[云端历史加密与管理员访问 ADR](adr/0001-cloud-history-encryption-and-admin-access.md) | 沿用翻译会话、已完成 Turn、本机历史副本、云端历史副本和删除优先等既有词汇 |
 | 源码版本、旧工作树与保全 | [来源清单](development/source-inventory.md)、[基线记录](development/baselines.md) | 清单是时间点记录；基线文档保留的 11 月 4 日正文为历史证据 |
 | Cloud API 与数据库迁移 | [接口说明](../cloud-api/API.md)、[迁移与隔离数据库检查](../cloud-api/README.md) | 具体路由以[当前路由源码](../cloud-api/internal/http/router.go)为核对入口；不证明生产配置 |
