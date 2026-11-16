@@ -37,12 +37,16 @@
 
 任务09在本地未重跑主体未变、已由08验证的 Android JVM/lint/Debug 构建，也没有启动本地模拟器或真机（无KVM）、真实音频/文件提供方、长期翻译、跨设备同步/删除优先、公网 APK 核验、部署或发布。自动检查通过不改变 v30 尚未用户验收的状态。
 
+### 首次 GitHub 运行后的检查脚本修复
+
+首次真实 CI `43959839755` 的 database job 完成93个测试通过事件、0跳过，Go测试成功，但冷缓存依赖下载的 stderr 诊断被混入 JSON 文件，检查脚本误报 FAIL。这是检查工具缺陷；修复仅让 Go stdout 写入 JSON，stderr 直接保留日志，Go 非零退出、损坏 JSON、skip 仍失败。CLI 回归先 RED 后 GREEN，并补齐三类失败保护；tooling 的11 CLI、3导航、8 CI路径、4技能安装测试通过。随后 Go1.25.0、全新专用 PostgreSQL16、空临时模块缓存实际产生下载诊断并完成 `db`：93个pass事件、0skip，34.711秒，退出0。证据单列 `09-ci-fix-*.log`，此前检查记录保持原样；修复提交的 GitHub 复跑仍需单独核对，本次未重复 Android 或前端全套。
+
 ## 任务10：导航、来源收口与首次远端检查
 
 任务10从整合 `27eabab` 开始，只修改文档入口和后续记录；四个旧UI切片在独立Git bundle验证及状态/ignored复核后逐项退役，主编排者随后按精确SHA/标签/开放PR/bundle证据退役两条远端旧发布分支，三个同SHA发布标签与Release保留；来源和保留理由见[工作树收口](../development/workspace.md#任务10收口状态)、[分支清单](../development/branches.md)。任务01补充检查点的212项哈希仍匹配；独立bare clone从bundle恢复四个切片ref，完整SHA均匹配。05/06/07共204份归档文件的既定哈希全部匹配，没有重写归档正文。
 
-本批在任务10隔离工作树运行 `bash scripts/check.sh navigation tooling download`：PASS3、FAIL0、MISSING_ENV0、SKIP0；额外检查Pi、Android、管理端及来源/后续/分支六份入口，28个本地目标无断链。既有8项CLI、3项导航、8项CI路径、4项技能安装行为测试和4项下载单测通过；文档收口没有新增镜像测试。整合目录另实际运行技能 `--check` 成功，37个链接有效。最终review仍由主编排者后续执行。
+本批在任务10隔离工作树运行 `bash scripts/check.sh navigation tooling download`：PASS3、FAIL0、MISSING_ENV0、SKIP0；额外检查Pi、Android、管理端及来源/后续/分支六份入口，28个本地目标无断链。初轮既有8项CLI、3项导航、8项CI路径、4项技能安装行为测试和4项下载单测通过；合并最新整合 `b6b0a2d`（含脚本修复 `f351473`）后同三target再次PASS3，CLI已扩为11项，其余行为检查继续通过；文档收口没有新增镜像测试。整合目录另实际运行技能 `--check` 成功，37个链接有效。最终review仍由主编排者后续执行。
 
-`27eabab` 推送后的三份GitHub真实运行已经结束：[Android CI](https://github.com/genanalucy/dongmeng/actions/runs/43959839931)成功，[Android Motion Regression](https://github.com/genanalucy/dongmeng/actions/runs/43959841169)成功；[Product checks](https://github.com/genanalucy/dongmeng/actions/runs/43959839755)的八个target与路径选择成功，database job失败。数据库测试本身93个通过事件、0跳过，失败是冷缓存 `go: downloading` 的stderr混入JSON报告而被解析器拒绝；不是新增产品回归，也不能把该job写成通过。脚本修复与后续提交的真实运行由对应交付另行记录，不能用本地结果覆盖这次红记录。
+`27eabab` 推送后的三份GitHub真实运行已经结束：[Android CI](https://github.com/genanalucy/dongmeng/actions/runs/43959839931)成功，[Android Motion Regression](https://github.com/genanalucy/dongmeng/actions/runs/43959841169)成功；[Product checks](https://github.com/genanalucy/dongmeng/actions/runs/43959839755)的八个target与路径选择成功，database job失败。数据库测试本身93个通过事件、0跳过，失败是冷缓存 `go: downloading` 的stderr混入JSON报告而被解析器拒绝；不是新增产品回归，也不能把该job写成通过。脚本修复 `f351473` 的本地空缓存/真实PG验证见上节，已合并纳入本候选；修复提交的GitHub复跑仍由主编排者后续核对，不能用本地结果覆盖这次红记录。
 
 PR #1和#2的标题/正文按真实范围修订并保持Open/Draft。PR #2继承main→`dc587ef`的35个候选提交；其后整理、测试fixture调整和11登录故障修复分别说明。没有合main、部署或新建Release；v30仍未用户验收。GitHub模拟器通过也不代替真实手机音频、SAF文件提供方与跨设备验收。
