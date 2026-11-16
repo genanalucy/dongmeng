@@ -26,13 +26,15 @@ bash scripts/check.sh all
 | `web` | 辅助 Web npm 同上 | 辅助原型与协议调试工具，不是完整产品 |
 | `download` | 既有四项 Python 单测与发布脚本 `bash -n` | 本地清单、快照和路由迁移；不上传、不部署、不访问公网APK |
 | `navigation` | 当前首页、代理入口、领域入口、文档/归档索引（含archive/indexes各批次）、testing/architecture与工作树说明的本地 Markdown 链接 | 只验证目标存在，不验证标题锚点、外部URL、裸代码路径；不扫描历史正文的旧约束 |
-| `tooling` | `scripts/*.sh` Bash语法；检查CLI和导航的行为测试 | Python3/Bash；工具技能安装另见其说明，不复制本机缓存 |
+| `tooling` | `scripts/*.sh` Bash语法；检查CLI、导航、CI路径选择与技能安装的行为测试 | Python3/Bash；工具技能安装另见其说明，不复制本机缓存 |
 | `db` | Cloud `go test -json -tags=integration -count=1 ./integration` | 显式专用PostgreSQL；包含启动独立 Agent harness 的跨进程授权测试；任何skip或没有完成测试均FAIL |
 | `manual` | 输出人工验收指针 | 始终SKIP，见[真机验收](manual-acceptance.md) |
 
 Go组通过`go list ./...`发现当前模块包，仅排除`node_modules`下第三方包；所有保留包均执行test/vet，普通源码包执行build，仅含测试的包由test编译。独立contracttest仍须单独选择。
 
 环境准备使用[工作树环境说明](../development/workspace.md)，不复制旧 `.env`、凭据或 `local.properties`。脚本不会自动加载环境文件、启动数据库、运行独立迁移/发布命令或调用 smoke-local；显式`db`会按既有集成测试准备、修改并清理专用测试库。Go/npm/Gradle可能下载公开依赖，相关失败会保留原始输出。预检只能识别常见缺环境；依赖损坏或构建工具自行报告的错误记为FAIL。
+
+GitHub 的路径选择、提供方/消费者触发矩阵、专用数据库服务和检查边界见 [CI 说明](ci.md)。CI 复用上述 target；Android 设备工作流仍单独执行现有模拟器测试。
 
 ```bash
 npm --prefix web ci
