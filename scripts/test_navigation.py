@@ -1,6 +1,7 @@
 """Check local link behavior using small Markdown documents, not repository snapshots."""
 from pathlib import Path
 import subprocess
+import shutil
 import tempfile
 import unittest
 
@@ -29,6 +30,22 @@ class NavigationCLI(unittest.TestCase):
                                     text=True, capture_output=True)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertIn('local destinations=2, broken=0', result.stdout)
+
+    def test_default_scope_checks_archive_batch_indexes_without_historical_body(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'scripts').mkdir()
+            script = root / 'scripts/check-navigation.py'
+            shutil.copy(SCRIPT, script)
+            (root / 'README.md').write_text('# Current')
+            (root / 'AGENTS.md').write_text('# Agents')
+            (root / 'archive/indexes').mkdir(parents=True)
+            (root / 'archive/indexes/batch.md').write_text('[entry](../missing.md)')
+            (root / 'archive/historical.md').write_text('[old](historical-only.md)')
+            result = subprocess.run(['python3', str(script)], text=True, capture_output=True)
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            self.assertIn('batch.md', result.stdout)
+            self.assertNotIn('historical-only.md', result.stdout)
 
 
 if __name__ == '__main__':

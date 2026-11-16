@@ -45,6 +45,7 @@ def main():
         for directory in ('docs/testing', 'docs/architecture'):
             pages += sorted((ROOT / directory).glob('*.md'))
         pages += sorted((ROOT / 'archive').glob('*/README.md'))
+        pages += sorted((ROOT / 'archive/indexes').glob('*.md'))
     errors = checked = 0
     for page in dict.fromkeys(pages):
         if not page.is_file():

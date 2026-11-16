@@ -142,7 +142,10 @@ run_target() {
       fi
       need go python3 || return 0
       local log_file db_exit=0
-      log_file=$(mktemp "${TMPDIR:-/tmp}/dngmeng-db-check.XXXXXX") || return 1
+      if ! log_file=$(mktemp "${TMPDIR:-/tmp}/dngmeng-db-check.XXXXXX"); then
+        report FAIL db 'cannot create temporary integration report'
+        return 0
+      fi
       (cd cloud-api && go test -json -tags=integration -count=1 ./integration) >"$log_file" 2>&1 || db_exit=$?
       if ! python3 - "$log_file" <<'PYREPORT'
 import json

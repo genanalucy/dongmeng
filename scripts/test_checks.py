@@ -89,6 +89,14 @@ fi""")
         self.assertIn('PASS cloud:', result.stdout)
         self.assertIn('CLOUD_BUSINESS_PACKAGES_VERIFIED', result.stdout)
 
+    def test_unwritable_database_report_location_cannot_pass(self):
+        self.env['CLOUD_API_TEST_DATABASE_URL'] = 'fixture-secret-not-for-output'
+        self.env['TMPDIR'] = str(self.root / 'missing-directory')
+        self.tool('go', 'exit 0')
+        result = self.run_cli('db')
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn('FAIL db:', result.stdout)
+
 
 if __name__ == '__main__':
     unittest.main()
