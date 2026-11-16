@@ -75,7 +75,7 @@ jobs:
         ports:
           - 127.0.0.1:15432:5432
         options: >-
-          --health-cmd "pg_isready -U cloud_api_test -d cloud_api_test"
+          --health-cmd "pg_isready -h 127.0.0.1 -U cloud_api_test -d cloud_api_test"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 12
