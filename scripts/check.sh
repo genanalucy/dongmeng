@@ -148,7 +148,8 @@ run_target() {
         report FAIL db 'cannot create temporary integration report'
         return 0
       fi
-      (cd cloud-api && go test -json -tags=integration -count=1 ./integration) >"$log_file" 2>&1 || db_exit=$?
+      # go test emits dependency/build diagnostics on stderr; only stdout is JSON.
+      (cd cloud-api && go test -json -tags=integration -count=1 ./integration) >"$log_file" || db_exit=$?
       if ! python3 - "$log_file" <<'PYREPORT'
 import json
 from pathlib import Path
