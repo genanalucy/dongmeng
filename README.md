@@ -9,7 +9,10 @@
 - **打开项目、继续开发**：[整理工作树与环境](docs/development/workspace.md)。本机日常入口是 `repo-organization` 工作树 / `chore/repo-organization` 分支；用 `git worktree list` 找到实际目录。临时任务工作树用于分批实施。
 - **理解改动影响**：[模块与依赖地图](docs/architecture/README.md)，按翻译、账户、历史、下载链路定位源码和检查。
 - **找当前说明与既有决策**：[文档导航](docs/README.md)、[领域上下文](CONTEXT.md)、[云端历史加密与管理员访问决策](docs/adr/0001-cloud-history-encryption-and-admin-access.md)。
-- **查旧方案与来源**：[可见归档](archive/README.md)、[源码来源与成果保全](docs/development/source-inventory.md)。历史资料分批核实迁移，尚未归档不代表可以删除。
+- **检查一次修改**：[统一检查与选择矩阵](docs/testing/README.md)、[跨模块 CI](docs/testing/ci.md)、[本轮实测](docs/testing/repo-organization-20261117.md)和[人工验收](docs/testing/manual-acceptance.md)。
+- **准备代理工具**：[Pi 工具安装与检查](.pi/README.md)，37 个上游技能须按固定来源安装。
+- **查旧方案与来源**：[可见归档](archive/README.md)、[源码来源与成果保全](docs/development/source-inventory.md)。05/06/07 三批已有逐文件索引；旧工作树收口与独立 Git 保全见[当前目录状态](docs/development/workspace.md#任务10收口状态)。
+- **继续打磨 App**：[独立后续问题](docs/development/follow-ups.md)，先按影响与验收目标拆分。
 
 ## 产品由哪些部分组成
 
@@ -39,7 +42,7 @@
 
 ## 按影响范围检查
 
-环境准备见[工作树说明](docs/development/workspace.md)。从仓库根执行所需检查；以下是现有命令入口，并非本次导航整理已经全部运行的结果。
+环境准备见[工作树说明](docs/development/workspace.md)。优先从仓库根执行 `bash scripts/check.sh <target>`，按[选择矩阵](docs/testing/README.md)选择范围；显式 `db` 会拒绝跳过。以下底层命令便于定位，不替代统一入口的门禁或结果记录。
 
 ```bash
 (cd android && ./gradlew --no-daemon testDebugUnitTest lintDebug assembleDebug)

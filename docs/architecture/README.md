@@ -68,4 +68,4 @@ Agent 源码配置允许 `qwen` 与 `volcengine`，空配置默认火山；默�
 | 下载工具 | `python3 -m unittest discover -s scripts -p 'test_download_release.py'`；`bash -n scripts/deploy-download-release.sh` | 本地生成/迁移逻辑与脚本语法；不执行发布，不验证公网或实际 APK |
 | 人工体验 | [多语言场景](../../translation-test-kit/multilingual-dialogue-test-scenarios.md)、[质量检查表](../../translation-test-kit/translation-quality-checklist.md) | 记录测试版本、设备、耳机、模式与结果；v30 的用户验收仍未完成 |
 
-`make test` 原有范围是 Web、Agent 默认及官方 AST 检查，不能把其名称理解为全产品检查。CI 实际触发和筛选以 [workflow 目录](../../.github/workflows/)为准，文档/服务变更不能凭 Android CI 存在就宣称已被覆盖。本批只建立导航，没有扩大执行过的检查结论。
+任务08已将 `make test` / `make check` 转发到 `bash scripts/check.sh all`；按[统一入口与选择矩阵](../testing/README.md)执行，数据库未配置与人工验收会分别标记跳过。任务09的[CI触发矩阵](../testing/ci.md)说明提供方与消费者覆盖，实际运行见对应提交的 [workflow](../../.github/workflows/)；本轮已执行结果与设备缺口见[检查记录](../testing/repo-organization-20261117.md)。不要从检查命令名称推断真实供应商或用户体验已经通过。

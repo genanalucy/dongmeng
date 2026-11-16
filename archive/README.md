@@ -2,13 +2,13 @@
 
 这里保存经核实的旧方案、旧实现和过程证据，供查找来源与理解变更。归档内容默认是**历史证据**，不作为当前产品规范、运行入口或已验收结论。当前入口见[项目首页](../README.md)、[文档导航](../docs/README.md)与[模块地图](../docs/architecture/README.md)。
 
-本入口在资料迁移前建立；**本批没有搬移旧资料**。已迁入内容及原因由[批次索引目录](indexes/)逐项列明。尚未迁移的[阶段计划](indexes/05-prototype-documents.md)和[评审记录](indexes/05-prototype-documents.md)仍在原处；[基线记录](../docs/development/baselines.md)也保留历史正文。索引为空不表示旧材料已删除，不能宣称归档已经全部完成。
+已完成以下三个核实批次，逐文件来源、效力、处理和哈希见[批次索引目录](indexes/README.md)：[05 旧原型与阶段文档](indexes/05-prototype-documents.md)、[06 运维、发布与测试材料](indexes/06-operations-and-test-materials.md)、[07 旧源码与工具资料](indexes/07-source-and-tools.md)。它们覆盖 204 份归档文件；旧根、私有资料和未核实历史分支仍按[来源清单](../docs/development/source-inventory.md)保留，不能理解为所有本机资料均已归档。[基线记录](../docs/development/baselines.md)继续保留注明效力的历史正文。
 
 ## 稳定目录与分批索引
 
 归档资料按用途放入 `archive/documents/`（旧文档）、`archive/implementations/`（旧实现）、`archive/evidence/`（过程证据）；目录在有实际内容时再创建。内部可按阶段分组并保留原相对路径，不能仅按日期判断资料是否失效。
 
-各批在 `archive/indexes/` 新建自己的 Markdown 索引，互不争用一张大表。文件名使用两位任务编号与用途：任务 05 用 `05-prototype-documents.md`、06 用 `06-operations-and-test-materials.md`、07 用 `07-source-and-tools.md`。这些名称是写入约定，不表示对应文件已存在；从[索引目录](indexes/)查看实际文件。每个索引包含该批迁移的全部条目，能从索引相对链接打开归档文件和现行替代入口；没有替代时写明原因并链接当前模块导航。
+各批在 `archive/indexes/` 维护自己的 Markdown 索引，使用两位任务编号与用途，互不争用一张大表。每个索引包含该批迁移的全部条目，能从相对链接打开归档文件和现行替代入口；没有替代时写明原因并链接当前模块导航。新增批次继续遵循以下约定。
 
 ## 每个条目的必填信息
 

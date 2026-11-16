@@ -1,5 +1,7 @@
 # Cloud API 管理控制台
 
+效力提示（2026-11-17）：下文接口映射是早期控制台快照，部分“501 / 尚未定义”不能代表当前 Cloud API。当前模块与上下游见[模块地图](../../docs/architecture/README.md)，服务端入口见[路由源码](../internal/http/router.go)，检查见[统一入口](../../docs/testing/README.md)；界面实际消费范围仍须逐项核实，不能从后端存在接口推断界面已接入。本轮已执行管理端 34 项测试及类型/lint/构建，未现场核验部署；旧映射核实作为[独立后续](../../docs/development/follow-ups.md)。新环境依各自锁文件用 `npm ci` 准备依赖。
+
 独立的 React + TypeScript + Vite 管理界面，不修改仓库根目录的用户翻译 Web。
 
 ## 运行

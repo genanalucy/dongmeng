@@ -27,7 +27,7 @@
 
 ## 任务09：CI 与真实数据库集成
 
-任务09从 `2b892a6` 开始，完成前合并整理分支 `c0e7331`（含05/07及独立故障修复11）。[CI 触发矩阵](ci.md)基于实际 workflow 与路径 CLI；四份 YAML 通过 actionlint 1.7.7。8项路径行为测试包含三个实际调用 workflow 的接入/外层过滤检查，以及实际 Git 改名后执行共享 workflow 的选择步骤；两份 Android 原 job 从 `runs-on` 起逐字节相同，原检查与 artifact 保留。本轮未在 GitHub runner 执行或修改远端分支保护。
+任务09从 `2b892a6` 开始，完成前合并整理分支 `c0e7331`（含05/07及独立故障修复11）。[CI 触发矩阵](ci.md)基于实际 workflow 与路径 CLI；四份 YAML 通过 actionlint 1.7.7。8项路径行为测试包含三个实际调用 workflow 的接入/外层过滤检查，以及实际 Git 改名后执行共享 workflow 的选择步骤；两份 Android 原 job 从 `runs-on` 起逐字节相同，原检查与 artifact 保留。任务09交付时尚未在 GitHub runner 执行，后续真实运行见下节；没有修改远端分支保护。
 
 使用 CI 声明的 Go 1.25.0 运行 `agent officialast cloud contract` 全部 PASS；官方 protobuf 仍经原固定 URL/哈希脚本准备。Node 22.23.1 各自 `npm ci` 后，Web126项/管理端34项及各自 typecheck/lint/build PASS，未升级依赖；安装仍报告既有16项审计问题。合入05/07/11后的 `cloud contract navigation tooling download` 最终 PASS5；tooling 为8项检查CLI、3项导航、8项CI路径与4项技能安装行为测试。追加本节后定点导航为15份文档616个本地目标，无断链。
 
@@ -35,4 +35,14 @@
 
 此前本地初轮早于容器就绪而失败；就绪后真实套件又暴露旧 fixture 与既有登录缺口，所有红记录均保留在仓库外任务09证据中。`2af0bc0` 仅修三个集成测试的旧数据、日期、CAPTCHA/登录输入及 issuer fixture，保留全部断言；内部手机号占位邮箱在正确密码下可登录的问题由任务11独立提交 `188309f` 修复，任务09合入后用原拒登断言验证，不为 CI 绿色删除测试或放松门禁。最终结果对应 `09-db-final.log`、`09-final-targeted.log`、`09-go125.log`、两个前端日志与 `09-trigger-matrix.json`，与任务08未配置数据库的记录分开归属。
 
-本轮未重跑主体未变、已由08验证的 Android JVM/lint/Debug 构建，也没有模拟器或真机（无KVM）、真实音频/文件提供方、长期翻译、跨设备同步/删除优先、公网 APK 核验、部署或发布。自动检查通过不改变 v30 尚未用户验收的状态。
+任务09在本地未重跑主体未变、已由08验证的 Android JVM/lint/Debug 构建，也没有启动本地模拟器或真机（无KVM）、真实音频/文件提供方、长期翻译、跨设备同步/删除优先、公网 APK 核验、部署或发布。自动检查通过不改变 v30 尚未用户验收的状态。
+
+## 任务10：导航、来源收口与首次远端检查
+
+任务10从整合 `27eabab` 开始，只修改文档入口和后续记录；四个旧UI切片在独立Git bundle验证及状态/ignored复核后逐项退役，主编排者随后按精确SHA/标签/开放PR/bundle证据退役两条远端旧发布分支，三个同SHA发布标签与Release保留；来源和保留理由见[工作树收口](../development/workspace.md#任务10收口状态)、[分支清单](../development/branches.md)。任务01补充检查点的212项哈希仍匹配；独立bare clone从bundle恢复四个切片ref，完整SHA均匹配。05/06/07共204份归档文件的既定哈希全部匹配，没有重写归档正文。
+
+本批在任务10隔离工作树运行 `bash scripts/check.sh navigation tooling download`：PASS3、FAIL0、MISSING_ENV0、SKIP0；额外检查Pi、Android、管理端及来源/后续/分支六份入口，28个本地目标无断链。既有8项CLI、3项导航、8项CI路径、4项技能安装行为测试和4项下载单测通过；文档收口没有新增镜像测试。整合目录另实际运行技能 `--check` 成功，37个链接有效。最终review仍由主编排者后续执行。
+
+`27eabab` 推送后的三份GitHub真实运行已经结束：[Android CI](https://github.com/genanalucy/dongmeng/actions/runs/43959839931)成功，[Android Motion Regression](https://github.com/genanalucy/dongmeng/actions/runs/43959841169)成功；[Product checks](https://github.com/genanalucy/dongmeng/actions/runs/43959839755)的八个target与路径选择成功，database job失败。数据库测试本身93个通过事件、0跳过，失败是冷缓存 `go: downloading` 的stderr混入JSON报告而被解析器拒绝；不是新增产品回归，也不能把该job写成通过。脚本修复与后续提交的真实运行由对应交付另行记录，不能用本地结果覆盖这次红记录。
+
+PR #1和#2的标题/正文按真实范围修订并保持Open/Draft。PR #2继承main→`dc587ef`的35个候选提交；其后整理、测试fixture调整和11登录故障修复分别说明。没有合main、部署或新建Release；v30仍未用户验收。GitHub模拟器通过也不代替真实手机音频、SAF文件提供方与跨设备验收。
