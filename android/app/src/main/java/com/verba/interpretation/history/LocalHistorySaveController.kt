@@ -11,178 +11,111 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
-/** The status of the device-local write, not the cloud synchronization status. */
 enum class LocalHistorySaveStatus { IDLE, SAVING, SAVED, FAILED }
-
 data class LocalHistorySaveState(
     val status: LocalHistorySaveStatus = LocalHistorySaveStatus.IDLE,
     val sessionId: String? = null,
     val errorCode: String? = null,
     val pendingCount: Int = 0,
+    val message: String? = null,
 )
+data class LocalHistoryConversation(val conversationId: String, val userId: String, val mode: String, val sessionId: String, val accountEpoch: Long = 0)
+data class LocalHistoryTurnOwnership(val turnId: String, val conversationId: String, val userId: String, val mode: String, val sessionId: String, val accountEpoch: Long = 0)
+fun interface LocalHistoryTurnSaver { suspend fun save(turn: CompletedTurn): String }
 
-data class LocalHistoryConversation(
-    val conversationId: String,
-    val userId: String,
-    val mode: String,
-    val sessionId: String,
-)
-
-data class LocalHistoryTurnOwnership(
-    val turnId: String,
-    val conversationId: String,
-    val userId: String,
-    val mode: String,
-    val sessionId: String,
-)
-
-fun interface LocalHistoryTurnSaver {
-    suspend fun save(turn: CompletedTurn): String
+/** Application-owned IO, not a view-model job. A save is durable only after its DB
+ * transaction commits; committed rows and sync outbox survive process recreation. */
+object LocalHistoryWriteScope {
+    val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 }
 
-/**
- * Binds each turn to the local conversation and keeps writes alive across pause/resume and
- * communication replacement. Old writes are deliberately not cancelled: their result is only
- * published while their conversation is current.
- */
 class LocalHistorySaveController(
     private val saver: LocalHistoryTurnSaver,
-    private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
+    private val scope: CoroutineScope = LocalHistoryWriteScope.scope,
     private val ids: () -> String = { UUID.randomUUID().toString() },
+    private val accountEpoch: (String) -> Long = { 0L },
 ) {
-    private data class Counters(
-        val conversation: LocalHistoryConversation,
-        var pending: Int = 0,
-        var succeeded: Int = 0,
-        var failed: Int = 0,
-        var errorCode: String? = null,
-        var paused: Boolean = false,
-        var finished: Boolean = false,
-    )
-
+    private data class ConversationState(val value: LocalHistoryConversation, var paused: Boolean = false, var finished: Boolean = false)
+    private enum class WriteStatus { PENDING, SAVED, FAILED }
+    private data class Write(val conversationId: String, val request: CompletedTurn, var status: WriteStatus)
     private val lock = Any()
     private val mutableState = MutableStateFlow(LocalHistorySaveState())
     val state: StateFlow<LocalHistorySaveState> = mutableState.asStateFlow()
-    private val conversations = mutableMapOf<String, Counters>()
-    private val submitted = mutableSetOf<String>()
-    private var current: Counters? = null
+    private val conversations = mutableMapOf<String, ConversationState>()
+    private val writes = linkedMapOf<String, Write>()
+    private var current: ConversationState? = null
 
     fun startConversation(userId: String, mode: String): LocalHistoryConversation = synchronized(lock) {
         require(userId.isNotBlank() && mode.isNotBlank())
-        val conversation = LocalHistoryConversation(ids(), userId, mode, ids())
-        val counters = Counters(conversation)
-        conversations[conversation.conversationId] = counters
-        current = counters
-        publishLocked(counters)
-        conversation
+        val value = LocalHistoryConversation(ids(), userId, mode, ids(), accountEpoch(userId))
+        current = ConversationState(value).also { conversations[value.conversationId] = it }
+        publishLocked()
+        value
     }
-
-    fun currentConversation(): LocalHistoryConversation? = synchronized(lock) { current?.takeUnless { it.finished }?.conversation }
-
-    /** Close ownership to new turns, retaining pending writes and the result for the UI. */
-    fun finishConversation() = synchronized(lock) {
-        current?.finished = true
-    }
-
-    /** Pausing does not create a new local history session. */
-    fun pauseConversation() = synchronized(lock) {
-        current?.paused = true
-    }
-
-    /** Resuming returns the same ownership boundary created by startConversation. */
-    fun resumeConversation(): LocalHistoryConversation? = synchronized(lock) {
-        val counters = current ?: return@synchronized null
-        counters.paused = false
-        counters.conversation
-    }
-
-    /** Ends only the UI's current view; already queued writes remain durable work. */
-    fun endConversation() = synchronized(lock) {
-        current = null
-        mutableState.value = LocalHistorySaveState()
-    }
-
+    fun currentConversation(): LocalHistoryConversation? = synchronized(lock) { current?.takeUnless { it.finished }?.value }
+    fun finishConversation() = synchronized(lock) { current?.finished = true }
+    fun pauseConversation() = synchronized(lock) { current?.paused = true }
+    fun resumeConversation(): LocalHistoryConversation? = synchronized(lock) { current?.also { it.paused = false }?.value }
+    fun endConversation() = synchronized(lock) { current = null; publishLocked() }
     fun bindTurn(turnId: String): LocalHistoryTurnOwnership? = synchronized(lock) {
-        val counters = current ?: return@synchronized null
-        if (counters.paused || counters.finished) return@synchronized null
-        counters.conversation.let { conversation ->
-            LocalHistoryTurnOwnership(turnId, conversation.conversationId, conversation.userId, conversation.mode, conversation.sessionId)
+        current?.takeUnless { it.paused || it.finished }?.value?.let { LocalHistoryTurnOwnership(turnId, it.conversationId, it.userId, it.mode, it.sessionId, it.accountEpoch) }
+    }
+    fun saveTurn(ownership: LocalHistoryTurnOwnership, sourceLanguage: String, targetLanguage: String, sourceText: String, translatedText: String, completedAtMillis: Long): Job? {
+        if (sourceText.isBlank() || translatedText.isBlank()) return null
+        val key = "${ownership.conversationId}:${ownership.turnId}"
+        val write = synchronized(lock) {
+            val conversation = conversations[ownership.conversationId]?.value ?: return null
+            if (conversation.userId != ownership.userId || conversation.sessionId != ownership.sessionId || conversation.mode != ownership.mode || conversation.accountEpoch != ownership.accountEpoch) return null
+            if (writes.containsKey(key)) return null
+            Write(ownership.conversationId, CompletedTurn(ownership.userId, ownership.sessionId, ownership.mode, sourceLanguage, targetLanguage, sourceText.trim(), translatedText.trim(), completedAtMillis,
+                UUID.nameUUIDFromBytes(key.toByteArray(Charsets.UTF_8)).toString(), ownership.accountEpoch), WriteStatus.PENDING).also {
+                writes[key] = it; publishLocked()
+            }
+        }
+        return launchWrite(write)
+    }
+    fun explainIfNoCompletedContent() = synchronized(lock) {
+        if (mutableState.value.status == LocalHistorySaveStatus.IDLE) {
+            mutableState.value = mutableState.value.copy(message = "暂无已完成的双语内容；完整结果会自动保存。")
         }
     }
 
-    fun saveTurn(
-        ownership: LocalHistoryTurnOwnership,
-        sourceLanguage: String,
-        targetLanguage: String,
-        sourceText: String,
-        translatedText: String,
-        completedAtMillis: Long,
-    ): Job? {
-        val normalizedSource = sourceText.trim()
-        val normalizedTranslation = translatedText.trim()
-        if (normalizedSource.isEmpty() || normalizedTranslation.isEmpty()) return null
-
-        val requestKey = "${ownership.conversationId}:${ownership.turnId}"
-        synchronized(lock) {
-            val counters = conversations[ownership.conversationId] ?: return null
-            if (counters.conversation.userId != ownership.userId || counters.conversation.sessionId != ownership.sessionId || counters.conversation.mode != ownership.mode) return null
-            if (!submitted.add(requestKey)) return null
-            counters.pending += 1
-            if (current === counters) publishLocked(counters)
+    fun retryFailed(): List<Job> {
+        val retry = synchronized(lock) {
+            val id = current?.value?.conversationId ?: return emptyList()
+            writes.values.filter { it.conversationId == id && it.status == WriteStatus.FAILED }.onEach { it.status = WriteStatus.PENDING }.also { publishLocked() }
         }
-
-        return scope.launch {
-            try {
-                val savedSessionId = saver.save(
-                    CompletedTurn(
-                        userId = ownership.userId,
-                        localSessionId = ownership.sessionId,
-                        mode = ownership.mode,
-                        sourceLanguage = sourceLanguage,
-                        targetLanguage = targetLanguage,
-                        sourceText = normalizedSource,
-                        translatedText = normalizedTranslation,
-                        completedAtMillis = completedAtMillis,
-                    ),
-                )
-                check(savedSessionId == ownership.sessionId) { "local_save_session_mismatch" }
-                complete(ownership.conversationId, succeeded = true, errorCode = null)
-            } catch (error: CancellationException) {
-                complete(ownership.conversationId, succeeded = false, errorCode = "local_save_cancelled")
-                throw error
-            } catch (error: Throwable) {
-                complete(ownership.conversationId, succeeded = false, errorCode = safeErrorCode(error))
+        return retry.map(::launchWrite)
+    }
+    private fun launchWrite(write: Write): Job = scope.launch {
+        var succeeded = false
+        var errorCode: String? = null
+        try {
+            check(saver.save(write.request) == write.request.localSessionId) { "local_save_session_mismatch" }
+            succeeded = true
+        } catch (error: CancellationException) {
+            errorCode = "local_save_cancelled"
+            throw error
+        } catch (error: Throwable) {
+            errorCode = when {
+                error.message.orEmpty().contains("history_limit_exceeded") -> "history_limit_exceeded"
+                else -> "local_save_failed"
+            }
+        } finally {
+            synchronized(lock) {
+                write.status = if (succeeded) WriteStatus.SAVED else WriteStatus.FAILED
+                if (!succeeded) failures[write.conversationId] = errorCode ?: "local_save_failed"
+                publishLocked()
             }
         }
     }
-
-    private fun complete(conversationId: String, succeeded: Boolean, errorCode: String?) = synchronized(lock) {
-        val counters = conversations[conversationId] ?: return
-        counters.pending -= 1
-        if (succeeded) counters.succeeded += 1 else {
-            counters.failed += 1
-            counters.errorCode = errorCode
-        }
-        if (current === counters) publishLocked(counters)
-    }
-
-    private fun publishLocked(counters: Counters) {
-        val status = when {
-            counters.pending > 0 -> LocalHistorySaveStatus.SAVING
-            counters.failed > 0 -> LocalHistorySaveStatus.FAILED
-            counters.succeeded > 0 -> LocalHistorySaveStatus.SAVED
-            else -> LocalHistorySaveStatus.IDLE
-        }
-        mutableState.value = LocalHistorySaveState(status, counters.conversation.sessionId, counters.errorCode, counters.pending)
-    }
-
-    private fun safeErrorCode(error: Throwable): String {
-        val message = error.message.orEmpty()
-        return when {
-            message.contains("history_limit_exceeded") -> "history_limit_exceeded"
-            message.contains("Missing history") -> "invalid_history_payload"
-            message.contains("local_save_session_mismatch") -> "invalid_local_save_result"
-            else -> "local_save_failed"
-        }
+    private val failures = mutableMapOf<String, String>()
+    private fun publishLocked() {
+        val active = current ?: run { mutableState.value = LocalHistorySaveState(); return }
+        val items = writes.values.filter { it.conversationId == active.value.conversationId }
+        val pending = items.count { it.status == WriteStatus.PENDING }
+        val failed = items.any { it.status == WriteStatus.FAILED }
+        val status = when { pending > 0 -> LocalHistorySaveStatus.SAVING; failed -> LocalHistorySaveStatus.FAILED; items.any { it.status == WriteStatus.SAVED } -> LocalHistorySaveStatus.SAVED; else -> LocalHistorySaveStatus.IDLE }
+        mutableState.value = LocalHistorySaveState(status, active.value.sessionId, if (failed) failures[active.value.conversationId] else null, pending)
     }
 }

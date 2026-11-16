@@ -10,6 +10,53 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class FaceToFaceCoordinatorTest {
+    @Test fun emptyResultDrainsWithoutRemovingNewerTurnOrTranslationOnlyText() {
+        val coordinator = FaceToFaceCoordinator<String>()
+        coordinator.manualPress(1, FaceToFaceSide.LEFT, "silent")
+        coordinator.endManualInput()
+        coordinator.manualPress(2, FaceToFaceSide.RIGHT, "spoken")
+        coordinator.updateSubtitle(2, SubtitleKind.TRANSLATION_FINAL, "译文")
+        coordinator.transportFinished("silent")
+        coordinator.playbackWorkFinished(1, drained = true)
+        assertEquals(listOf(2L), coordinator.state().turns.map { it.id })
+        assertTrue(coordinator.state().captureActive)
+        coordinator.endManualInput()
+        coordinator.transportFinished("spoken")
+        coordinator.playbackWorkFinished(2, drained = true)
+        assertEquals("译文", coordinator.state().turns.single().translatedText)
+        assertTrue(coordinator.canCloseCloudSession())
+    }
+
+    @Test fun playbackIndicatorTracksAudioUntilAudibleDrain() {
+        val coordinator = FaceToFaceCoordinator<String>()
+        coordinator.manualPress(1L, FaceToFaceSide.LEFT, "socket")
+        coordinator.updateSubtitle(1L, SubtitleKind.SOURCE_FINAL, "你好")
+        coordinator.endManualInput()
+        coordinator.offerTts(1L, byteArrayOf(1, 0))
+        assertTrue(coordinator.state().playbackActive)
+        coordinator.transportFinished("socket")
+        coordinator.playbackWorkFinished(1L, drained = false)
+        assertTrue(coordinator.state().playbackActive)
+        coordinator.playbackWorkFinished(1L, drained = true)
+        assertFalse(coordinator.state().playbackActive)
+    }
+
+    @Test fun configurationStaysLockedUntilBackgroundTurnAndPlaybackDrain() {
+        val coordinator = FaceToFaceCoordinator<String>()
+        assertTrue(coordinator.state().configurationEditable)
+        coordinator.manualPress(1L, FaceToFaceSide.LEFT, "socket")
+        assertFalse(coordinator.state().configurationEditable)
+        coordinator.updateSubtitle(1L, SubtitleKind.SOURCE_FINAL, "你好")
+        coordinator.endManualInput()
+        assertFalse(coordinator.state().configurationEditable)
+        val work = coordinator.transportFinished("socket")
+        assertTrue(work != null)
+        assertFalse(coordinator.state().playbackActive)
+        coordinator.playbackWorkFinished(1L, drained = true)
+        assertTrue(coordinator.state().configurationEditable)
+        assertFalse(coordinator.state().playbackActive)
+    }
+
     @Test fun rejectedRestoreIsAtomicAndReturnsNewSessionForCancellation() {
         val coordinator = FaceToFaceCoordinator<String>()
         coordinator.setMode(FaceToFaceMode.AUTO)
@@ -406,17 +453,17 @@ class FaceToFaceCoordinatorTest {
         assertEquals(FaceToFacePhase.IDLE, coordinator.state().phase)
     }
 
-    @Test fun emptyManualInputIsDiscardedWithoutLeavingATranscript() {
+    @Test fun manualReleaseWithoutSubtitleWaitsForFinalOutput() {
         val coordinator = FaceToFaceCoordinator<String>()
         coordinator.manualPress(1, FaceToFaceSide.LEFT, "left")
 
         val release = coordinator.endManualInput()
 
         assertTrue(release.accepted)
-        assertEquals(listOf("left"), release.cancelSessions)
-        assertTrue(release.finishSessions.isEmpty())
-        assertTrue(coordinator.state().turns.isEmpty())
-        assertEquals(FaceToFacePhase.IDLE, coordinator.state().phase)
+        assertTrue(release.cancelSessions.isEmpty())
+        assertEquals(listOf("left"), release.finishSessions)
+        assertEquals(1, coordinator.state().turns.size)
+        assertEquals(FaceToFacePhase.PROCESSING, coordinator.state().phase)
     }
 
     @Test fun cancelledManualInputCancelsOnlyPressedTurnAndKeepsEarlierFinishedTurn() {

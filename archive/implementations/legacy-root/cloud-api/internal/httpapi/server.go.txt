@@ -1,0 +1,586 @@
+package httpapi
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"log/slog"
+	"net"
+	"net/http"
+	"regexp"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/dngmeng/cloud-api/internal/auth"
+	"github.com/dngmeng/cloud-api/internal/domain"
+	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/chi/v5/middleware"
+	"github.com/google/uuid"
+)
+
+type Server struct {
+	Store          domain.Store
+	Tokens         auth.TokenIssuer
+	Logger         *slog.Logger
+	AllowedOrigins map[string]struct{}
+	AppEnv         string
+	BodyLimit      int64
+	Now            func() time.Time
+	limiter        *rateLimiter
+}
+type ctxKey int
+
+const userKey ctxKey = 1
+
+var objectKeyRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._/-]{0,511}$`)
+
+func New(s domain.Store, t auth.TokenIssuer, logger *slog.Logger, origins []string, env string, bodyLimit int64) http.Handler {
+	a := map[string]struct{}{}
+	for _, v := range origins {
+		a[v] = struct{}{}
+	}
+	srv := &Server{Store: s, Tokens: t, Logger: logger, AllowedOrigins: a, AppEnv: env, BodyLimit: bodyLimit, Now: time.Now, limiter: newRateLimiter(60, time.Minute)}
+	return srv.routes()
+}
+func (s *Server) routes() http.Handler {
+	r := chi.NewRouter()
+	r.Use(middleware.RequestID, middleware.RealIP, middleware.Recoverer, s.requestIDHeader, s.securityHeaders, s.cors, s.logging, s.limitBody, s.rateLimit, middleware.Timeout(15*time.Second))
+	r.Get("/healthz", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	})
+	r.Route("/v1", func(r chi.Router) {
+		r.Route("/auth", func(r chi.Router) {
+			r.Post("/register", s.register)
+			r.Post("/login", s.login)
+			r.Post("/refresh", s.refresh)
+			r.Post("/logout", s.logout)
+			r.Post("/sms/verify", s.smsVerify)
+		})
+		r.Group(func(r chi.Router) {
+			r.Use(s.authenticate)
+			r.Post("/redemptions", s.redeem)
+			r.Post("/translation-sessions", s.translationSession)
+			r.Post("/usage-records", s.usage)
+			r.Post("/feedback/consents", s.feedbackConsent)
+			r.Post("/feedback/artifacts", s.feedbackArtifactCreate)
+			r.Get("/feedback/artifacts/{id}", s.feedbackArtifactGet)
+			r.Route("/admin", func(r chi.Router) {
+				r.Use(s.adminOnly)
+				r.Post("/redemption-code-batches", s.createBatch)
+				r.Get("/users", s.listUsers)
+				r.Get("/audit-logs", s.listAudits)
+			})
+		})
+	})
+	return r
+}
+
+type credentials struct {
+	Email    string `json:"email"`
+	Password string `json:"password"`
+}
+
+func (s *Server) register(w http.ResponseWriter, r *http.Request) {
+	var in credentials
+	if err := decodeJSON(w, r, &in, s.BodyLimit); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+	email, err := canonicalEmail(in.Email)
+	if err != nil || len(in.Password) < 12 || len(in.Password) > 256 {
+		writeError(w, http.StatusBadRequest, "invalid_credentials", "valid email and password length 12-256 required")
+		return
+	}
+	hash, err := auth.HashPassword(in.Password)
+	if err != nil {
+		writeError(w, 500, "internal_error", "internal server error")
+		return
+	}
+	u, e, err := s.Store.Register(r.Context(), domain.RegisterParams{Email: email, PasswordHash: hash, Now: s.Now()})
+	if err != nil {
+		handleError(w, err)
+		return
+	}
+	s.issueLogin(w, r, u, map[string]any{"user": u, "trial_entitlement": e})
+}
+func (s *Server) login(w http.ResponseWriter, r *http.Request) {
+	var in credentials
+	if err := decodeJSON(w, r, &in, s.BodyLimit); err != nil {
+		writeError(w, 400, "invalid_request", err.Error())
+		return
+	}
+	email, err := canonicalEmail(in.Email)
+	if err != nil || len(in.Password) > 256 {
+		writeError(w, 401, "invalid_credentials", "invalid email or password")
+		return
+	}
+	u, hash, err := s.Store.UserByEmail(r.Context(), email)
+	if err != nil {
+		writeError(w, 401, "invalid_credentials", "invalid email or password")
+		return
+	}
+	ok, err := auth.VerifyPassword(hash, in.Password)
+	if err != nil || !ok {
+		writeError(w, 401, "invalid_credentials", "invalid email or password")
+		return
+	}
+	s.issueLogin(w, r, u, map[string]any{"user": u})
+}
+func (s *Server) issueLogin(w http.ResponseWriter, r *http.Request, u domain.User, out map[string]any) {
+	now := s.Now()
+	access, err := s.Tokens.AccessToken(u.ID, u.Role, 15*time.Minute, now)
+	if err != nil {
+		handleError(w, err)
+		return
+	}
+	plain, hash, err := auth.RandomSecret(32)
+	if err != nil {
+		handleError(w, err)
+		return
+	}
+	_, err = s.Store.CreateRefreshToken(r.Context(), domain.CreateRefreshParams{UserID: u.ID, FamilyID: uuid.New(), Hash: hash, ExpiresAt: now.Add(30 * 24 * time.Hour)})
+	if err != nil {
+		handleError(w, err)
+		return
+	}
+	out["access_token"] = access
+	out["refresh_token"] = plain
+	out["token_type"] = "Bearer"
+	writeJSON(w, 200, out)
+}
+func (s *Server) refresh(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		RefreshToken string `json:"refresh_token"`
+	}
+	if decodeJSON(w, r, &in, s.BodyLimit) != nil || len(in.RefreshToken) < 32 || len(in.RefreshToken) > 512 {
+		writeError(w, 400, "invalid_request", "invalid refresh token")
+		return
+	}
+	plain, newHash, err := auth.RandomSecret(32)
+	if err != nil {
+		handleError(w, err)
+		return
+	}
+	now := s.Now()
+	_, next, err := s.Store.RotateRefreshToken(r.Context(), auth.HashSecret(in.RefreshToken), newHash, now, now.Add(30*24*time.Hour))
+	if err != nil {
+		writeError(w, 401, "invalid_refresh_token", "invalid or reused refresh token")
+		return
+	}
+	u, err := s.Store.UserByID(r.Context(), next.UserID)
+	if err != nil {
+		handleError(w, err)
+		return
+	}
+	access, err := s.Tokens.AccessToken(u.ID, u.Role, 15*time.Minute, now)
+	if err != nil {
+		handleError(w, err)
+		return
+	}
+	writeJSON(w, 200, map[string]any{"access_token": access, "refresh_token": plain, "token_type": "Bearer"})
+}
+func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		RefreshToken string `json:"refresh_token"`
+	}
+	if err := decodeJSON(w, r, &in, s.BodyLimit); err != nil {
+		writeError(w, 400, "invalid_request", err.Error())
+		return
+	}
+	err := s.Store.RevokeRefreshToken(r.Context(), auth.HashSecret(in.RefreshToken), s.Now())
+	if err != nil && !errors.Is(err, domain.ErrNotFound) {
+		handleError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+func (s *Server) smsVerify(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Phone string `json:"phone"`
+		Code  string `json:"code"`
+	}
+	if err := decodeJSON(w, r, &in, s.BodyLimit); err != nil {
+		writeError(w, 400, "invalid_request", err.Error())
+		return
+	}
+	if s.AppEnv != "development" {
+		writeError(w, 501, "not_available", "SMS stub is development-only")
+		return
+	}
+	if in.Code != "000000" || len(in.Phone) < 6 || len(in.Phone) > 32 {
+		writeError(w, 401, "invalid_code", "invalid development code")
+		return
+	}
+	writeJSON(w, 200, map[string]bool{"verified": true})
+}
+func (s *Server) redeem(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Code string `json:"code"`
+	}
+	if err := decodeJSON(w, r, &in, s.BodyLimit); err != nil || len(in.Code) < 10 || len(in.Code) > 128 {
+		writeError(w, 400, "invalid_request", "invalid code")
+		return
+	}
+	e, err := s.Store.RedeemCode(r.Context(), currentUser(r).ID, auth.HashSecret(strings.ToUpper(strings.TrimSpace(in.Code))), s.Now())
+	if err != nil {
+		handleError(w, err)
+		return
+	}
+	writeJSON(w, 201, e)
+}
+func (s *Server) translationSession(w http.ResponseWriter, r *http.Request) {
+	if err := expectEmptyOrJSON(r, s.BodyLimit); err != nil {
+		writeError(w, 400, "invalid_request", err.Error())
+		return
+	}
+	u := currentUser(r)
+	now := s.Now()
+	e, err := s.Store.ActiveEntitlement(r.Context(), u.ID, now)
+	if err != nil {
+		handleError(w, err)
+		return
+	}
+	session := domain.TranslationSession{ID: uuid.New(), UserID: u.ID, EntitlementID: e.ID, JTI: uuid.New(), ExpiresAt: now.Add(5 * time.Minute)}
+	if err = s.Store.CreateTranslationSession(r.Context(), session); err != nil {
+		handleError(w, err)
+		return
+	}
+	token, err := s.Tokens.TranslationToken(session.ID, e.ID, u.ID, session.JTI, 5*time.Minute, now)
+	if err != nil {
+		handleError(w, err)
+		return
+	}
+	writeJSON(w, 201, map[string]any{"session_id": session.ID, "token": token, "expires_at": session.ExpiresAt, "scope": "translation"})
+}
+func (s *Server) usage(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		SessionID    string `json:"translation_session_id"`
+		AudioSeconds int    `json:"audio_seconds"`
+		Characters   int    `json:"characters"`
+	}
+	if err := decodeJSON(w, r, &in, s.BodyLimit); err != nil {
+		writeError(w, 400, "invalid_request", err.Error())
+		return
+	}
+	sid, err := uuid.Parse(in.SessionID)
+	if err != nil || in.AudioSeconds < 0 || in.AudioSeconds > 86400 || in.Characters < 0 || in.Characters > 10000000 || (in.AudioSeconds == 0 && in.Characters == 0) {
+		writeError(w, 400, "invalid_request", "invalid usage values")
+		return
+	}
+	err = s.Store.CreateUsageRecord(r.Context(), domain.CreateUsageParams{UserID: currentUser(r).ID, SessionID: sid, AudioSeconds: in.AudioSeconds, Characters: in.Characters, Now: s.Now()})
+	if err != nil {
+		handleError(w, err)
+		return
+	}
+	w.WriteHeader(204)
+}
+func (s *Server) feedbackConsent(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Granted *bool `json:"granted"`
+	}
+	if err := decodeJSON(w, r, &in, s.BodyLimit); err != nil || in.Granted == nil {
+		writeError(w, 400, "invalid_request", "granted is required")
+		return
+	}
+	c, err := s.Store.CreateFeedbackConsent(r.Context(), currentUser(r).ID, *in.Granted, s.Now())
+	if err != nil {
+		handleError(w, err)
+		return
+	}
+	writeJSON(w, 201, c)
+}
+func (s *Server) feedbackArtifactCreate(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		ConsentID string    `json:"consent_id"`
+		ObjectKey string    `json:"object_key"`
+		ExpiresAt time.Time `json:"expires_at"`
+	}
+	if err := decodeJSON(w, r, &in, s.BodyLimit); err != nil {
+		writeError(w, 400, "invalid_request", err.Error())
+		return
+	}
+	cid, err := uuid.Parse(in.ConsentID)
+	now := s.Now()
+	if err != nil || !validObjectKey(in.ObjectKey) || !in.ExpiresAt.After(now) || in.ExpiresAt.After(now.Add(14*24*time.Hour)) {
+		writeError(w, 400, "invalid_request", "invalid consent_id, object_key, or expires_at (maximum 14 days)")
+		return
+	}
+	a, err := s.Store.CreateFeedbackArtifact(r.Context(), domain.CreateArtifactParams{UserID: currentUser(r).ID, ConsentID: cid, ObjectKey: in.ObjectKey, ExpiresAt: in.ExpiresAt, Now: now})
+	if err != nil {
+		handleError(w, err)
+		return
+	}
+	writeJSON(w, 201, a)
+}
+func (s *Server) feedbackArtifactGet(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		writeError(w, 400, "invalid_request", "invalid artifact id")
+		return
+	}
+	a, err := s.Store.FeedbackArtifact(r.Context(), currentUser(r).ID, id)
+	if err != nil {
+		handleError(w, err)
+		return
+	}
+	writeJSON(w, 200, a)
+}
+func (s *Server) createBatch(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Name  string `json:"name"`
+		Count int    `json:"count"`
+	}
+	if err := decodeJSON(w, r, &in, s.BodyLimit); err != nil || strings.TrimSpace(in.Name) == "" || len(in.Name) > 100 || in.Count < 1 || in.Count > 1000 {
+		writeError(w, 400, "invalid_request", "name and count 1-1000 required")
+		return
+	}
+	codes := make([]string, in.Count)
+	hashes := make([][]byte, in.Count)
+	for i := range codes {
+		var err error
+		codes[i], hashes[i], err = auth.RandomCode()
+		if err != nil {
+			handleError(w, err)
+			return
+		}
+	}
+	b, err := s.Store.CreateCodeBatch(r.Context(), domain.CreateBatchParams{AdminID: currentUser(r).ID, Name: strings.TrimSpace(in.Name), DurationDays: 365, CodeHashes: hashes, Now: s.Now()})
+	if err != nil {
+		handleError(w, err)
+		return
+	}
+	writeJSON(w, 201, map[string]any{"batch": b, "codes": codes})
+}
+func (s *Server) listUsers(w http.ResponseWriter, r *http.Request) {
+	limit, offset := pagination(r)
+	v, err := s.Store.ListUsers(r.Context(), limit, offset)
+	if err != nil {
+		handleError(w, err)
+		return
+	}
+	writeJSON(w, 200, map[string]any{"users": v})
+}
+func (s *Server) listAudits(w http.ResponseWriter, r *http.Request) {
+	limit, offset := pagination(r)
+	v, err := s.Store.ListAuditLogs(r.Context(), limit, offset)
+	if err != nil {
+		handleError(w, err)
+		return
+	}
+	writeJSON(w, 200, map[string]any{"audit_logs": v})
+}
+
+func (s *Server) authenticate(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		header := r.Header.Get("Authorization")
+		if !strings.HasPrefix(header, "Bearer ") {
+			writeError(w, 401, "unauthorized", "bearer token required")
+			return
+		}
+		claims, err := s.Tokens.ParseAccess(strings.TrimPrefix(header, "Bearer "))
+		if err != nil {
+			writeError(w, 401, "unauthorized", "invalid access token")
+			return
+		}
+		id, err := uuid.Parse(claims.Subject)
+		if err != nil {
+			writeError(w, 401, "unauthorized", "invalid access token")
+			return
+		}
+		u, err := s.Store.UserByID(r.Context(), id)
+		if err != nil {
+			writeError(w, 401, "unauthorized", "invalid access token")
+			return
+		}
+		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), userKey, u)))
+	})
+}
+func (s *Server) adminOnly(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if currentUser(r).Role != "admin" {
+			writeError(w, 403, "forbidden", "administrator role required")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+func currentUser(r *http.Request) domain.User { return r.Context().Value(userKey).(domain.User) }
+func (s *Server) requestIDHeader(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Request-ID", middleware.GetReqID(r.Context()))
+		next.ServeHTTP(w, r)
+	})
+}
+func (s *Server) securityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("Cache-Control", "no-store")
+		next.ServeHTTP(w, r)
+	})
+}
+func (s *Server) cors(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		origin := r.Header.Get("Origin")
+		if origin != "" {
+			if _, ok := s.AllowedOrigins[origin]; !ok {
+				writeError(w, 403, "origin_forbidden", "origin is not allowed")
+				return
+			}
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Set("Vary", "Origin")
+			w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Request-ID")
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+			if r.Method == http.MethodOptions {
+				w.WriteHeader(204)
+				return
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+func (s *Server) logging(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		ww := middleware.NewWrapResponseWriter(w, r.ProtoMajor)
+		next.ServeHTTP(ww, r)
+		s.Logger.Info("http_request", "request_id", middleware.GetReqID(r.Context()), "method", r.Method, "route", routePattern(r), "status", ww.Status(), "duration_ms", time.Since(start).Milliseconds(), "remote_ip", clientIP(r))
+	})
+}
+func (s *Server) limitBody(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r.Body = http.MaxBytesReader(w, r.Body, s.BodyLimit)
+		next.ServeHTTP(w, r)
+	})
+}
+func (s *Server) rateLimit(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		key := clientIP(r) + "|" + r.Method + "|" + routePattern(r)
+		if !s.limiter.allow(key, s.Now()) {
+			writeError(w, 429, "rate_limited", "too many requests")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+func routePattern(r *http.Request) string {
+	if p := chi.RouteContext(r.Context()).RoutePattern(); p != "" {
+		return p
+	}
+	return r.URL.Path
+}
+func clientIP(r *http.Request) string {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err == nil {
+		return host
+	}
+	return r.RemoteAddr
+}
+
+type rateEntry struct {
+	start time.Time
+	count int
+}
+type rateLimiter struct {
+	mu      sync.Mutex
+	entries map[string]rateEntry
+	max     int
+	window  time.Duration
+}
+
+func newRateLimiter(max int, window time.Duration) *rateLimiter {
+	return &rateLimiter{entries: map[string]rateEntry{}, max: max, window: window}
+}
+func (l *rateLimiter) allow(k string, now time.Time) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	v := l.entries[k]
+	if v.start.IsZero() || now.Sub(v.start) >= l.window {
+		v = rateEntry{start: now}
+	}
+	v.count++
+	l.entries[k] = v
+	return v.count <= l.max
+}
+
+func decodeJSON(w http.ResponseWriter, r *http.Request, dst any, limit int64) error {
+	r.Body = http.MaxBytesReader(w, r.Body, limit)
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(dst); err != nil {
+		return fmt.Errorf("invalid JSON: %w", err)
+	}
+	var extra any
+	if err := dec.Decode(&extra); !errors.Is(err, context.Canceled) && err == nil {
+		return errors.New("request body must contain one JSON value")
+	}
+	if err != nil && !strings.Contains(err.Error(), "EOF") {
+		return errors.New("request body must contain one JSON value")
+	}
+	return nil
+}
+func expectEmptyOrJSON(r *http.Request, limit int64) error {
+	if r.ContentLength == 0 {
+		return nil
+	}
+	var v struct{}
+	dec := json.NewDecoder(http.MaxBytesReader(nil, r.Body, limit))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&v); err != nil {
+		return err
+	}
+	var extra any
+	if dec.Decode(&extra) == nil {
+		return errors.New("one JSON value required")
+	}
+	return nil
+}
+func canonicalEmail(v string) (string, error) {
+	v = strings.ToLower(strings.TrimSpace(v))
+	if len(v) > 254 || strings.Count(v, "@") != 1 || strings.HasPrefix(v, "@") || strings.HasSuffix(v, "@") {
+		return "", domain.ErrInvalid
+	}
+	return v, nil
+}
+func validObjectKey(v string) bool {
+	return objectKeyRE.MatchString(v) && !strings.Contains(v, "//") && !strings.Contains(v, "..") && !strings.HasPrefix(v, "/")
+}
+func pagination(r *http.Request) (int, int) {
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
+	if limit < 1 || limit > 100 {
+		limit = 50
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	return limit, offset
+}
+func writeJSON(w http.ResponseWriter, status int, v any) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(v)
+}
+func writeError(w http.ResponseWriter, status int, code, message string) {
+	writeJSON(w, status, map[string]any{"error": map[string]string{"code": code, "message": message}})
+}
+func handleError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, domain.ErrInvalid):
+		writeError(w, 400, "invalid_request", "invalid request")
+	case errors.Is(err, domain.ErrUnauthorized):
+		writeError(w, 401, "unauthorized", "unauthorized")
+	case errors.Is(err, domain.ErrForbidden):
+		writeError(w, 403, "forbidden", "forbidden")
+	case errors.Is(err, domain.ErrNoEntitlement):
+		writeError(w, 403, "entitlement_required", "active entitlement required")
+	case errors.Is(err, domain.ErrNotFound):
+		writeError(w, 404, "not_found", "resource not found")
+	case errors.Is(err, domain.ErrConflict):
+		writeError(w, 409, "conflict", "resource conflict")
+	default:
+		writeError(w, 500, "internal_error", "internal server error")
+	}
+}

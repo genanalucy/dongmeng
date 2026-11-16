@@ -1,5 +1,7 @@
 # Verba Interpretation Android
 
+效力提示（2026-11-17）：下文保留早期 Android 开发与设备检查说明；“没有 Java/SDK”、JDK 17 配置、默认服务地址和手机号账户流程含旧阶段状态，不作为当前候选环境或产品规范。当前准备以[工作树与环境](../docs/development/workspace.md)的 JDK 21 / SDK 36 为准，源码 JVM 目标仍为 17；运行检查见[统一入口](../docs/testing/README.md)，当前设备步骤见[人工验收](../docs/testing/manual-acceptance.md)。本轮 Linux 执行环境已有 SDK 并完成 JVM/lint/Debug 构建，不能据此推断 Mac 客户端环境；v30 尚未用户验收。旧正文待核实项见[后续记录](../docs/development/follow-ups.md)。
+
 原生 Kotlin + Jetpack Compose 单 Activity 客户端，包名 `com.verba.interpretation`。
 
 ## 工具链

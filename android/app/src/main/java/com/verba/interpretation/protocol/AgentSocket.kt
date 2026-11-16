@@ -9,6 +9,7 @@ import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import okio.ByteString
 import java.util.UUID
+import org.json.JSONObject
 
 class AgentSocket(
     private val endpointSettings: EndpointSettings,
@@ -45,7 +46,10 @@ class AgentSocket(
             ?: StartMessage(UUID.randomUUID().toString(), sourceLanguage, targetLanguage)
         socket = client.newWebSocket(requestBuilder.build(), object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
-                if (!webSocket.send(start.toJson())) fail("无法发送 start 消息。")
+                val payload = JSONObject(start.toJson()).apply {
+                    if (BuildConfig.DEBUG) put("supportsCompletedTurns", true)
+                }.toString()
+                if (!webSocket.send(payload)) fail("无法发送 start 消息。")
             }
 
             override fun onMessage(webSocket: WebSocket, text: String) {
@@ -75,7 +79,7 @@ class AgentSocket(
                                 true
                             }
                         }
-                        is AgentEvent.Subtitle, is AgentEvent.DetectedLanguage -> !terminalDelivered
+                        is AgentEvent.Subtitle, is AgentEvent.DetectedLanguage, is AgentEvent.TurnCompleted -> !terminalDelivered
                     }
                 }
                 if (deliver) {

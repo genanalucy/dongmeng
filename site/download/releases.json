@@ -1,0 +1,25 @@
+{
+  "updated_at": "2026-11-17",
+  "channels": {
+    "production": {
+      "package_name": "com.verba.interpretation",
+      "version_code": 21,
+      "version_name": "20261113.1836",
+      "file_name": "yilu-production-v21-20261113.1836.apk",
+      "sha256": "898347c3a707a92d9ea1e0aca3a666111fa98861c9af036f4776c93e2f97acc4",
+      "certificate_sha256": "7872862cd69928394d87e7a975763d187a772d11dff7b1e90ce60c4a198215f1",
+      "notes": "软件更名为译路随行，保留原包名和签名，可覆盖安装。正式功能保持v20基线。",
+      "source_url": "https://github.com/genanalucy/dongmeng/releases/download/android-production-yilu-20261113-v21/yilu-production-v21-20261113.1836.apk"
+    },
+    "debug": {
+      "package_name": "com.verba.interpretation.debug",
+      "version_code": 30,
+      "version_name": "20261117.0343",
+      "file_name": "yilu-debug-v30-20261117.0343.apk",
+      "sha256": "21ea23d51b04ee0017419a8e85800ec6feeb43d3a8612966733778bfebb91798",
+      "certificate_sha256": "a01bd76290417cdce645c2ff5d35e95b0286a58e194d7c39a6cfcd994638e5b4",
+      "notes": "新增当前对话/面对面/同传TXT与JSON导出，系统选择保存位置；完整翻译增量保存到本机，新增保存状态、重试及账号隔离保护。保留短句松手、连续翻译与空白气泡修复。",
+      "source_url": "https://github.com/genanalucy/dongmeng/releases/download/android-debug-yilu-20261117-v30/yilu-debug-v30-20261117.0343.apk"
+    }
+  }
+}

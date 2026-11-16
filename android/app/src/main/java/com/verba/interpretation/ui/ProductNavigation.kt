@@ -55,8 +55,8 @@ class ProductNavigationStack private constructor(
         ProductNavigationStack(listOf(ProductNavigationPolicy.screenFor(destination)))
 
     companion object {
-        fun initial(mode: ProductNavigationMode): ProductNavigationStack =
-            ProductNavigationStack(listOf(ProductNavigationPolicy.initialScreen(mode)))
+        fun initial(mode: ProductNavigationMode, homeFirst: Boolean = false): ProductNavigationStack =
+            ProductNavigationStack(listOf(if (homeFirst && mode == ProductNavigationMode.USER) ProductScreen.TRANSLATE else ProductNavigationPolicy.initialScreen(mode)))
     }
 }
 
@@ -109,7 +109,8 @@ object ProductNavigationPolicy {
         ProductScreen.ADMIN_TEST -> ProductDestination.ADMIN_TEST
     }
 
-    fun shellFor(mode: ProductNavigationMode, screen: ProductScreen): ProductShell {
+    fun shellFor(mode: ProductNavigationMode, screen: ProductScreen, homeFirst: Boolean = false): ProductShell {
+        if (homeFirst && mode == ProductNavigationMode.USER) return ProductShell(false, emptyList())
         val destinations = destinationsFor(mode)
         val selected = selectedDestination(screen)
         val showsBottomBar = selected in destinations && screenFor(selected) == screen

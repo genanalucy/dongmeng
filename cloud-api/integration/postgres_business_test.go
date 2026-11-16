@@ -78,7 +78,9 @@ func TestPostgresBusinessLifecycle(t *testing.T) {
 		}
 	})
 
-	user, trial, err := db.Register(ctx, domain.RegisterParams{Username: "phoneuser_" + uuid.NewString()[:8], Phone: "+8613800138000", PasswordHash: hash, Now: now})
+	// Retain legacy phone-only accounts as explicit fixtures; current registration
+	// supplies email instead of generating the old reserved address in the store.
+	user, trial, err := db.Register(ctx, domain.RegisterParams{Email: "phone-" + uuid.NewString() + "@reserved.invalid", Username: "phoneuser_" + uuid.NewString()[:8], Phone: "+8613800138000", PasswordHash: hash, Now: now})
 	if err != nil {
 		t.Fatal("register fixture user")
 	}
@@ -97,9 +99,9 @@ func TestPostgresBusinessLifecycle(t *testing.T) {
 	if err := raw.QueryRow(ctx, `SELECT email FROM users WHERE id=$1`, user.ID).Scan(&storedReservedEmail); err != nil || !strings.HasPrefix(storedReservedEmail, "phone-") || !strings.HasSuffix(storedReservedEmail, "@reserved.invalid") {
 		t.Fatal("phone registration did not retain reserved email")
 	}
-	issuer := auth.TokenIssuer{Issuer: "integration", Audience: "integration", AccessSecret: bytes.Repeat([]byte("a"), auth.MinimumSecretBytes), SessionSecret: bytes.Repeat([]byte("s"), auth.MinimumSecretBytes)}
+	issuer := auth.TokenIssuer{Issuer: "integration", Audience: "integration", SessionAudience: "translator-agent", AccessSecret: bytes.Repeat([]byte("a"), auth.MinimumSecretBytes), SessionSecret: bytes.Repeat([]byte("s"), auth.MinimumSecretBytes)}
 	router := httpapi.NewRouter(httpapi.RouterOptions{Config: config.Config{Environment: "test", DatabaseTimeout: time.Second, RateLimitRPS: 1000, RateLimitBurst: 1000}, Store: db, Tokens: issuer, Now: func() time.Time { return now }})
-	loginRequest := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader(`{"phone":"`+storedReservedEmail+`","password":"integration-password"}`))
+	loginRequest := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader(`{"identifier":"`+storedReservedEmail+`","password":"integration-password"}`))
 	loginRequest.Header.Set("Content-Type", "application/json")
 	loginResponse := httptest.NewRecorder()
 	router.ServeHTTP(loginResponse, loginRequest)
@@ -110,7 +112,7 @@ func TestPostgresBusinessLifecycle(t *testing.T) {
 	if err := raw.QueryRow(ctx, `SELECT count(*) FROM refresh_tokens WHERE user_id=$1`, user.ID).Scan(&reservedRefreshCount); err != nil || reservedRefreshCount != 0 {
 		t.Fatal("reserved email login persisted a refresh token")
 	}
-	loginRequest = httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader(`{"phone":"+8613800138000","password":"integration-password"}`))
+	loginRequest = httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader(`{"identifier":"+8613800138000","password":"integration-password"}`))
 	loginRequest.Header.Set("Content-Type", "application/json")
 	loginResponse = httptest.NewRecorder()
 	router.ServeHTTP(loginResponse, loginRequest)
@@ -137,14 +139,14 @@ func TestPostgresBusinessLifecycle(t *testing.T) {
 	if _, err := refresh.Rotate(ctx, issued.Plaintext, time.Hour, now.Add(time.Minute)); err != nil {
 		t.Fatal("rotate legacy refresh")
 	}
-	if _, _, err := db.Register(ctx, domain.RegisterParams{Username: user.Username, Phone: "+8613900138000", PasswordHash: hash, Now: now}); !errors.Is(err, domain.ErrConflict) {
+	if _, _, err := db.Register(ctx, domain.RegisterParams{Email: "phone-" + uuid.NewString() + "@reserved.invalid", Username: user.Username, Phone: "+8613900138000", PasswordHash: hash, Now: now}); !errors.Is(err, domain.ErrConflict) {
 		t.Fatal("duplicate username was not rejected generically")
 	}
-	if _, _, err := db.Register(ctx, domain.RegisterParams{Username: "phoneuser_" + uuid.NewString()[:8], Phone: "+8613800138000", PasswordHash: hash, Now: now}); !errors.Is(err, domain.ErrConflict) {
+	if _, _, err := db.Register(ctx, domain.RegisterParams{Email: "phone-" + uuid.NewString() + "@reserved.invalid", Username: "phoneuser_" + uuid.NewString()[:8], Phone: "+8613800138000", PasswordHash: hash, Now: now}); !errors.Is(err, domain.ErrConflict) {
 		t.Fatal("duplicate phone was not rejected generically")
 	}
 
-	admin, _, err := db.Register(ctx, domain.RegisterParams{Username: "phoneuser_" + uuid.NewString()[:8], Phone: "+8613700138000", PasswordHash: hash, Now: now})
+	admin, _, err := db.Register(ctx, domain.RegisterParams{Email: "phone-" + uuid.NewString() + "@reserved.invalid", Username: "phoneuser_" + uuid.NewString()[:8], Phone: "+8613700138000", PasswordHash: hash, Now: now})
 	if err != nil {
 		t.Fatal("register fixture admin")
 	}
@@ -219,7 +221,7 @@ func TestPostgresBusinessLifecycle(t *testing.T) {
 		t.Fatalf("active session count = %d err = %v, want exactly 2", activeCount, err)
 	}
 
-	other, _, err := db.Register(ctx, domain.RegisterParams{Username: "phoneuser_" + uuid.NewString()[:8], Phone: "+8613600138000", PasswordHash: hash, Now: now})
+	other, _, err := db.Register(ctx, domain.RegisterParams{Email: "phone-" + uuid.NewString() + "@reserved.invalid", Username: "phoneuser_" + uuid.NewString()[:8], Phone: "+8613600138000", PasswordHash: hash, Now: now})
 	if err != nil {
 		t.Fatal("register cross-user fixture")
 	}
@@ -274,7 +276,7 @@ func TestPostgresBusinessLifecycle(t *testing.T) {
 	if _, err := raw.Exec(ctx, `ALTER TABLE users ADD CONSTRAINT phone_auth_force_user_failure CHECK (username <> '`+blockedUsername+`') NOT VALID`); err != nil {
 		t.Fatal("add user rollback fixture")
 	}
-	if _, _, err := db.Register(ctx, domain.RegisterParams{Username: blockedUsername, Phone: "+8613500138000", PasswordHash: hash, Now: now}); err == nil {
+	if _, _, err := db.Register(ctx, domain.RegisterParams{Email: "phone-" + uuid.NewString() + "@reserved.invalid", Username: blockedUsername, Phone: "+8613500138000", PasswordHash: hash, Now: now}); err == nil {
 		t.Fatal("forced user insert failure succeeded")
 	}
 	var failedUserCount, failedUserEntitlements int
@@ -292,7 +294,7 @@ func TestPostgresBusinessLifecycle(t *testing.T) {
 	if _, err := raw.Exec(ctx, `ALTER TABLE entitlements ADD CONSTRAINT phone_auth_force_trial_failure CHECK (kind <> 'trial') NOT VALID`); err != nil {
 		t.Fatal("add trial rollback fixture")
 	}
-	if _, _, err := db.Register(ctx, domain.RegisterParams{Username: blockedTrialUsername, Phone: "+8613400138000", PasswordHash: hash, Now: now}); err == nil {
+	if _, _, err := db.Register(ctx, domain.RegisterParams{Email: "phone-" + uuid.NewString() + "@reserved.invalid", Username: blockedTrialUsername, Phone: "+8613400138000", PasswordHash: hash, Now: now}); err == nil {
 		t.Fatal("forced trial insert failure succeeded")
 	}
 	if err := raw.QueryRow(ctx, `SELECT count(*) FROM users WHERE username=$1`, blockedTrialUsername).Scan(&failedUserCount); err != nil || failedUserCount != 0 {

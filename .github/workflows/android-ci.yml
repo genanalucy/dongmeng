@@ -2,20 +2,19 @@ name: Android CI
 
 on:
   push:
-    branches: [main, android, android-ui-redesign]
-    paths:
-      - 'android/**'
-      - '.github/workflows/android-ci.yml'
+    branches: [main, android, android-ui-redesign, test/android-phase1-baseline]
   pull_request:
-    paths:
-      - 'android/**'
-      - '.github/workflows/android-ci.yml'
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
+  changes:
+    uses: ./.github/workflows/change-scope.yml
   verify:
+    needs: changes
+    if: fromJSON(needs.changes.outputs.scope).android
     runs-on: ubuntu-latest
     timeout-minutes: 30
     defaults:

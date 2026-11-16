@@ -175,6 +175,10 @@ func ParseLoginIdentifier(value string) (LoginIdentifier, error) {
 		return LoginIdentifier{Kind: LoginIdentifierPhone, Value: phone.String()}, nil
 	}
 	if email, err := ParseEmail(value); err == nil {
+		// Phone-only accounts retain an internal email for storage, not login.
+		if strings.HasPrefix(email.String(), "phone-") && strings.HasSuffix(email.String(), "@reserved.invalid") {
+			return LoginIdentifier{}, fmt.Errorf("%w: internal phone email", ErrInvalid)
+		}
 		return LoginIdentifier{Kind: LoginIdentifierEmail, Value: email.String()}, nil
 	}
 	username, err := ParseUsername(value)

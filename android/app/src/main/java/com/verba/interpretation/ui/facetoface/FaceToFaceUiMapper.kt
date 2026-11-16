@@ -34,7 +34,7 @@ internal fun faceToFacePresentation(state: FaceToFaceState): FaceToFacePresentat
     },
     listeningLabel = if (state.activeSourceLanguage() == "zh") "听取中…" else "Listening…",
     timelinePlaceholder = if (state.activeSourceLanguage() == "zh") "听取中…" else "Listening…",
-    canChangeLanguages = state.phase == FaceToFacePhase.IDLE && !state.captureActive,
+    canChangeLanguages = state.phase == FaceToFacePhase.IDLE && !state.captureActive && state.configurationEditable && !state.connectionPending,
     isContinuous = state.mode == FaceToFaceMode.AUTO,
     showRecoveryAction = state.phase == FaceToFacePhase.ERROR,
     recoveryMessage = if (state.phase == FaceToFacePhase.ERROR) {

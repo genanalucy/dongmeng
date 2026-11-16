@@ -1,0 +1,104 @@
+name: Product checks
+
+on:
+  push:
+    branches: [main, android, android-ui-redesign, test/android-phase1-baseline]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  changes:
+    uses: ./.github/workflows/change-scope.yml
+  checks:
+    needs: changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        target: ${{ fromJSON(needs.changes.outputs.scope).targets }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        if: contains(fromJSON('["agent","officialast","cloud","contract"]'), matrix.target)
+        with:
+          go-version: '1.25.0'
+          cache-dependency-path: |
+            agent/go.sum
+            cloud-api/go.sum
+            cloud-api/contracttest/go.sum
+      - uses: actions/setup-node@v4
+        if: matrix.target == 'web' || matrix.target == 'admin-web'
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: |
+            web/package-lock.json
+            cloud-api/admin-web/package-lock.json
+      - name: Install Web dependencies
+        if: matrix.target == 'web'
+        run: npm --prefix web ci
+      - name: Install admin dependencies
+        if: matrix.target == 'admin-web'
+        run: npm --prefix cloud-api/admin-web ci
+      - name: Prepare pinned official AST protobuf
+        if: matrix.target == 'officialast'
+        run: bash scripts/prepare-official-ast.sh
+      - name: Run public check target
+        env:
+          CHECK_TARGET: ${{ matrix.target }}
+        run: |
+          set -o pipefail
+          bash scripts/check.sh "$CHECK_TARGET" 2>&1 | tee check-output.log
+      - name: Upload check output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: check-${{ matrix.target }}
+          path: check-output.log
+          if-no-files-found: warn
+  database:
+    needs: changes
+    if: fromJSON(needs.changes.outputs.scope).db
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: cloud_api_test
+          POSTGRES_PASSWORD: ci-only-test-password
+          POSTGRES_DB: cloud_api_test
+        ports:
+          - 127.0.0.1:15432:5432
+        options: >-
+          --health-cmd "pg_isready -h 127.0.0.1 -U cloud_api_test -d cloud_api_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      # Disposable job-local service, never a repository/production secret.
+      # POSTGRES_USER is the initialization superuser (integration creates isolated roles).
+      CLOUD_API_TEST_DATABASE_URL: postgres://cloud_api_test:ci-only-test-password@127.0.0.1:15432/cloud_api_test?sslmode=disable
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.0'
+          cache-dependency-path: |
+            agent/go.sum
+            cloud-api/go.sum
+      - name: Run dedicated PostgreSQL and Cloud-Agent process integration (no skips)
+        run: |
+          set -o pipefail
+          bash scripts/check.sh db 2>&1 | tee database-output.log
+      - name: Upload database check output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: check-database
+          path: database-output.log
+          if-no-files-found: warn

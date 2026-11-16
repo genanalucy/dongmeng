@@ -16,8 +16,8 @@ import com.verba.interpretation.R
  * XML 中仅保留 Android 系统所需的 application label 资源占位。
  */
 object BrandConfig {
-    const val appName = "言枢智能"
-    const val shortName = "言枢"
+    const val appName = "译路随行"
+    const val shortName = "译路随行"
     const val tagline = "实时同传，智联世界"
 
     /** 公共暖白 / 深海蓝语义色，页面只通过 MaterialTheme.colorScheme 使用。 */

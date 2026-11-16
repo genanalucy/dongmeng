@@ -1,0 +1,85 @@
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
+CREATE TYPE user_role AS ENUM ('user', 'admin');
+CREATE TYPE entitlement_kind AS ENUM ('trial', 'package');
+
+CREATE TABLE users (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  role user_role NOT NULL DEFAULT 'user',
+  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE user_identities (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(), user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  provider text NOT NULL CHECK (provider IN ('email','phone')), identifier text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE(provider, identifier), UNIQUE(user_id, provider)
+);
+CREATE INDEX user_identities_user_idx ON user_identities(user_id);
+CREATE TABLE password_credentials (
+  user_id uuid PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE, password_hash text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE refresh_tokens (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(), user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  family_id uuid NOT NULL, token_hash bytea NOT NULL UNIQUE, expires_at timestamptz NOT NULL,
+  revoked_at timestamptz, replaced_by_id uuid REFERENCES refresh_tokens(id),
+  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX refresh_tokens_user_family_idx ON refresh_tokens(user_id, family_id);
+CREATE TABLE device_installations (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(), user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  installation_id text NOT NULL UNIQUE, platform text NOT NULL CHECK (platform IN ('android','ios','web','desktop')),
+  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX device_installations_user_idx ON device_installations(user_id);
+CREATE TABLE entitlements (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(), user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  kind entitlement_kind NOT NULL, starts_at timestamptz NOT NULL, expires_at timestamptz NOT NULL,
+  source_redemption_code_id uuid, created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
+  CHECK (expires_at > starts_at)
+);
+CREATE INDEX entitlements_active_idx ON entitlements(user_id, starts_at, expires_at);
+CREATE TABLE redemption_code_batches (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(), name text NOT NULL, duration_days integer NOT NULL CHECK (duration_days = 365),
+  created_by uuid NOT NULL REFERENCES users(id), created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE redemption_codes (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(), batch_id uuid NOT NULL REFERENCES redemption_code_batches(id) ON DELETE CASCADE,
+  code_hash bytea NOT NULL UNIQUE, redeemed_by uuid REFERENCES users(id), redeemed_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
+  CHECK ((redeemed_by IS NULL) = (redeemed_at IS NULL))
+);
+CREATE INDEX redemption_codes_batch_idx ON redemption_codes(batch_id);
+ALTER TABLE entitlements ADD CONSTRAINT entitlements_source_code_fk FOREIGN KEY(source_redemption_code_id) REFERENCES redemption_codes(id);
+CREATE TABLE translation_sessions (
+  id uuid PRIMARY KEY, user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  entitlement_id uuid NOT NULL REFERENCES entitlements(id), jti uuid NOT NULL UNIQUE,
+  expires_at timestamptz NOT NULL, created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX translation_sessions_user_idx ON translation_sessions(user_id, created_at DESC);
+CREATE TABLE usage_records (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(), user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  translation_session_id uuid NOT NULL REFERENCES translation_sessions(id) ON DELETE CASCADE,
+  audio_seconds integer NOT NULL CHECK (audio_seconds BETWEEN 0 AND 86400),
+  characters integer NOT NULL CHECK (characters BETWEEN 0 AND 10000000),
+  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX usage_records_user_idx ON usage_records(user_id, created_at DESC);
+CREATE TABLE feedback_consents (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(), user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  granted boolean NOT NULL, created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX feedback_consents_user_idx ON feedback_consents(user_id, created_at DESC);
+CREATE TABLE feedback_artifacts (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(), user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  consent_id uuid NOT NULL REFERENCES feedback_consents(id), object_key text NOT NULL UNIQUE,
+  expires_at timestamptz NOT NULL, created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
+  CHECK (expires_at > created_at AND expires_at <= created_at + interval '14 days')
+);
+CREATE INDEX feedback_artifacts_user_idx ON feedback_artifacts(user_id, created_at DESC);
+CREATE TABLE admin_audit_logs (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(), admin_id uuid NOT NULL REFERENCES users(id), action text NOT NULL,
+  target_type text NOT NULL, target_id uuid, metadata jsonb NOT NULL DEFAULT '{}'::jsonb,
+  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX admin_audit_logs_created_idx ON admin_audit_logs(created_at DESC);

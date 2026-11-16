@@ -1,18 +1,28 @@
 # Android 开发与测试基线
 
+## 当前整理候选（2026-11-17）
+
+日常查看与后续整理使用名为 `repo-organization` 的独立工作树，对应分支 `chore/repo-organization`；用 `git worktree list` 查找本机目录。它从 Debug v30 源码 `cd920a1` 及发布资料 `dc587ef` 起步，用户已更新 v30，但尚未完成用户验收。`main` 仍是共同主线，候选尚未合入；旧根的本地 `main` 不等于 GitHub 当前主线。
+
+入口选择、必要环境、实际探测、未运行检查和恢复原工作方式见 [整理工作树与环境](workspace.md)。版本与原有成果的保全范围见 [源码来源清单](source-inventory.md)。任务专用的 `repo-org-task-*` 工作树只用于分批提交，不是用户日常入口。
+
+## 2026-11-04 历史基线记录
+
+**效力：以下正文保留当时的整合、安装包和验证证据。** “当前”“本次”“后续”等用语均指 2026-11-04 当时的状态，不再指定今日的工作树、最新版本或验收结论。历史绝对路径改为工作树名称，以便在其他机器定位；原始文本仍可从 Git 历史读取。今日入口以上方说明为准。
+
 ## 规则与恢复入口
 
 Android 是主要开发方向，`main` 是共享集成基线。正式功能与实验功能分离；正式发布以 Release APK 和 SHA-256 为准，不以最新分支名或构建时间推断。
 
 本文件记录 2026-11-04 恢复开发时的基线整合。它不证明以下已知问题已修复：正式版偶发登录失败、语言交换后无声、长时间翻译与播放阻塞；邮件真实收码、跨设备删除一致性与完整动效也仍需专项验收。
 
-### 本机工作树
+### 当时的本机工作树
 
-| 路径 | 用途 |
+| 工作树名称 | 当时用途 |
 |---|---|
-| `/home/genanalucy/work/dngmeng-ui/integration` | 原 Android 集成工作树，`android-ui-redesign` 固定在 `8e625a6`；保留作整合前对照，不在这里混合拉取旧远端分支 |
-| `/home/genanalucy/work/dngmeng-ui/main-baseline` | 本次整合与后续 Android 开发工作树，分支 `chore/android-main-baseline`；整合推送后以 `origin/main` 为共享基线 |
-| `/home/genanalucy/dngmeng_project` | 旧本地 `main` 工作树，包含大量未跟踪源码/本地资料；本次不切换、不清理、不直接 pull |
+| `integration` | 原 Android 集成工作树，`android-ui-redesign` 固定在 `8e625a6`；保留作整合前对照，不在这里混合拉取旧远端分支 |
+| `main-baseline` | 后续 Android 开发工作树；基线整合分支 `chore/android-main-baseline`，第一阶段回归使用 `test/android-phase1-baseline`；共享基线仍为 `origin/main` |
+| 旧根工作树 | 旧本地 `main` 工作树，包含大量未跟踪源码/本地资料；本次不切换、不清理、不直接 pull |
 
 开始任务先运行 `git status --short`、`git branch --show-current`、`git log -1 --oneline`。在主基线上开任务分支；使用其他机器时，从 GitHub `main` 新 clone 即可，不依赖上述本机绝对路径。
 
@@ -42,6 +52,10 @@ Android 是主要开发方向，`main` 是共享集成基线。正式功能与�
 | 历史问题复现 | `com.verba.interpretation.debug` | `19` / `20260915.0225` | 从 `cde766d` 重建并固定版本名；[历史测试包](https://github.com/genanalucy/dongmeng/releases/tag/android-debug-internal-beta-20260915-0225)；不含液态玻璃 |
 | 已发布玻璃测试 | `com.verba.interpretation.debug` | `21` / `20260920.1415` | `c1ac3f1`；[玻璃测试包](https://github.com/genanalucy/dongmeng/releases/tag/android-debug-internal-beta-20260920-liquid-glass)；不含后续动画补丁 |
 | 动画开发对照 | `com.verba.interpretation.debug` | `21` / `20260920.1602` | `8e625a6`；曾本地构建安装到 Pixel 3，没有独立 GitHub Release；不要把玻璃 Release 当成此版本 |
+
+### 第一阶段新回归包
+
+Debug v22 `20261104.2216` 从 `8348e82` 构建（基于 `main` 的 `f26d690`，仅递增 Debug versionCode）。APK 和验证报告已本地留存，未发布 Release、未安装真机；详细校验值、位置、用例和待测状态见 [第一阶段核心回归记录](../../archive/evidence/operations/docs/reviews/android-phase1-regression.md)。该包与所有历史 Debug 包同包名，不与它们并存。
 
 ### 既有 APK SHA-256
 

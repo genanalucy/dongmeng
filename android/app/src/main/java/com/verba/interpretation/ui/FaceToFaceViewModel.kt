@@ -54,15 +54,22 @@ class FaceToFaceViewModel @JvmOverloads constructor(
     private val actionLock = Any()
     private val localHistory = LocalHistorySaveController(
         historySaver ?: LocalHistoryRepository.create(application).let { history -> LocalHistoryTurnSaver { history.recordCompletedTurn(it) } },
-        viewModelScope,
+        accountEpoch = { userId -> if (historySaver == null) LocalHistoryRepository.captureAccountEpoch(application, userId) else 0L },
     )
+    private val completedTransports = mutableSetOf<Long>()
+    private val terminalTransports = mutableSetOf<Long>()
+    private var transcriptAccount: String? = null
     private val localTurnOwnership = mutableMapOf<Long, LocalHistoryTurnOwnership>()
     private val playbackGeneration = AtomicLong()
+    private val captureGeneration = AtomicLong()
+    private var autoRunning = false
     private var timerJob: Job? = null
     private var cloudGrant: TranslationSessionGrant? = null
     private var pendingGrantOpen: OpenHandle? = null
     private var operationGeneration = 0L
     private var nextTurnId = 1L
+    private val connectingTurns = mutableSetOf<Long>()
+    @Volatile private var captureRunning = false
 
     init {
         observeFaceToFaceCloudSessionFailures(
@@ -78,22 +85,25 @@ class FaceToFaceViewModel @JvmOverloads constructor(
     }
 
     fun setMode(mode: FaceToFaceMode) = synchronized(actionLock) {
-        if (coordinator.setMode(mode)) publishState()
+        if (pendingGrantOpen == null && connectingTurns.isEmpty() && coordinator.setMode(mode)) publishState()
     }
 
     fun setView(view: FaceToFaceView) = synchronized(actionLock) {
         invalidatePendingGrantOpen()
         val transition = coordinator.setView(view)
-        if (transition.accepted) applyTransition(transition)
+        if (transition.accepted) {
+            if (transition.stopCapture) autoRunning = false
+            applyTransition(transition)
+        } else publishState()
     }
 
     fun setLanguages(leftLanguage: String, rightLanguage: String) = synchronized(actionLock) {
-        if (coordinator.setLanguages(leftLanguage, rightLanguage)) publishState()
+        if (pendingGrantOpen == null && connectingTurns.isEmpty() && coordinator.setLanguages(leftLanguage, rightLanguage)) publishState()
     }
 
     fun swapLanguages() = synchronized(actionLock) {
         val state = coordinator.state()
-        if (coordinator.setLanguages(state.rightLanguage, state.leftLanguage)) publishState()
+        if (pendingGrantOpen == null && connectingTurns.isEmpty() && coordinator.setLanguages(state.rightLanguage, state.leftLanguage)) publishState()
     }
 
     fun manualPress(side: FaceToFaceSide) = startWithCloudGrant(
@@ -112,6 +122,28 @@ class FaceToFaceViewModel @JvmOverloads constructor(
         applyTransition(transition)
         if (transition.accepted && transition.cancelSessions.isNotEmpty()) endCloudSession()
     }
+
+    fun isAccountBound(userId: String): Boolean = synchronized(actionLock) { transcriptAccount == userId }
+
+    fun bindAccount(userId: String?) = synchronized(actionLock) {
+        if (transcriptAccount != userId) {
+            cancel()
+            coordinator.clearTranscript()
+            completedTransports.clear()
+            terminalTransports.clear()
+            transcriptAccount = userId
+            publishState()
+        }
+    }
+
+    fun saveCurrentToHistory() = synchronized(actionLock) {
+        coordinator.state().turns.filter { it.finished }.forEach { captureCompletedTurn(it.id) }
+        localHistory.retryFailed()
+        localHistory.explainIfNoCompletedContent()
+        publishState()
+    }
+
+    fun retryHistorySave() { localHistory.retryFailed() }
 
     /** Pointer cancellation must discard only the pressed, unfinished manual turn. */
     fun manualCancel() = synchronized(actionLock) {
@@ -132,7 +164,9 @@ class FaceToFaceViewModel @JvmOverloads constructor(
         side = FaceToFaceSide.LEFT,
         canStart = { coordinator.state().mode == FaceToFaceMode.AUTO && coordinator.state().phase == FaceToFacePhase.IDLE },
     ) { created ->
-        applyTransition(coordinator.startAuto(created.turnId, created.socket))
+        val transition = coordinator.startAuto(created.turnId, created.socket)
+        if (transition.accepted) autoRunning = true
+        applyTransition(transition)
     }
 
     // Continuous translation keeps an explicit active side and supports takeover.
@@ -157,6 +191,7 @@ class FaceToFaceViewModel @JvmOverloads constructor(
     }
 
     fun pauseAuto() = synchronized(actionLock) {
+        autoRunning = false
         invalidatePendingGrantOpen()
         applyTransition(coordinator.pauseAuto())
     }
@@ -165,10 +200,13 @@ class FaceToFaceViewModel @JvmOverloads constructor(
         side = FaceToFaceSide.LEFT,
         canStart = { coordinator.state().mode == FaceToFaceMode.AUTO && coordinator.state().phase == FaceToFacePhase.PAUSED },
     ) { created ->
-        applyTransition(coordinator.resumeAuto(created.turnId, created.socket))
+        val transition = coordinator.resumeAuto(created.turnId, created.socket)
+        if (transition.accepted) autoRunning = true
+        applyTransition(transition)
     }
 
     fun stopAuto() = synchronized(actionLock) {
+        autoRunning = false
         localHistory.finishConversation()
         invalidatePendingGrantOpen()
         applyTransition(coordinator.stopAuto())
@@ -199,8 +237,10 @@ class FaceToFaceViewModel @JvmOverloads constructor(
 
     /** Navigation, ON_STOP and fatal errors discard all background work instead of draining it. */
     fun cancel() = synchronized(actionLock) {
+        autoRunning = false
         invalidatePendingGrantOpen()
         playbackGeneration.incrementAndGet()
+        connectingTurns.clear()
         applyTransition(coordinator.cancelAll())
         localHistory.endConversation()
         localTurnOwnership.clear()
@@ -232,8 +272,10 @@ class FaceToFaceViewModel @JvmOverloads constructor(
         }
         if (pendingGrantOpen != null) return
         val generation = operationGeneration
-        pendingGrantOpen = cloudSessions.open(
+        var completed = false
+        val handle = cloudSessions.open(
             onGranted = { grant -> synchronized(actionLock) {
+                completed = true
                 if (generation != operationGeneration) {
                     cloudSessions.end(grant.sessionId)
                     return@synchronized
@@ -247,12 +289,15 @@ class FaceToFaceViewModel @JvmOverloads constructor(
                 createAndStart(side, grant, onCreated)
             } },
             onFailure = { message -> synchronized(actionLock) {
+                completed = true
                 if (generation == operationGeneration) {
                     pendingGrantOpen = null
                     fail(message)
                 }
             } },
         )
+        if (!completed) pendingGrantOpen = handle
+        publishState()
     }
 
     private fun createAndStart(side: FaceToFaceSide, grant: TranslationSessionGrant, onCreated: (CreatedSession) -> Unit) {
@@ -284,6 +329,7 @@ class FaceToFaceViewModel @JvmOverloads constructor(
             } },
             onTts = { pcm, segmentId, _ -> synchronized(actionLock) {
                 queuePlayback(coordinator.offerTts(logicalTurnId(segmentId), pcm))
+                publishState()
             } },
             onFailure = { message -> synchronized(actionLock) { handleSessionFailure(turnId, message) } },
         )
@@ -294,12 +340,15 @@ class FaceToFaceViewModel @JvmOverloads constructor(
         val state = coordinator.state()
         val source = if (created.side == FaceToFaceSide.LEFT) state.leftLanguage else state.rightLanguage
         val target = if (created.side == FaceToFaceSide.LEFT) state.rightLanguage else state.leftLanguage
+        connectingTurns += created.turnId
         if (created.socket.start(source, target, grant)) return true
+        connectingTurns -= created.turnId
         fail("无法创建翻译会话。")
         return false
     }
 
     private fun applyTransition(transition: FaceToFaceCoordinator.Transition<FaceToFaceSocket>) {
+        val captureEpoch = if (transition.startCapture || transition.stopCapture) captureGeneration.incrementAndGet() else captureGeneration.get()
         if (transition.cancelTimer) {
             timerJob?.cancel()
             timerJob = null
@@ -312,32 +361,48 @@ class FaceToFaceViewModel @JvmOverloads constructor(
         effectsExecutor.execute {
             // Segment boundaries must stop the microphone before Finish so a frame from
             // the next speaker cannot be queued on the direction that just completed.
-            if (transition.stopCapture) runtime.stopCapture()
+            if (transition.stopCapture) {
+                runtime.stopCapture()
+                captureRunning = false
+            }
             transition.cancelSessions.forEach { it.cancel() }
             transition.finishSessions.forEach { it.finish() }
-            if (transition.startCapture && coordinator.state().captureActive) startCapture()
+            if (transition.startCapture && captureGeneration.get() == captureEpoch && coordinator.state().captureActive) {
+                startCapture(captureEpoch)
+            }
+            synchronized(actionLock) { publishState() }
         }
     }
 
-    private fun startCapture() {
-        when (val result = runtime.startCapture(
+    private fun startCapture(epoch: Long) {
+        val result = runtime.startCapture(
             onPacket = { packet ->
                 // During AUTO side hand-off an outgoing turn may close between this 80 ms
                 // capture frame and its terminal callback. That tail frame is not an audio
                 // fault; drop it and let the socket terminal event settle the turn.
-                coordinator.sendToActive { it.sendAudio(packet) }
-            },
-            onError = ::fail,
-            onLevel = { level ->
                 synchronized(actionLock) {
-                    if (coordinator.updateCaptureLevel(level)) publishState()
+                    if (captureGeneration.get() == epoch) coordinator.sendToActive { it.sendAudio(packet) }
                 }
             },
-        )) {
-            CaptureResult.Started -> Unit
-            CaptureResult.AlreadyRunning -> fail("麦克风已在录音。")
-            CaptureResult.Stopped -> fail("麦克风未启动。")
-            is CaptureResult.Error -> fail(result.message)
+            onError = { message ->
+                synchronized(actionLock) {
+                    if (captureGeneration.get() == epoch) fail(message)
+                }
+            },
+            onLevel = { level ->
+                synchronized(actionLock) {
+                    if (captureGeneration.get() == epoch && coordinator.updateCaptureLevel(level)) publishState()
+                }
+            },
+        )
+        synchronized(actionLock) {
+            if (captureGeneration.get() != epoch) return
+            when (result) {
+                CaptureResult.Started -> captureRunning = true
+                CaptureResult.AlreadyRunning -> fail("麦克风已在录音。")
+                CaptureResult.Stopped -> fail("麦克风未启动。")
+                is CaptureResult.Error -> fail(result.message)
+            }
         }
     }
 
@@ -351,7 +416,10 @@ class FaceToFaceViewModel @JvmOverloads constructor(
 
     private fun handleEvent(turnId: Long, event: AgentEvent, socket: FaceToFaceSocket?) {
         when (event) {
-            AgentEvent.Ready -> Unit
+            AgentEvent.Ready -> {
+                connectingTurns -= turnId
+                publishState()
+            }
             is AgentEvent.DetectedLanguage -> {
                 // A segmented provider event names a logical segment. It is never
                 // inferred from subtitle text; one transport can create many turns.
@@ -362,13 +430,27 @@ class FaceToFaceViewModel @JvmOverloads constructor(
                     localHistory.bindTurn(turnId.toString())?.let { localTurnOwnership[turnId] = it }
                 }
                 nextTurnId = maxOf(nextTurnId, turnId + 1)
-                if (!coordinator.resolveAutoDirection(turnId, event.language, event.targetLanguage)) runtime.stopCapture()
+                if (!coordinator.resolveAutoDirection(turnId, event.language, event.targetLanguage)) {
+                    runtime.stopCapture()
+                    captureRunning = false
+                }
                 publishState()
             }
             AgentEvent.Finished -> {
+                val beforeFinish = coordinator.state()
+                if (autoRunning && beforeFinish.captureActive && beforeFinish.activeTurnId == turnId &&
+                    beforeFinish.activeSide == FaceToFaceSide.LEFT
+                ) {
+                    fail("翻译连接提前结束，请重新开始。")
+                    return
+                }
+                connectingTurns -= turnId
+                terminalTransports += turnId
                 // A continuous transport owns many logical turns. They are persisted
                 // only at their final-pair boundary, never again at transport finish.
-                queuePlayback(coordinator.transportFinished(socket ?: return))
+                val work = coordinator.transportFinished(socket ?: return)
+                captureCompletedTurn(turnId)
+                queuePlayback(work)
                 closeCloudSessionIfDrained()
                 publishState()
             }
@@ -383,10 +465,18 @@ class FaceToFaceViewModel @JvmOverloads constructor(
             is AgentEvent.Subtitle -> {
                 if (!coordinator.containsTurn(turnId)) return
                 val updated = coordinator.updateSubtitle(turnId, event.kind.toSubtitleKind(), event.text)
-                if (updated && event.kind == AgentEvent.Subtitle.Kind.TRANSLATION_FINAL) {
+                if (updated && event.kind in setOf(AgentEvent.Subtitle.Kind.TRANSLATION_FINAL, AgentEvent.Subtitle.Kind.SOURCE_FINAL)) {
                     applyTransition(coordinator.completeAutoSegmentAfterFinalPair(turnId))
                     captureCompletedTurn(turnId)
                 } else publishState()
+            }
+            is AgentEvent.TurnCompleted -> {
+                val turn = coordinator.state().turns.firstOrNull { it.id == turnId } ?: return
+                val ownership = localTurnOwnership[turnId] ?: return
+                completedTransports += turnId
+                localHistory.saveTurn(ownership.copy(turnId = "${ownership.turnId}:${event.completionId}"),
+                    turn.sourceLanguage, turn.targetLanguage, event.sourceText, event.translatedText, System.currentTimeMillis())
+                publishState()
             }
             is AgentEvent.SessionTerminated -> terminateSession(event.reason)
             is AgentEvent.Error -> handleSessionFailure(turnId, "${event.code}: ${event.message}")
@@ -395,12 +485,13 @@ class FaceToFaceViewModel @JvmOverloads constructor(
 
     /** Finished is the durable boundary: never persist a partial or unmatched final pair. */
     private fun captureCompletedTurn(turnId: Long) {
+        if (turnId in completedTransports || turnId !in terminalTransports) return
         val turn = coordinator.state().turns.firstOrNull { it.id == turnId } ?: return
         if (!turn.finished) return
-        val completedCount = minOf(turn.sourceFinals.size, turn.translationFinals.size)
-        if (completedCount == 0) return
-        val sourceText = turn.sourceFinals.take(completedCount).joinToString(" ").trim()
-        val translatedText = turn.translationFinals.take(completedCount).joinToString(" ").trim()
+        // Legacy servers have no sentence identity: archive the entire completed
+        // transport as one block, never zip independently segmented final arrays.
+        val sourceText = turn.sourceFinals.joinToString(" ").trim()
+        val translatedText = turn.translationFinals.joinToString(" ").trim()
         if (sourceText.isBlank() || translatedText.isBlank()) return
         val ownership = localTurnOwnership[turnId] ?: return
         localHistory.saveTurn(
@@ -416,7 +507,8 @@ class FaceToFaceViewModel @JvmOverloads constructor(
 
 
     private fun handleSessionFailure(turnId: Long, message: String) {
-        if (coordinator.isActiveTurn(turnId)) {
+        connectingTurns -= turnId
+        if (coordinator.isActiveTurn(turnId) || (autoRunning && coordinator.containsTurn(turnId))) {
             fail(message)
             return
         }
@@ -453,9 +545,11 @@ class FaceToFaceViewModel @JvmOverloads constructor(
     }
 
     private fun terminateSession(reason: TranslationSessionEndReason) = synchronized(actionLock) {
+        autoRunning = false
         val transition = coordinator.terminateAll(reason)
         if (!transition.accepted) return
         invalidatePendingGrantOpen()
+        connectingTurns.clear()
         playbackGeneration.incrementAndGet()
         applyTransition(transition)
         endCloudSession()
@@ -463,9 +557,11 @@ class FaceToFaceViewModel @JvmOverloads constructor(
     }
 
     private fun fail(message: String) = synchronized(actionLock) {
+        autoRunning = false
         if (coordinator.state().sessionEndReason != null) return
         invalidatePendingGrantOpen()
         playbackGeneration.incrementAndGet()
+        connectingTurns.clear()
         applyTransition(coordinator.cancelAll(message))
         localHistory.endConversation()
         localTurnOwnership.clear()
@@ -474,7 +570,12 @@ class FaceToFaceViewModel @JvmOverloads constructor(
     }
 
     private fun closeCloudSessionIfDrained() {
-        if (coordinator.canCloseCloudSession()) endCloudSession()
+        if (!coordinator.canCloseCloudSession()) return
+        if (autoRunning && coordinator.state().mode == FaceToFaceMode.AUTO) {
+            // Reopen only after the previous transport and audible playback are
+            // drained. Reuse the governed Cloud grant, not a new account session.
+            startAuto()
+        } else endCloudSession()
     }
 
     private fun invalidatePendingGrantOpen() {
@@ -491,7 +592,14 @@ class FaceToFaceViewModel @JvmOverloads constructor(
     }
 
     private fun publishState() {
-        mutableState.value = coordinator.state().copy(localHistorySave = localHistory.state.value)
+        val snapshot = coordinator.state()
+        connectingTurns.retainAll(snapshot.turns.filterNot { it.finished }.map { it.id }.toSet())
+        val connecting = pendingGrantOpen != null || connectingTurns.isNotEmpty()
+        mutableState.value = snapshot.copy(
+            localHistorySave = localHistory.state.value,
+            configurationEditable = snapshot.configurationEditable && !connecting,
+            connectionPending = connecting || (snapshot.captureActive && !captureRunning),
+        )
     }
 
     override fun onCleared() {

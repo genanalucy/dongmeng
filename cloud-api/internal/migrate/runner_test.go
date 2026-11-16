@@ -101,7 +101,7 @@ func TestRepositoryMigrationsClassifyConcurrentIndexOutsideTransaction(t *testin
 	if err != nil {
 		t.Fatalf("discover repository migrations: %v", err)
 	}
-	versions := []string{"000001", "000002", "000003", "000004", "000005", "000006", "000007", "000008", "000009", "000010", "000011", "000012", "000013", "000014"}
+	versions := []string{"000001", "000002", "000003", "000004", "000005", "000006", "000007", "000008", "000009", "000010", "000011", "000012", "000013", "000014", "000015"}
 	if len(migrations) != len(versions) {
 		t.Fatalf("migration count = %d, want %d", len(migrations), len(versions))
 	}
@@ -386,8 +386,8 @@ func TestRunRecordsRepositoryChecksumsIsIdempotentAndFailsBeforeLaterMigration(t
 	if err := conn.QueryRow(ctx, "SELECT count(*) FROM "+ledger).Scan(&count); err != nil {
 		t.Fatal("count repository migration ledger")
 	}
-	if count != 14 {
-		t.Fatalf("ledger count = %d, want 14", count)
+	if count != 15 {
+		t.Fatalf("ledger count = %d, want 15", count)
 	}
 	var valid bool
 	if err := conn.QueryRow(ctx, `SELECT i.indisvalid FROM pg_catalog.pg_index i JOIN pg_catalog.pg_class c ON c.oid=i.indexrelid JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=$1 AND c.relname='refresh_tokens_expiry_idx'`, schema).Scan(&valid); err != nil {

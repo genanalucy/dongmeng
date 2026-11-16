@@ -1,0 +1,43 @@
+name: Select CI checks
+
+on:
+  workflow_call:
+    outputs:
+      scope:
+        description: JSON with check targets and database/Android selections
+        value: ${{ jobs.select.outputs.scope }}
+
+permissions:
+  contents: read
+
+jobs:
+  select:
+    runs-on: ubuntu-latest
+    outputs:
+      scope: ${{ steps.select.outputs.scope }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Select checks from all changed paths
+        id: select
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          if [[ "$EVENT_NAME" == workflow_dispatch || -z "$BASE_SHA" || "$BASE_SHA" =~ ^0+$ ]]; then
+            scope=$(python3 scripts/ci-scope.py --all </dev/null)
+          else
+            # --no-renames exposes both old and new paths; -z preserves spaces/newlines.
+            # PRs compare from the merge base, pushes compare their complete before/after range.
+            if [[ "$EVENT_NAME" == pull_request ]]; then
+              BASE_SHA=$(git merge-base "$BASE_SHA" "$HEAD_SHA")
+            fi
+            git diff --name-only --no-renames -z "$BASE_SHA" "$HEAD_SHA" > "$RUNNER_TEMP/ci-paths"
+            scope=$(python3 scripts/ci-scope.py < "$RUNNER_TEMP/ci-paths")
+          fi
+          echo "scope=$scope" >> "$GITHUB_OUTPUT"
+          echo "Selected checks: $scope"
