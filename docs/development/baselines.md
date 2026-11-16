@@ -55,7 +55,7 @@ Android 是主要开发方向，`main` 是共享集成基线。正式功能与�
 
 ### 第一阶段新回归包
 
-Debug v22 `20261104.2216` 从 `8348e82` 构建（基于 `main` 的 `f26d690`，仅递增 Debug versionCode）。APK 和验证报告已本地留存，未发布 Release、未安装真机；详细校验值、位置、用例和待测状态见 [第一阶段核心回归记录](../reviews/android-phase1-regression.md)。该包与所有历史 Debug 包同包名，不与它们并存。
+Debug v22 `20261104.2216` 从 `8348e82` 构建（基于 `main` 的 `f26d690`，仅递增 Debug versionCode）。APK 和验证报告已本地留存，未发布 Release、未安装真机；详细校验值、位置、用例和待测状态见 [第一阶段核心回归记录](../../archive/evidence/operations/docs/reviews/android-phase1-regression.md)。该包与所有历史 Debug 包同包名，不与它们并存。
 
 ### 既有 APK SHA-256
 

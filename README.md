@@ -21,7 +21,7 @@
 | [管理后台](cloud-api/admin-web/) | 管理员登录与运营操作界面 | 依赖 Cloud API 管理接口与角色校验；[运行说明](cloud-api/admin-web/README.md) |
 | [下载与更新](docs/deployment/download-center.md) | 官网下载页、正式与 Debug 双通道 OTA 的发布同步 | [版本清单](site/download/releases.json)是下载发布元数据的单一来源，APK 保存在 Release 附件与下载服务 |
 | [Web 辅助路径](docs/development/web-prototype.md) | 浏览器原型与协议调试，仍有活动开发脚本和检查 | [web/](web/)使用 Agent；其旧限制不代表 Android 的现行能力 |
-| [测试材料](translation-test-kit/) | 多语言场景、翻译质量检查表、用户反馈表 | 用于人工体验验收；回归证据由[文档导航](docs/README.md)标明效力 |
+| [测试材料](translation-test-kit/README.md) | 多语言场景、翻译质量检查表、用户反馈表 | 用于人工体验验收；回归证据由[文档导航](docs/README.md)标明效力 |
 
 ## 当前版本与验收
 

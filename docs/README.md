@@ -13,8 +13,8 @@
 | Cloud API 与数据库迁移 | [接口说明](../cloud-api/API.md)、[迁移与隔离数据库检查](../cloud-api/README.md) | 具体路由以[当前路由源码](../cloud-api/internal/http/router.go)为核对入口；不证明生产配置 |
 | Agent 翻译会话授权 | [授权信任约定](../agent/internal/sessionauth/README.md) | 提供方 Cloud、消费方 Agent 和 Android 必须一起考虑 |
 | 管理后台与 Web | [管理后台说明](../cloud-api/admin-web/README.md)、[Web 辅助开发](development/web-prototype.md) | 管理端 README 部分接口状态是旧快照；Web 旧固定语言等限制不作为 Android 约束 |
-| 下载与更新 | [双通道下载发布](deployment/download-center.md)、[下载清单](../site/download/releases.json) | 发布文档中的各次部署与检查按日期作为历史记录，当前公网需另查 |
-| 用户测试与反馈 | [测试材料目录](../translation-test-kit/)、[质量检查表](../translation-test-kit/translation-quality-checklist.md)、[反馈表](../translation-test-kit/software-usage-feedback-form.md) | 人工使用材料；PDF 与 Markdown 的一致性尚未重新核实 |
+| 下载与更新 | [运维效力与核验](operations/README.md)、[双通道下载发布](deployment/download-center.md)、[下载清单](../site/download/releases.json) | 发布文档中的各次部署与检查按日期作为历史记录，当前公网需另查 |
+| 用户测试与反馈 | [测试材料与源版本](../translation-test-kit/README.md)、[质量检查表](../translation-test-kit/translation-quality-checklist.md)、[反馈表](../translation-test-kit/software-usage-feedback-form.md) | 人工使用材料；PDF 与 Markdown 的一致性尚未重新核实 |
 | 代理与工作项约定 | [AGENTS](../AGENTS.md)、[本地工作项](agents/issue-tracker.md)、[领域文档约定](agents/domain.md) | 工作项在本地 `.scratch/`，不要求公开仓库包含本机执行证据 |
 | 如何读懂一次交付 | [中文改动说明示例](development/change-report-example.md)、[PR 模板](../.github/pull_request_template.md) | 按实际范围说明变化、影响、旧内容处理、实测与未验证部分 |
 

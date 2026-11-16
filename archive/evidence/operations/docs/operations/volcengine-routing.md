@@ -1,3 +1,5 @@
+> **历史证据，非现行操作或验收结论。** 来源：`079108bff4b55d1b3783ca8e99e3376a35804ee0` 的 `docs/operations/volcengine-routing.md`。原文中的“当前/本次”仅指记录当时，未测项保持未测；本轮未连接生产或真机。现行入口：[当前说明](../../../../../docs/operations/README.md)；来源与内容处理见[批次索引](../../../../indexes/06-operations-and-test-materials.md)。
+
 # 火山独占路由历史记录（2026-11-14）
 
 > 本文是11月14日的历史部署状态。用户已于2026-11-15授权并实际切到Qwen3.8，当前供应商及验证见[Qwen3.8部署记录](qwen38-routing.md)。以下描述不再代表当前线上状态。

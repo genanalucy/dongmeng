@@ -1,3 +1,5 @@
+> **历史证据，非现行操作或验收结论。** 来源：`079108bff4b55d1b3783ca8e99e3376a35804ee0` 的 `docs/operations/qwen38-routing.md`。原文中的“当前/本次”仅指记录当时，未测项保持未测；本轮未连接生产或真机。现行入口：[当前说明](../../../../../docs/operations/README.md)；来源与内容处理见[批次索引](../../../../indexes/06-operations-and-test-materials.md)。
+
 # Qwen 3.8 实时翻译适配与部署
 
 2026-11-14完成候选实现，当时因模型未购买未部署。用户缴费并于2026-11-15明确授权切换，现已部署 `qwen3.8-livetranslate-flash-realtime`。以下旧阻塞记录为历史，当前状态以末尾部署记录为准。
