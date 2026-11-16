@@ -54,11 +54,39 @@ class CheckCLI(unittest.TestCase):
 
     def test_database_skip_is_a_failure_even_when_go_exits_zero(self):
         self.env['CLOUD_API_TEST_DATABASE_URL'] = 'fixture-secret-not-for-output'
-        self.tool('go', """printf '%s\\n' '{"Action":"skip","Test":"TestCloudAgentSessionAuthorization"}'""")
+        self.tool('go', """printf '%s\\n' '{"Action":"pass","Test":"TestCompleted"}' '{"Action":"skip","Test":"TestCloudAgentSessionAuthorization"}'""")
         result = self.run_cli('db')
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertIn('FAIL db:', result.stdout)
         self.assertNotIn('fixture-secret-not-for-output', result.stdout + result.stderr)
+
+    def test_database_download_diagnostics_on_stderr_do_not_corrupt_json_report(self):
+        self.env['CLOUD_API_TEST_DATABASE_URL'] = 'fixture-secret-not-for-output'
+        self.tool('go', """echo 'go: downloading example.test/dependency v1.0.0' >&2
+printf '%s\\n' '{"Action":"pass","Test":"TestCloudAgentSessionAuthorization"}'""")
+        result = self.run_cli('db')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('PASS db:', result.stdout)
+        self.assertIn('go: downloading example.test/dependency v1.0.0', result.stderr)
+        self.assertNotIn('fixture-secret-not-for-output', result.stdout + result.stderr)
+
+    def test_database_go_failure_cannot_pass_with_completed_json_test(self):
+        self.env['CLOUD_API_TEST_DATABASE_URL'] = 'fixture-secret-not-for-output'
+        self.tool('go', """echo 'go: build failed' >&2
+printf '%s\\n' '{"Action":"pass","Test":"TestCloudAgentSessionAuthorization"}'
+exit 7""")
+        result = self.run_cli('db')
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn('FAIL db:', result.stdout)
+        self.assertIn('go: build failed', result.stderr)
+
+    def test_database_malformed_stdout_json_cannot_pass_with_completed_test(self):
+        self.env['CLOUD_API_TEST_DATABASE_URL'] = 'fixture-secret-not-for-output'
+        self.tool('go', """printf '%s\\n' 'broken-json' '{"Action":"pass","Test":"TestCloudAgentSessionAuthorization"}'""")
+        result = self.run_cli('db')
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn('FAIL db:', result.stdout)
+        self.assertIn('broken-json', result.stdout)
 
     def test_official_client_missing_dependency_is_not_a_pass(self):
         self.tool('go', 'echo TOOL_EXECUTED')
