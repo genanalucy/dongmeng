@@ -47,6 +47,6 @@
 
 本批在任务10隔离工作树运行 `bash scripts/check.sh navigation tooling download`：PASS3、FAIL0、MISSING_ENV0、SKIP0；额外检查Pi、Android、管理端及来源/后续/分支六份入口，28个本地目标无断链。初轮既有8项CLI、3项导航、8项CI路径、4项技能安装行为测试和4项下载单测通过；合并最新整合 `b6b0a2d`（含脚本修复 `f351473`）后同三target再次PASS3，CLI已扩为11项，其余行为检查继续通过；文档收口没有新增镜像测试。整合目录另实际运行技能 `--check` 成功，37个链接有效。最终review仍由主编排者后续执行。
 
-`27eabab` 推送后的三份GitHub真实运行已经结束：[Android CI](https://github.com/genanalucy/dongmeng/actions/runs/43959839931)成功，[Android Motion Regression](https://github.com/genanalucy/dongmeng/actions/runs/43959841169)成功；[Product checks](https://github.com/genanalucy/dongmeng/actions/runs/43959839755)的八个target与路径选择成功，database job失败。数据库测试本身93个通过事件、0跳过，失败是冷缓存 `go: downloading` 的stderr混入JSON报告而被解析器拒绝；不是新增产品回归，也不能把该job写成通过。脚本修复 `f351473` 的本地空缓存/真实PG验证见上节，已合并纳入本候选；修复提交的GitHub复跑仍由主编排者后续核对，不能用本地结果覆盖这次红记录。
+`27eabab` 推送后的三份GitHub真实运行已经结束：[Android CI](https://github.com/genanalucy/dongmeng/actions/runs/43959839931)成功，[Android Motion Regression](https://github.com/genanalucy/dongmeng/actions/runs/43959841169)成功；[Product checks](https://github.com/genanalucy/dongmeng/actions/runs/43959839755)的九个target与路径选择成功，database job失败。数据库测试本身93个通过事件、0跳过，失败是冷缓存 `go: downloading` 的stderr混入JSON报告而被解析器拒绝；不是新增产品回归，也不能把该job写成通过。脚本修复 `f351473` 的本地空缓存/真实PG验证见上节，已合并纳入本候选；修复提交的GitHub复跑仍由主编排者后续核对，不能用本地结果覆盖这次红记录。
 
 PR #1和#2的标题/正文按真实范围修订并保持Open/Draft。PR #2继承main→`dc587ef`的35个候选提交；其后整理、测试fixture调整和11登录故障修复分别说明。没有合main、部署或新建Release；v30仍未用户验收。GitHub模拟器通过也不代替真实手机音频、SAF文件提供方与跨设备验收。
