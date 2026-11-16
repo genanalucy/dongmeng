@@ -34,6 +34,8 @@ Go组通过`go list ./...`发现当前模块包，仅排除`node_modules`下第�
 
 环境准备使用[工作树环境说明](../development/workspace.md)，不复制旧 `.env`、凭据或 `local.properties`。脚本不会自动加载环境文件、启动数据库、运行独立迁移/发布命令或调用 smoke-local；显式`db`会按既有集成测试准备、修改并清理专用测试库。Go/npm/Gradle可能下载公开依赖，相关失败会保留原始输出。预检只能识别常见缺环境；依赖损坏或构建工具自行报告的错误记为FAIL。
 
+GitHub 的路径选择、提供方/消费者触发矩阵、专用数据库服务和检查边界见 [CI 说明](ci.md)。CI 复用上述 target；Android 设备工作流仍单独执行现有模拟器测试。
+
 ```bash
 npm --prefix web ci
 npm --prefix cloud-api/admin-web ci

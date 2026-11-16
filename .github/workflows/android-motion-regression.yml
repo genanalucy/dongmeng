@@ -2,20 +2,19 @@ name: Android Motion Regression
 
 on:
   push:
-    branches: [test/android-phase1-baseline]
-    paths:
-      - 'android/**'
-      - '.github/workflows/android-motion-regression.yml'
+    branches: [main, android, android-ui-redesign, test/android-phase1-baseline]
   pull_request:
-    paths:
-      - 'android/**'
-      - '.github/workflows/android-motion-regression.yml'
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
+  changes:
+    uses: ./.github/workflows/change-scope.yml
   motion:
+    needs: changes
+    if: fromJSON(needs.changes.outputs.scope).motion
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:

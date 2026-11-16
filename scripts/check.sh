@@ -101,8 +101,9 @@ run_target() {
       need python3 bash || return 0
       if (for script in scripts/*.sh; do bash -n "$script" || exit 1; done
           python3 -m unittest discover -s scripts -p test_checks.py &&
-          python3 -m unittest discover -s scripts -p test_navigation.py); then
-        report PASS tooling 'Bash syntax and verification CLI/navigation behavioral tests'
+          python3 -m unittest discover -s scripts -p test_navigation.py &&
+          python3 -m unittest discover -s scripts -p test_ci_scope.py); then
+        report PASS tooling 'Bash syntax and verification CLI/navigation/CI selection behavioral tests'
       else
         report FAIL tooling 'Bash syntax or verification regression tests failed'
       fi ;;
