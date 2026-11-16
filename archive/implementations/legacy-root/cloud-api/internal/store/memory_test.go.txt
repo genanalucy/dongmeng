@@ -1,0 +1,47 @@
+package store
+
+import (
+	"context"
+	"errors"
+	"testing"
+	"time"
+
+	"github.com/dngmeng/cloud-api/internal/auth"
+	"github.com/dngmeng/cloud-api/internal/domain"
+	"github.com/google/uuid"
+)
+
+func register(t *testing.T, s *Memory, email string, now time.Time) domain.User {
+	t.Helper(); u, _, err := s.Register(context.Background(), domain.RegisterParams{Email: email, PasswordHash: "hash", Now: now}); if err != nil { t.Fatal(err) }; return u
+}
+
+func TestRegisterCreatesThreeDayTrial(t *testing.T) {
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC); s := NewMemory()
+	u, e, err := s.Register(context.Background(), domain.RegisterParams{Email: "a@example.com", PasswordHash: "hash", Now: now})
+	if err != nil { t.Fatal(err) }
+	if e.UserID != u.ID || e.Kind != "trial" || e.ExpiresAt.Sub(e.StartsAt) != 72*time.Hour { t.Fatalf("unexpected trial: %+v", e) }
+}
+
+func TestRefreshRotationRevokeAndReuseRevokesFamily(t *testing.T) {
+	now := time.Now(); s := NewMemory(); u := register(t, s, "refresh@example.com", now); family := uuid.New()
+	oldPlain, oldHash, _ := auth.RandomSecret(32); _, _ = oldPlain, oldHash
+	if _, err := s.CreateRefreshToken(context.Background(), domain.CreateRefreshParams{UserID:u.ID, FamilyID:family, Hash:oldHash, ExpiresAt:now.Add(time.Hour)}); err != nil { t.Fatal(err) }
+	_, newHash, _ := auth.RandomSecret(32)
+	_, next, err := s.RotateRefreshToken(context.Background(), oldHash, newHash, now.Add(time.Minute), now.Add(time.Hour))
+	if err != nil || next.FamilyID != family { t.Fatalf("rotation failed: %+v %v", next, err) }
+	if _, _, err = s.RotateRefreshToken(context.Background(), oldHash, auth.HashSecret("third"), now.Add(2*time.Minute), now.Add(time.Hour)); !errors.Is(err, domain.ErrUnauthorized) { t.Fatalf("reuse accepted: %v", err) }
+	if _, _, err = s.RotateRefreshToken(context.Background(), newHash, auth.HashSecret("fourth"), now.Add(3*time.Minute), now.Add(time.Hour)); !errors.Is(err, domain.ErrUnauthorized) { t.Fatalf("family was not revoked: %v", err) }
+}
+
+func TestRedemptionCodeIsOneTime(t *testing.T) {
+	now:=time.Now();s:=NewMemory();admin:=register(t,s,"admin@example.com",now);u1:=register(t,s,"one@example.com",now);u2:=register(t,s,"two@example.com",now);code,hash,err:=auth.RandomCode();if err!=nil{t.Fatal(err)};if code==""{t.Fatal("missing plaintext code")}
+	_,err=s.CreateCodeBatch(context.Background(),domain.CreateBatchParams{AdminID:admin.ID,Name:"annual",DurationDays:365,CodeHashes:[][]byte{hash},Now:now});if err!=nil{t.Fatal(err)}
+	if _,err=s.RedeemCode(context.Background(),u1.ID,hash,now);err!=nil{t.Fatal(err)}
+	if _,err=s.RedeemCode(context.Background(),u2.ID,hash,now);!errors.Is(err,domain.ErrConflict){t.Fatalf("second redemption result: %v",err)}
+}
+
+func TestUsageAndArtifactUserIsolation(t *testing.T){now:=time.Now();s:=NewMemory();u1:=register(t,s,"iso1@example.com",now);u2:=register(t,s,"iso2@example.com",now);session:=domain.TranslationSession{ID:uuid.New(),UserID:u1.ID,EntitlementID:uuid.New(),JTI:uuid.New(),ExpiresAt:now.Add(time.Minute)};_ = s.CreateTranslationSession(context.Background(),session)
+	if err:=s.CreateUsageRecord(context.Background(),domain.CreateUsageParams{UserID:u2.ID,SessionID:session.ID,AudioSeconds:1,Now:now});!errors.Is(err,domain.ErrNotFound){t.Fatalf("foreign usage accepted: %v",err)}
+	c,_:=s.CreateFeedbackConsent(context.Background(),u1.ID,true,now);a,err:=s.CreateFeedbackArtifact(context.Background(),domain.CreateArtifactParams{UserID:u1.ID,ConsentID:c.ID,ObjectKey:"feedback/u1/item",ExpiresAt:now.Add(time.Hour),Now:now});if err!=nil{t.Fatal(err)}
+	if _,err=s.FeedbackArtifact(context.Background(),u2.ID,a.ID);!errors.Is(err,domain.ErrNotFound){t.Fatalf("foreign artifact visible: %v",err)}
+}

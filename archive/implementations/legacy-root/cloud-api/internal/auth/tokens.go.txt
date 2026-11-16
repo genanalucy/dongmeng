@@ -1,0 +1,82 @@
+package auth
+
+import (
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
+	"fmt"
+	"time"
+
+	"github.com/golang-jwt/jwt/v5"
+	"github.com/google/uuid"
+)
+
+func RandomSecret(bytes int) (string, []byte, error) {
+	raw := make([]byte, bytes)
+	if _, err := rand.Read(raw); err != nil {
+		return "", nil, fmt.Errorf("generate random secret: %w", err)
+	}
+	plain := base64.RawURLEncoding.EncodeToString(raw)
+	return plain, HashSecret(plain), nil
+}
+
+func RandomCode() (string, []byte, error) {
+	raw := make([]byte, 15)
+	if _, err := rand.Read(raw); err != nil {
+		return "", nil, fmt.Errorf("generate redemption code: %w", err)
+	}
+	encoded := base64.RawURLEncoding.EncodeToString(raw)
+	plain := fmt.Sprintf("%s-%s-%s-%s", encoded[0:5], encoded[5:10], encoded[10:15], encoded[15:20])
+	return plain, HashSecret(plain), nil
+}
+
+func HashSecret(value string) []byte {
+	sum := sha256.Sum256([]byte(value))
+	return sum[:]
+}
+
+type Claims struct {
+	SessionID     string `json:"session_id,omitempty"`
+	EntitlementID string `json:"entitlement_id,omitempty"`
+	Scope         string `json:"scope"`
+	jwt.RegisteredClaims
+}
+
+type TokenIssuer struct {
+	Issuer        string
+	Audience      string
+	AccessSecret  []byte
+	SessionSecret []byte
+}
+
+func (i TokenIssuer) AccessToken(userID uuid.UUID, role string, ttl time.Duration, now time.Time) (string, error) {
+	return i.sign(i.AccessSecret, Claims{Scope: "api role:" + role, RegisteredClaims: jwt.RegisteredClaims{
+		Issuer: i.Issuer, Subject: userID.String(), Audience: jwt.ClaimStrings{i.Audience},
+		ID: uuid.NewString(), IssuedAt: jwt.NewNumericDate(now), ExpiresAt: jwt.NewNumericDate(now.Add(ttl)),
+	}})
+}
+
+func (i TokenIssuer) TranslationToken(sessionID, entitlementID, userID, jti uuid.UUID, ttl time.Duration, now time.Time) (string, error) {
+	return i.sign(i.SessionSecret, Claims{SessionID: sessionID.String(), EntitlementID: entitlementID.String(), Scope: "translation", RegisteredClaims: jwt.RegisteredClaims{
+		Issuer: i.Issuer, Subject: userID.String(), Audience: jwt.ClaimStrings{i.Audience}, ID: jti.String(),
+		IssuedAt: jwt.NewNumericDate(now), ExpiresAt: jwt.NewNumericDate(now.Add(ttl)),
+	}})
+}
+
+func (i TokenIssuer) ParseAccess(token string) (Claims, error) {
+	var claims Claims
+	parsed, err := jwt.ParseWithClaims(token, &claims, func(t *jwt.Token) (any, error) {
+		if t.Method != jwt.SigningMethodHS256 {
+			return nil, fmt.Errorf("unexpected signing method")
+		}
+		return i.AccessSecret, nil
+	}, jwt.WithIssuer(i.Issuer), jwt.WithAudience(i.Audience), jwt.WithValidMethods([]string{"HS256"}))
+	if err != nil || !parsed.Valid || claims.Scope == "" {
+		return Claims{}, fmt.Errorf("invalid access token")
+	}
+	return claims, nil
+}
+
+func (i TokenIssuer) sign(secret []byte, claims Claims) (string, error) {
+	return jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString(secret)
+}
