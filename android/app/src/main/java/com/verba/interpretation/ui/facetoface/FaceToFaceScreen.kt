@@ -32,6 +32,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.material.icons.filled.SwapHoriz
 import com.verba.interpretation.BuildConfig
+import com.verba.interpretation.export.ExportFormat
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -71,6 +72,10 @@ internal fun FaceToFaceScreen(
     clearMicrophoneRequest: () -> Unit = {},
     modifier: Modifier = Modifier,
     onExit: () -> Unit = {},
+    onSaveToHistory: () -> Unit = {},
+    onRetryHistorySave: () -> Unit = {},
+    onExport: (ExportFormat) -> Unit = {},
+    documentExportBusy: Boolean = false,
 ) {
     val presentation = faceToFacePresentation(state)
     var subtitleSizeName by rememberSaveable { mutableStateOf(SubtitleSize.STANDARD.name) }
@@ -103,6 +108,10 @@ internal fun FaceToFaceScreen(
             subtitleSize = subtitleSize,
             onSubtitleSize = { subtitleSizeName = it.name },
             onExit = onExit,
+            onSaveToHistory = onSaveToHistory,
+            onRetryHistorySave = onRetryHistorySave,
+            onExport = onExport,
+            documentExportBusy = documentExportBusy,
         )
 
         if (BuildConfig.DEBUG) {
@@ -186,6 +195,10 @@ private fun TranslationTopBar(
     subtitleSize: SubtitleSize,
     onSubtitleSize: (SubtitleSize) -> Unit,
     onExit: () -> Unit,
+    onSaveToHistory: () -> Unit,
+    onRetryHistorySave: () -> Unit,
+    onExport: (ExportFormat) -> Unit,
+    documentExportBusy: Boolean,
 ) {
     Box(
         Modifier.fillMaxWidth()
@@ -215,6 +228,10 @@ private fun TranslationTopBar(
                 subtitleSize = subtitleSize,
                 onSubtitleSize = onSubtitleSize,
                 onSelectView = onSelectView,
+                onSaveToHistory = onSaveToHistory,
+                onRetryHistorySave = onRetryHistorySave,
+                onExport = onExport,
+                documentExportBusy = documentExportBusy,
             )
         }
     }

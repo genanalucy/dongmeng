@@ -1,0 +1,269 @@
+package ast
+
+import (
+	"context"
+	"encoding/base64"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"reflect"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/coder/websocket"
+	"github.com/coder/websocket/wsjson"
+)
+
+func completionEvents(t *testing.T, sourceID, itemID, responseID, source, translated string) []qwenEvent {
+	t.Helper()
+	messages := []string{
+		fmt.Sprintf(`{"type":"conversation.item.input_audio_transcription.completed","item_id":%q,"transcript":%q}`, sourceID, source),
+		fmt.Sprintf(`{"type":"conversation.item.created","previous_item_id":%q,"item":{"id":%q,"type":"message","role":"assistant"}}`, sourceID, itemID),
+		fmt.Sprintf(`{"type":"response.audio_transcript.done","item_id":%q,"response_id":%q,"transcript":%q,"output_index":99}`, itemID, responseID, translated),
+		fmt.Sprintf(`{"type":"response.done","response":{"id":%q,"status":"completed","output":[{"id":"unrelated","type":"message","role":"assistant"},{"id":%q,"type":"message","role":"assistant"}]}}`, responseID, itemID),
+	}
+	events := make([]qwenEvent, len(messages))
+	for i, message := range messages {
+		if err := json.Unmarshal([]byte(message), &events[i]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return events
+}
+
+func TestQwenCompletionAllOrdersAndDuplicates(t *testing.T) {
+	events := completionEvents(t, "source", "translation", "response", "你好。", "Bonjour.")
+	// Exhaust all 24 arrival orders, including item.created arriving last.
+	for a := range 4 {
+		for b := range 4 {
+			for d := range 4 {
+				for e := range 4 {
+					if a == b || a == d || a == e || b == d || b == e || d == e {
+						continue
+					}
+					t.Run(fmt.Sprint(a, b, d, e), func(t *testing.T) {
+						var c qwenCompletionCollector
+						var got []Event
+						for _, i := range []int{a, b, d, e, a, b, d, e} {
+							got = append(got, c.consume(events[i])...)
+							got = append(got, c.consume(events[i])...)
+						}
+						want := Event{Type: "turn_completed", CompletionID: "source", SourceText: "你好。", TranslatedText: "Bonjour."}
+						if len(got) != 1 || !reflect.DeepEqual(got[0], want) {
+							t.Fatalf("got %#v, want %#v once", got, want)
+						}
+						if c.sources["source"].text != "" || c.items["translation"].text != "" {
+							t.Fatal("completed text retained")
+						}
+					})
+				}
+			}
+		}
+	}
+}
+
+func TestQwenCompletionDoesNotGuessMissingOrFailedAssociations(t *testing.T) {
+	for _, name := range []string{"missing source", "missing item created", "missing translation", "missing response", "failed", "cancelled", "incomplete", "wrong response", "wrong output", "wrong previous", "wrong role", "empty source", "empty translation", "oversized text", "conflicting link", "conflicting response", "conflicting translation response", "missing source id", "missing translation id", "missing response id"} {
+		t.Run(name, func(t *testing.T) {
+			events := completionEvents(t, "source", "translation", "response", "你好。", "Bonjour.")
+			switch name {
+			case "missing source":
+				events = events[1:]
+			case "missing item created":
+				events = append(events[:1], events[2:]...)
+			case "missing translation":
+				events = append(events[:2], events[3:]...)
+			case "missing response":
+				events = events[:3]
+			case "failed", "cancelled", "incomplete":
+				events[3].Response.Status = name
+			case "wrong response":
+				events[3].Response.ID = "other"
+			case "wrong output":
+				events[3].Response.Output[1].ID = "other"
+			case "wrong previous":
+				events[1].PreviousItemID = "other"
+			case "wrong role":
+				events[1].Item.Role = "user"
+			case "empty source":
+				events[0].Transcript = " "
+			case "empty translation":
+				events[2].Transcript = ""
+			case "oversized text":
+				events[2].Transcript = strings.Repeat("a", qwenCompletionMaxTextBytes+1)
+			case "conflicting link":
+				bad := events[1]
+				bad.PreviousItemID = "other"
+				events = append([]qwenEvent{bad}, events...)
+			case "missing source id":
+				events[0].ItemID = ""
+			case "missing translation id":
+				events[2].ItemID = ""
+			case "missing response id":
+				events[2].ResponseID = ""
+			case "conflicting translation response":
+				bad := events[2]
+				bad.ResponseID = "another-response"
+				events = append([]qwenEvent{bad}, events...)
+			case "conflicting response":
+				bad := events[3]
+				bad.Response.Status = "failed"
+				events = append([]qwenEvent{bad}, events...)
+			}
+			var c qwenCompletionCollector
+			for _, event := range events {
+				if got := c.consume(event); len(got) != 0 {
+					t.Fatalf("unexpected completion: %#v", got)
+				}
+			}
+		})
+	}
+}
+
+func TestQwenCompletionInterleavedIdenticalTextAndMultipleResponses(t *testing.T) {
+	a := completionEvents(t, "s1", "t1", "r1", "same", "identique")
+	b := completionEvents(t, "s2", "t2", "r2", "same", "identique")
+	failed := completionEvents(t, "s1", "failed-item", "failed-response", "same", "wrong")
+	failed[3].Response.Status = "failed"
+	var c qwenCompletionCollector
+	var got []Event
+	for _, event := range []qwenEvent{a[0], b[0], failed[1], failed[2], failed[3], a[2], b[2], b[3], a[3], b[1], a[1]} {
+		got = append(got, c.consume(event)...)
+	}
+	if len(got) != 2 || got[0].CompletionID != "s2" || got[1].CompletionID != "s1" {
+		t.Fatalf("got %#v", got)
+	}
+	for _, event := range got {
+		if event.TranslatedText != "identique" {
+			t.Fatalf("wrong response: %#v", event)
+		}
+	}
+	// Another successful response to the same VAD item cannot create a second turn.
+	for _, event := range completionEvents(t, "s1", "retry-item", "retry-response", "same", "retry") {
+		if got := c.consume(event); len(got) > 0 {
+			t.Fatalf("duplicate source completed: %#v", got)
+		}
+	}
+}
+
+func TestQwenCompletionTextDoneUsesExplicitFinalText(t *testing.T) {
+	events := completionEvents(t, "source", "translation", "response", "原文", "译文")
+	events[2].Type = "response.text.done"
+	events[2].Text = events[2].Transcript
+	events[2].Transcript = ""
+	var c qwenCompletionCollector
+	var got []Event
+	for _, event := range events {
+		got = append(got, c.consume(event)...)
+	}
+	if len(got) != 1 || got[0].TranslatedText != "译文" {
+		t.Fatalf("text done: %#v", got)
+	}
+}
+
+func TestQwenCompletionNeverCrossesResponseIDs(t *testing.T) {
+	events := completionEvents(t, "s", "t", "r", "source", "translated")
+	events[3].Response.ID = "different-response"
+	var c qwenCompletionCollector
+	for _, event := range events {
+		if got := c.consume(event); len(got) > 0 {
+			t.Fatalf("crossed response: %#v", got)
+		}
+	}
+	events[3].Response.ID = "r"
+	if got := c.consume(events[3]); len(got) != 1 {
+		t.Fatalf("matching response did not complete: %#v", got)
+	}
+}
+
+type qwenCompletionChannelSink chan Event
+
+func (s qwenCompletionChannelSink) Emit(event Event) { s <- event }
+
+func TestQwenReadLoopPreservesLegacyEventsAndEmitsCompletedTurn(t *testing.T) {
+	finals := completionEvents(t, "source", "translation", "response", "你好。", "Bonjour.")
+	pcm := []byte{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11}
+	events := []qwenEvent{
+		{Type: "conversation.item.input_audio_transcription.delta", ItemID: "source", Delta: "你好"},
+		finals[0],
+		{Type: "response.audio_transcript.delta", ItemID: "translation", Delta: "Bonjour"},
+		finals[2],
+		{Type: "response.audio.delta", Delta: base64.StdEncoding.EncodeToString(pcm)},
+		{Type: "response.audio.done"},
+		finals[3], finals[1], finals[3],
+		{Type: "session.finished"},
+	}
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer conn.CloseNow()
+		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+		defer cancel()
+		for _, event := range events {
+			if err := wsjson.Write(ctx, conn, event); err != nil {
+				return
+			}
+		}
+	}))
+	defer ts.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	conn, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(ts.URL, "http"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sink := make(qwenCompletionChannelSink, 16)
+	inner, stop := context.WithCancel(ctx)
+	session := &qwenSession{conn: conn, sink: sink, ctx: inner, cancel: stop, done: make(chan struct{}), source: make(map[string]string), translation: make(map[string]string)}
+	defer session.Close()
+	loopDone := make(chan struct{})
+	go func() { defer close(loopDone); session.readLoop() }()
+	select {
+	case <-loopDone:
+	case <-ctx.Done():
+		t.Fatal("readLoop did not finish")
+	}
+	close(sink)
+	var got []Event
+	for event := range sink {
+		got = append(got, event)
+	}
+	want := []Event{
+		{Type: "source_partial", Message: "你好"},
+		{Type: "source_final", Message: "你好。"},
+		{Type: "translation_partial", Message: "Bonjour"},
+		{Type: "translation_final", Message: "Bonjour."},
+		{Type: "tts_audio", Binary: resample24kTo16k(pcm)},
+		{Type: "turn_completed", CompletionID: "source", SourceText: "你好。", TranslatedText: "Bonjour."},
+		{Type: "finished"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %#v, want %#v", got, want)
+	}
+}
+
+func TestQwenCompletionCapacityFailsClosedAndReleasesText(t *testing.T) {
+	for _, payloadBound := range []bool{false, true} {
+		var c qwenCompletionCollector
+		text := "source"
+		if payloadBound {
+			text = strings.Repeat("a", qwenCompletionMaxTextBytes)
+		}
+		for i := 0; i <= qwenCompletionMaxRecords && !c.disabled; i++ {
+			event := qwenEvent{Type: "conversation.item.input_audio_transcription.completed", ItemID: fmt.Sprint(i), Transcript: text}
+			c.consume(event)
+		}
+		if !c.disabled || c.sources != nil || c.items != nil || c.responses != nil {
+			t.Fatal("capacity did not release state")
+		}
+		for _, event := range completionEvents(t, "s", "t", "r", "source", "translation") {
+			if got := c.consume(event); len(got) > 0 {
+				t.Fatal("disabled collector emitted")
+			}
+		}
+	}
+}

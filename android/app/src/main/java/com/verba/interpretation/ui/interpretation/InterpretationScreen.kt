@@ -34,6 +34,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.ArrowDownward
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
@@ -80,6 +81,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.verba.interpretation.BuildConfig
+import com.verba.interpretation.export.ConversationExportMenuItems
+import com.verba.interpretation.export.ExportFormat
 import com.verba.interpretation.ui.SessionPhase
 import com.verba.interpretation.ui.TranslationLanguage
 import com.verba.interpretation.ui.design.LiquidGlassSurface
@@ -120,6 +123,10 @@ fun InterpretationScreen(
 
     modifier: Modifier = Modifier,
     overlayContent: @Composable BoxScope.() -> Unit = {},
+    onSaveToHistory: () -> Unit = {},
+    onRetryHistorySave: () -> Unit = {},
+    onExport: (ExportFormat) -> Unit = {},
+    documentExportBusy: Boolean = false,
 ) {
     val callbacks = InterpretationCallbacks(onExit, onStart, onPause, onResume, onFinish, onReset)
     val isSessionActive = model.phase in setOf(
@@ -203,6 +210,7 @@ fun InterpretationScreen(
 
     var subtitleSizeName by rememberSaveable { mutableStateOf(SubtitleSize.STANDARD.name) }
     var fontMenu by remember { mutableStateOf(false) }
+    var documentMenu by remember { mutableStateOf(false) }
     CompositionLocalProvider(LocalSubtitleSize provides if (BuildConfig.DEBUG) SubtitleSize.valueOf(subtitleSizeName) else SubtitleSize.STANDARD) {
     Column(modifier = modifier.fillMaxSize()) {
         if (BuildConfig.DEBUG) {
@@ -213,6 +221,20 @@ fun InterpretationScreen(
                     TextButton(onClick = { fontMenu = true }, modifier = Modifier.heightIn(min = 48.dp)) { Text("字号") }
                     DropdownMenu(expanded = fontMenu, onDismissRequest = { fontMenu = false }) {
                         SubtitleSizeSelector(SubtitleSize.valueOf(subtitleSizeName)) { subtitleSizeName = it.name }
+                    }
+                }
+                Box {
+                    IconButton(onClick = { documentMenu = true }) {
+                        Icon(Icons.Filled.MoreVert, contentDescription = "实时同传更多选项")
+                    }
+                    DropdownMenu(expanded = documentMenu, onDismissRequest = { documentMenu = false }) {
+                        ConversationExportMenuItems(
+                            onSaveToHistory = onSaveToHistory,
+                            onRetryHistorySave = onRetryHistorySave,
+                            onExport = onExport,
+                            busy = documentExportBusy,
+                            onDismiss = { documentMenu = false },
+                        )
                     }
                 }
             }

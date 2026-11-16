@@ -1,6 +1,8 @@
 package com.verba.interpretation.ui.facetoface
 
 import com.verba.interpretation.BuildConfig
+import com.verba.interpretation.export.ConversationExportMenuItems
+import com.verba.interpretation.export.ExportFormat
 import androidx.compose.material.icons.Icons
 import androidx.compose.foundation.Canvas
 import androidx.compose.material3.DropdownMenu
@@ -37,6 +39,10 @@ internal fun FaceToFaceOverflowMenu(
     subtitleSize: SubtitleSize = SubtitleSize.STANDARD,
     onSubtitleSize: (SubtitleSize) -> Unit = {},
     onSelectView: (FaceToFaceView) -> Unit = {},
+    onSaveToHistory: () -> Unit = {},
+    onRetryHistorySave: () -> Unit = {},
+    onExport: (ExportFormat) -> Unit = {},
+    documentExportBusy: Boolean = false,
 ) {
     var expanded by remember { mutableStateOf(false) }
     IconButton(
@@ -88,6 +94,13 @@ internal fun FaceToFaceOverflowMenu(
             }
             HorizontalDivider()
             SubtitleSizeSelector(subtitleSize, onSubtitleSize)
+            ConversationExportMenuItems(
+                onSaveToHistory = onSaveToHistory,
+                onRetryHistorySave = onRetryHistorySave,
+                onExport = onExport,
+                busy = documentExportBusy,
+                onDismiss = { expanded = false },
+            )
         }
         if (state.mode == FaceToFaceMode.AUTO && state.phase in setOf(FaceToFacePhase.LISTENING, FaceToFacePhase.PAUSED)) {
             // 主操作（播放/暂停）在双麦之间；结束是次要会话操作，保留在更多菜单。

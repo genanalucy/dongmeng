@@ -133,6 +133,27 @@ class LocalHistorySaveControllerTest {
         assertEquals(0, controller.state.value.pendingCount)
     }
 
+    @Test fun failedSaveCanBeRetriedWithSameFrozenIdentityWithoutDuplicatingSuccess() = runBlocking {
+        val written = mutableListOf<CompletedTurn>()
+        var fail = true
+        val controller = LocalHistorySaveController(LocalHistoryTurnSaver { turn ->
+            if (fail) { fail = false; error("disk unavailable") }
+            written += turn
+            requireNotNull(turn.localSessionId)
+        }, this)
+        controller.startConversation("user", "solo")
+        val ownership = requireNotNull(controller.bindTurn("utterance"))
+        requireNotNull(controller.saveTurn(ownership, "zh", "en", "你好", "Hello", 1)).join()
+        assertEquals(LocalHistorySaveStatus.FAILED, controller.state.value.status)
+        controller.retryFailed().forEach { it.join() }
+        assertEquals(LocalHistorySaveStatus.SAVED, controller.state.value.status)
+        assertEquals(1, written.size)
+        assertNull(controller.saveTurn(ownership, "zh", "en", "不得覆盖", "must not overwrite", 2))
+        controller.retryFailed().forEach { it.join() }
+        assertEquals("你好", written.single().sourceText)
+        assertNotNull(written.single().stableTurnId)
+    }
+
     private suspend fun waitFor(condition: () -> Boolean) {
         repeat(100) {
             if (condition()) return

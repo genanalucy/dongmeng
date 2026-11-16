@@ -12,12 +12,8 @@ import com.verba.interpretation.cloud.SharedPreferencesInstallationIdStore
 import com.verba.interpretation.cloud.TranslationSessionCoordinator
 import com.verba.interpretation.cloud.TranslationSessionCoordinator.OpenHandle
 import com.verba.interpretation.cloud.TranslationSessionGrant
-import com.verba.interpretation.audio.MicrophoneCapture
 import com.verba.interpretation.audio.PlaybackRoute
-import com.verba.interpretation.audio.TtsPlayer
 import com.verba.interpretation.protocol.AgentEvent
-import com.verba.interpretation.protocol.AgentSocket
-import com.verba.interpretation.protocol.EndpointSettings
 import com.verba.interpretation.history.LocalHistoryRepository
 import com.verba.interpretation.history.LocalHistorySaveController
 import com.verba.interpretation.history.LocalHistoryTurnOwnership
@@ -29,21 +25,28 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
-class InterpretationViewModel(application: Application) : AndroidViewModel(application) {
+class InterpretationViewModel @JvmOverloads constructor(
+    application: Application,
+    private val runtime: FaceToFaceRuntime = AndroidFaceToFaceRuntime(application),
+    cloudSessionCoordinator: TranslationSessionCoordinator? = null,
+    historySaver: LocalHistoryTurnSaver? = null,
+) : AndroidViewModel(application) {
     private val mutableState = MutableStateFlow(InterpretationUiState())
     val state: StateFlow<InterpretationUiState> = mutableState.asStateFlow()
-    private val microphone = MicrophoneCapture(application)
-    private val endpointSettings = EndpointSettings(application)
-    private val player = TtsPlayer()
-    private val cloudSessions = TranslationSessionCoordinator(
+    private val cloudSessions = cloudSessionCoordinator ?: TranslationSessionCoordinator(
         CloudApi(CloudEndpointSettings(application), KeystoreTokenStore(application), SharedPreferencesInstallationIdStore(application)),
         viewModelScope,
     )
     private val mutableCloudSessionCloseFailure = MutableStateFlow<CloudSessionFailureCode?>(null)
     val cloudSessionCloseFailure: StateFlow<CloudSessionFailureCode?> = mutableCloudSessionCloseFailure.asStateFlow()
-    private val sessions = TurnSessionCoordinator<AgentSocket>()
-    private val history = LocalHistoryRepository.create(application)
-    private val localHistory = LocalHistorySaveController(LocalHistoryTurnSaver { history.recordCompletedTurn(it) }, viewModelScope)
+    private val sessions = TurnSessionCoordinator<FaceToFaceSocket>()
+    private val history by lazy { LocalHistoryRepository.create(application) }
+    private val localHistory = LocalHistorySaveController(
+        historySaver ?: LocalHistoryTurnSaver { history.recordCompletedTurn(it) },
+        accountEpoch = { userId -> if (historySaver == null) LocalHistoryRepository.captureAccountEpoch(application, userId) else 0L },
+    )
+    private val completedTransports = mutableSetOf<Long>()
+    private var transcriptAccount: String? = null
     private val localTurnOwnership = mutableMapOf<Long, LocalHistoryTurnOwnership>()
     private val actionLock = Any()
     private var cloudGrant: TranslationSessionGrant? = null
@@ -92,7 +95,7 @@ class InterpretationViewModel(application: Application) : AndroidViewModel(appli
 
     fun pause() {
         if (mutableState.value.phase != SessionPhase.RUNNING && mutableState.value.phase != SessionPhase.STARTING) return
-        microphone.stop()
+        runtime.stopCapture()
         sessions.pauseAndFinishSessions().forEach { it.finish() }
         localHistory.pauseConversation()
         mutableState.update { it.copy(phase = SessionPhase.PAUSED, localHistorySave = localHistory.state.value) }
@@ -112,7 +115,7 @@ class InterpretationViewModel(application: Application) : AndroidViewModel(appli
     fun finish() {
         val phase = mutableState.value.phase
         if (phase == SessionPhase.IDLE || phase == SessionPhase.STOPPING) return
-        microphone.stop()
+        runtime.stopCapture()
         mutableState.update { it.copy(phase = SessionPhase.STOPPING) }
         sessions.stopAndFinishSessions().forEach { it.finish() }
         becomeIdleIfDrained()
@@ -124,10 +127,10 @@ class InterpretationViewModel(application: Application) : AndroidViewModel(appli
 
     fun cancel() = synchronized(actionLock) {
         invalidatePendingGrantOpen()
-        microphone.stop()
+        runtime.stopCapture()
         cancelAllSessions()
         endCloudSession()
-        player.stop()
+        runtime.stopPlayback()
         localHistory.endConversation()
         localTurnOwnership.clear()
         mutableState.update { it.copy(phase = SessionPhase.IDLE, error = null, sessionEndReason = null, localHistorySave = localHistory.state.value) }
@@ -138,13 +141,14 @@ class InterpretationViewModel(application: Application) : AndroidViewModel(appli
     }
 
     private fun startMicrophone(isResume: Boolean) {
-        when (val result = microphone.start(
+        when (val result = runtime.startCapture(
             onPacket = { packet ->
                 if (!sessions.sendToActive { it.sendAudio(packet) }) {
                     fail("音频包无法发送，连接尚未就绪或已断开。")
                 }
             },
             onError = ::fail,
+            onLevel = {},
         )) {
             CaptureResult.Started -> Unit
             CaptureResult.AlreadyRunning -> fail("麦克风已在录音。")
@@ -190,9 +194,8 @@ class InterpretationViewModel(application: Application) : AndroidViewModel(appli
         }
         val snapshot = mutableState.value
         val turn = SubtitleTurn(nextTurnId++, snapshot.sourceLanguage, snapshot.targetLanguage)
-        lateinit var socket: AgentSocket
-        socket = AgentSocket(
-            endpointSettings = endpointSettings,
+        lateinit var socket: FaceToFaceSocket
+        socket = runtime.createSocket(
             onEvent = { event -> handleEvent(turn.id, event) },
             onTts = { pcm, _, _ -> playQueued(sessions.offerTts(turn.id, pcm)) },
             onFailure = { message -> handleSessionFailure(turn.id, message) },
@@ -214,11 +217,18 @@ class InterpretationViewModel(application: Application) : AndroidViewModel(appli
         startMicrophone(isResume)
     }
 
-    private fun handleEvent(turnId: Long, event: AgentEvent) {
+    private fun handleEvent(turnId: Long, event: AgentEvent): Unit = synchronized(actionLock) {
         if (!sessions.contains(turnId)) return
         when (event) {
             AgentEvent.Ready -> if (sessions.markReady(turnId)) markRunningIfStarting()
             is AgentEvent.DetectedLanguage, is AgentEvent.TtsSegment -> Unit
+            is AgentEvent.TurnCompleted -> synchronized(actionLock) {
+                val turn = mutableState.value.turns.firstOrNull { it.id == turnId } ?: return
+                val ownership = localTurnOwnership[turnId] ?: return
+                completedTransports += turnId
+                localHistory.saveTurn(ownership.copy(turnId = "${ownership.turnId}:${event.completionId}"),
+                    turn.sourceLanguage, turn.targetLanguage, event.sourceText, event.translatedText, System.currentTimeMillis())
+            }
             AgentEvent.Finished -> {
                 captureCompletedTurn(turnId)
                 markTurnFinished(turnId)
@@ -238,7 +248,7 @@ class InterpretationViewModel(application: Application) : AndroidViewModel(appli
     private fun playQueued(first: TurnSessionCoordinator.Playback?) {
         var playback = first
         while (playback != null) {
-            val result = player.play(playback.pcm, mutableState.value.route)
+            val result = runtime.play(playback.pcm, mutableState.value.route)
             if (result.isFailure) {
                 fail(result.exceptionOrNull()?.message ?: "TTS 播放失败。")
                 return
@@ -248,7 +258,7 @@ class InterpretationViewModel(application: Application) : AndroidViewModel(appli
         becomeIdleIfDrained()
     }
 
-    private fun handleSessionFailure(turnId: Long, message: String) {
+    private fun handleSessionFailure(turnId: Long, message: String): Unit = synchronized(actionLock) {
         if (sessions.isActive(turnId)) {
             fail(message)
             return
@@ -264,7 +274,27 @@ class InterpretationViewModel(application: Application) : AndroidViewModel(appli
         }
     }
 
+    fun isAccountBound(userId: String): Boolean = synchronized(actionLock) { transcriptAccount == userId }
+
+    fun bindAccount(userId: String?) = synchronized(actionLock) {
+        if (transcriptAccount != userId) {
+            cancel()
+            mutableState.update { it.copy(turns = emptyList()) }
+            completedTransports.clear()
+            transcriptAccount = userId
+        }
+    }
+
+    fun saveCurrentToHistory() = synchronized(actionLock) {
+        mutableState.value.turns.filter { it.finished }.forEach { captureCompletedTurn(it.id) }
+        localHistory.retryFailed()
+        localHistory.explainIfNoCompletedContent()
+    }
+
+    fun retryHistorySave() { localHistory.retryFailed() }
+
     private fun captureCompletedTurn(turnId: Long) {
+        if (turnId in completedTransports) return
         val turn = mutableState.value.turns.firstOrNull { it.id == turnId } ?: return
         val sourceText = turn.sourceFinals.joinToString(" ").trim()
         val translatedText = turn.translationFinals.joinToString(" ").trim()
@@ -290,7 +320,7 @@ class InterpretationViewModel(application: Application) : AndroidViewModel(appli
     private fun becomeIdleIfDrained() {
         if (!sessions.canBecomeIdle()) return
         if (mutableState.value.phase == SessionPhase.STOPPING) localHistory.finishConversation()
-        player.stop()
+        runtime.stopPlayback()
         mutableState.update { current ->
             if (current.phase == SessionPhase.STOPPING) current.copy(phase = SessionPhase.IDLE) else current
         }
@@ -300,20 +330,20 @@ class InterpretationViewModel(application: Application) : AndroidViewModel(appli
     private fun terminateSession(reason: TranslationSessionEndReason) = synchronized(actionLock) {
         if (mutableState.value.sessionEndReason != null) return
         invalidatePendingGrantOpen()
-        microphone.stop()
+        runtime.stopCapture()
         cancelAllSessions()
         endCloudSession()
-        player.stop()
+        runtime.stopPlayback()
         mutableState.update { it.withTerminatedSession(reason) }
     }
 
     private fun fail(message: String) = synchronized(actionLock) {
         if (mutableState.value.sessionEndReason != null) return
         invalidatePendingGrantOpen()
-        microphone.stop()
+        runtime.stopCapture()
         cancelAllSessions()
         endCloudSession()
-        player.stop()
+        runtime.stopPlayback()
         localHistory.endConversation()
         localTurnOwnership.clear()
         mutableState.update { it.copy(phase = SessionPhase.ERROR, error = message, sessionEndReason = null, localHistorySave = localHistory.state.value) }

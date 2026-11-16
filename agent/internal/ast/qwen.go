@@ -200,21 +200,26 @@ func (s *qwenSession) terminal(e Event) {
 }
 
 type qwenEvent struct {
-	Code       string            `json:"code"`
-	Type       string            `json:"type"`
-	ItemID     string            `json:"item_id"`
-	ResponseID string            `json:"response_id"`
-	Delta      string            `json:"delta"`
-	Text       string            `json:"text"`
-	Transcript string            `json:"transcript"`
-	Session    qwenSessionConfig `json:"session"`
-	Response   struct {
-		Status string `json:"status"`
+	Code           string                 `json:"code"`
+	Type           string                 `json:"type"`
+	ItemID         string                 `json:"item_id"`
+	ResponseID     string                 `json:"response_id"`
+	Delta          string                 `json:"delta"`
+	Text           string                 `json:"text"`
+	Transcript     string                 `json:"transcript"`
+	Session        qwenSessionConfig      `json:"session"`
+	PreviousItemID string                 `json:"previous_item_id"`
+	Item           qwenCompletionWireItem `json:"item"`
+	Response       struct {
+		ID     string                   `json:"id"`
+		Output []qwenCompletionWireItem `json:"output"`
+		Status string                   `json:"status"`
 	} `json:"response"`
 }
 
 func (s *qwenSession) readLoop() {
 	defer s.Close()
+	var completions qwenCompletionCollector
 	for {
 		var e qwenEvent
 		if wsjson.Read(s.ctx, s.conn, &e) != nil {
@@ -283,6 +288,9 @@ func (s *qwenSession) readLoop() {
 		case "error", "conversation.item.input_audio_transcription.failed":
 			s.terminal(Event{Type: "error", Code: "QWEN_UPSTREAM_ERROR", Message: "Qwen translation service error"})
 			return
+		}
+		for _, completed := range completions.consume(e) {
+			s.sink.Emit(completed)
 		}
 	}
 }

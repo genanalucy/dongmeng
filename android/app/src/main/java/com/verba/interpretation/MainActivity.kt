@@ -118,6 +118,9 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.verba.interpretation.audio.PlaybackRoute
+import com.verba.interpretation.export.ConversationExportAction
+import com.verba.interpretation.export.exportSnapshot
+import com.verba.interpretation.export.rememberConversationExportAction
 import com.verba.interpretation.brand.BrandConfig
 import com.verba.interpretation.brand.BrandSystemBars
 import com.verba.interpretation.brand.BrandTheme
@@ -234,6 +237,7 @@ private fun InterpretationApp(
 ) {
     val interpretationState by viewModel.state.collectAsStateWithLifecycle()
     val accountState by accountViewModel.state.collectAsStateWithLifecycle()
+    val documentExport = if (BuildConfig.DEBUG) rememberConversationExportAction(accountViewModel.state) else null
     val updateState by appUpdateViewModel.state.collectAsStateWithLifecycle()
     val automaticUpdatePrompt by appUpdateViewModel.automaticPrompt.collectAsStateWithLifecycle()
     val updateInstallGate = remember { ReadyToInstallLaunchGate() }
@@ -248,7 +252,11 @@ private fun InterpretationApp(
     }
     val navigationMode = accountState.navigationMode
     var historyTargetSessionId by remember(accountState.user?.id) { mutableStateOf<String?>(null) }
-    LaunchedEffect(accountState.user?.id) { historyViewModel.load(accountState.user?.id) }
+    LaunchedEffect(accountState.user?.id) {
+        faceViewModel.bindAccount(accountState.user?.id)
+        viewModel.bindAccount(accountState.user?.id)
+        historyViewModel.load(accountState.user?.id)
+    }
     var stack by remember(navigationMode) {
         mutableStateOf(ProductNavigationStack.initial(navigationMode, homeFirst = BuildConfig.DEBUG))
     }
@@ -348,6 +356,8 @@ private fun InterpretationApp(
                 modifier = Modifier.padding(padding),
                 viewModel = viewModel,
                 startWithPermission = startSolo,
+                documentExport = documentExport,
+                accountUserId = accountState.user?.id,
                 onExit = { stack = if (BuildConfig.DEBUG) stack.pop() else stack.selectPrimary(ProductDestination.FACE_TO_FACE) },
                 onViewHistory = { id ->
                     historyTargetSessionId = id
@@ -358,6 +368,8 @@ private fun InterpretationApp(
                 modifier = Modifier.padding(padding),
                 faceViewModel = faceViewModel,
                 requestMicrophone = requestFaceMicrophone,
+                documentExport = documentExport,
+                accountUserId = accountState.user?.id,
                 onExit = { stack = stack.pop() },
                 onViewHistory = { id ->
                     historyTargetSessionId = id
@@ -388,6 +400,7 @@ private fun InterpretationApp(
                 accountViewModel = accountViewModel,
                 showServiceSettings = EndpointSettingsAccessPolicy.endpointEditingEnabled(BuildConfig.DEBUG),
                 showBack = false,
+                onBeforeAccountExit = { documentExport?.invalidateAccount?.invoke() },
             )
             ProductScreen.ACCOUNT -> AccountPage(
                 modifier = Modifier.padding(padding),
@@ -406,6 +419,7 @@ private fun InterpretationApp(
                 accountViewModel = accountViewModel,
                 showServiceSettings = EndpointSettingsAccessPolicy.endpointEditingEnabled(BuildConfig.DEBUG),
                 showBack = true,
+                onBeforeAccountExit = { documentExport?.invalidateAccount?.invoke() },
             )
             ProductScreen.ACCOUNT_ENTITLEMENT -> AccountEntitlementPage(
                 modifier = Modifier.padding(padding),
@@ -422,6 +436,7 @@ private fun InterpretationApp(
                 modifier = Modifier.padding(padding),
                 onBack = { stack = stack.pop() },
                 accountViewModel = accountViewModel,
+                onBeforeAccountExit = { documentExport?.invalidateAccount?.invoke() },
             )
             ProductScreen.ACCOUNT_USAGE -> AccountUsagePage(Modifier.padding(padding), { stack = stack.pop() }, accountViewModel)
             ProductScreen.ACCOUNT_SETTINGS -> AccountSettingsPage(
@@ -431,6 +446,7 @@ private fun InterpretationApp(
                 onServiceSettings = { stack = stack.push(ProductNavigationPolicy.accountSecondaryScreen(AccountSecondaryDestination.SERVICE_SETTINGS)) },
                 themeMode = themeMode,
                 onSelectThemeMode = onSelectThemeMode,
+                onBeforeAccountExit = { documentExport?.invalidateAccount?.invoke() },
             )
             ProductScreen.ACCOUNT_ABOUT -> AppAboutPage(
                 modifier = Modifier.padding(padding),
@@ -782,6 +798,8 @@ private fun SoloWorkbench(
     startWithPermission: () -> Unit,
     onExit: () -> Unit,
     onViewHistory: (String) -> Unit,
+    accountUserId: String?,
+    documentExport: ConversationExportAction?,
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     Box(modifier.fillMaxSize()) {
@@ -795,12 +813,19 @@ private fun SoloWorkbench(
         onReset = viewModel::clearError,
         onSetLanguages = viewModel::setLanguages,
         onSwapLanguages = viewModel::swapLanguages,
+        onSaveToHistory = viewModel::saveCurrentToHistory,
+        onRetryHistorySave = viewModel::retryHistorySave,
+        onExport = { format ->
+            if (accountUserId != null && viewModel.isAccountBound(accountUserId)) documentExport?.export?.invoke(viewModel.state.value.exportSnapshot(), format)
+        },
+        documentExportBusy = documentExport?.busy == true,
         modifier = Modifier.fillMaxSize(),
         overlayContent = {
             LocalHistorySaveFeedback(
                 state = state.localHistorySave,
                 canOpenHistory = state.phase == SessionPhase.IDLE || state.phase == SessionPhase.ERROR,
                 onViewHistory = onViewHistory,
+                onRetry = viewModel::retryHistorySave,
                 modifier = Modifier.align(Alignment.TopCenter).padding(top = 8.dp),
             )
         },
@@ -903,6 +928,8 @@ private fun FaceToFaceWorkbench(
     faceViewModel: FaceToFaceViewModel,
     requestMicrophone: (MicrophonePermissionAction) -> Unit,
     onExit: () -> Unit,
+    accountUserId: String?,
+    documentExport: ConversationExportAction?,
 ) {
     val state by faceViewModel.state.collectAsStateWithLifecycle()
     val permissionPolicy = faceViewModel.microphonePermissionPolicy
@@ -914,12 +941,19 @@ private fun FaceToFaceWorkbench(
             requestMicrophone = requestMicrophone,
             clearMicrophoneRequest = permissionPolicy::clear,
             onExit = onExit,
+            onSaveToHistory = faceViewModel::saveCurrentToHistory,
+            onRetryHistorySave = faceViewModel::retryHistorySave,
+            onExport = { format ->
+                if (accountUserId != null && faceViewModel.isAccountBound(accountUserId)) documentExport?.export?.invoke(faceViewModel.state.value.exportSnapshot(), format)
+            },
+            documentExportBusy = documentExport?.busy == true,
             modifier = Modifier.fillMaxSize(),
         )
         LocalHistorySaveFeedback(
             state.localHistorySave,
             canOpenHistory = state.phase == FaceToFacePhase.IDLE || state.phase == FaceToFacePhase.ERROR,
             onViewHistory = onViewHistory,
+            onRetry = faceViewModel::retryHistorySave,
             modifier = Modifier
                 .align(Alignment.TopCenter)
                 .padding(top = 74.dp, bottom = 148.dp),
@@ -1031,6 +1065,7 @@ private fun AccountSecurityPage(
     modifier: Modifier,
     onBack: () -> Unit,
     accountViewModel: AccountViewModel,
+    onBeforeAccountExit: () -> Unit = {},
 ) {
     val state by accountViewModel.state.collectAsStateWithLifecycle()
     val securityState by accountViewModel.securityState.collectAsStateWithLifecycle()
@@ -1040,7 +1075,7 @@ private fun AccountSecurityPage(
         username = state.identityProfile?.username ?: state.overview?.username ?: state.user?.username,
         onBack = onBack,
         onRefresh = accountViewModel::loadSecurity,
-        onLogout = accountViewModel::logout,
+        onLogout = { onBeforeAccountExit(); accountViewModel.logout() },
         modifier = modifier,
     )
 }
@@ -1076,6 +1111,7 @@ private fun AccountSettingsPage(
     onServiceSettings: () -> Unit = {},
     themeMode: ThemeMode = ThemeMode.SYSTEM,
     onSelectThemeMode: (ThemeMode) -> Unit = {},
+    onBeforeAccountExit: () -> Unit = {},
 ) {
     val state by accountViewModel.state.collectAsStateWithLifecycle()
     LaunchedEffect(Unit) { accountViewModel.loadIdentityProfile() }
@@ -1085,7 +1121,7 @@ private fun AccountSettingsPage(
         loading = state.loading,
         message = state.message,
         onBack = onBack,
-        onDeleteAccount = accountViewModel::deleteAccount,
+        onDeleteAccount = { confirmation -> onBeforeAccountExit(); accountViewModel.deleteAccount(confirmation) },
         isAdmin = state.isAdmin,
         modifier = modifier,
         identityProfile = identityProfile,
@@ -1112,6 +1148,7 @@ private fun AccountPage(
     accountViewModel: AccountViewModel,
     showBack: Boolean = true,
     showServiceSettings: Boolean = true,
+    onBeforeAccountExit: () -> Unit = {},
 ) {
     val state by accountViewModel.state.collectAsStateWithLifecycle()
     val latestLoginIdentifier by accountViewModel.latestLoginIdentifier.collectAsStateWithLifecycle()
@@ -1125,7 +1162,7 @@ private fun AccountPage(
             onHistory = onHistory,
             onSettings = onSettings,
             onServiceSettings = onServiceSettings,
-            onLogout = accountViewModel::logout,
+            onLogout = { onBeforeAccountExit(); accountViewModel.logout() },
             modifier = modifier,
             showServiceSettings = showServiceSettings,
             onSecurity = onSecurity,

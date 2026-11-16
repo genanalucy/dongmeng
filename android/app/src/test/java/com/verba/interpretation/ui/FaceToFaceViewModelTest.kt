@@ -62,6 +62,42 @@ class FaceToFaceViewModelTest {
         effects.drain()
     }
 
+    @Test fun completedTurnIsSavedBeforeTransportFinishWithoutDuplicateAggregate() {
+        val saved = java.util.concurrent.CopyOnWriteArrayList<com.verba.interpretation.history.CompletedTurn>()
+        val model = FaceToFaceViewModel(Application(), runtime,
+            TranslationSessionCoordinator(cloud, CoroutineScope(dispatcher), { 0L }, dispatcher),
+            LocalHistoryTurnSaver { saved += it; requireNotNull(it.localSessionId) }, playback, effects)
+        model.manualPress(FaceToFaceSide.LEFT)
+        dispatcher.scheduler.runCurrent()
+        effects.drain()
+        val socket = runtime.sockets.single()
+        socket.source("你好")
+        socket.translation("Hello")
+        socket.event(AgentEvent.TurnCompleted("utterance-1", "你好", "Hello"))
+        assertNotNull(awaitTrue(2000) { saved.size == 1 })
+        model.manualRelease()
+        effects.drain()
+        socket.event(AgentEvent.Finished)
+        model.saveCurrentToHistory()
+        playback.drain()
+        assertEquals(1, saved.size)
+        model.cancel()
+        effects.drain()
+    }
+
+    @Test fun changingAccountClearsTranscriptBeforeExportCanBeRequested() {
+        vm.bindAccount("user-a")
+        start()
+        runtime.sockets.single().source("private A")
+        assertTrue(vm.isAccountBound("user-a"))
+        vm.bindAccount("user-b")
+        effects.drain()
+        assertTrue(vm.state.value.turns.isEmpty())
+        assertFalse(vm.state.value.captureActive)
+        assertFalse(vm.isAccountBound("user-a"))
+        assertTrue(vm.isAccountBound("user-b"))
+    }
+
     @Test fun autoContinuesAfterFinalPairAndPlaybackWithoutAnotherTap() {
         start()
         val socket = runtime.sockets.single()

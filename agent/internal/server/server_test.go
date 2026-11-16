@@ -691,6 +691,7 @@ func TestStartParsingAndLanguageValidation(t *testing.T) {
 		{"targetAudioRate": 8000},
 		{"userId": testUserID},
 		{"extra": true},
+		{"supportsCompletedTurns": "true"},
 	}
 	for _, update := range tests {
 		ts := testHTTPServer(&fakeClient{})
@@ -861,5 +862,59 @@ func signSessionTokenClaims(t *testing.T, key []byte, issuer, audience string, e
 }
 
 func stringPointer(value string) *string { return &value }
+
+type completedTurnClient struct {
+	t              *testing.T
+	wantCapability bool
+}
+
+func (c completedTurnClient) Start(_ context.Context, request ast.StartRequest, sink ast.EventSink) (ast.Session, error) {
+	if request.SupportsCompletedTurns != c.wantCapability {
+		c.t.Errorf("AST capability = %v, want %v", request.SupportsCompletedTurns, c.wantCapability)
+	}
+	sink.Emit(ast.Event{Type: "turn_completed", CompletionID: "source-item", SourceText: "private source body", TranslatedText: "private translated body"})
+	sink.Emit(ast.Event{Type: "source_final", Message: "legacy source"})
+	sink.Emit(ast.Event{Type: "finished"})
+	return &fakeSession{}, nil
+}
+
+func TestCompletedTurnsRequireExplicitClientCapability(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		updates   map[string]any
+		supported bool
+	}{
+		{name: "absent"},
+		{name: "false", updates: map[string]any{"supportsCompletedTurns": false}},
+		{name: "true", updates: map[string]any{"supportsCompletedTurns": true}, supported: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var logs bytes.Buffer
+			ts := httptest.NewServer(New(Options{ASTClient: completedTurnClient{t: t, wantCapability: tc.supported}, Logger: slog.New(slog.NewTextHandler(&logs, nil))}).Handler())
+			defer ts.Close()
+			conn := dial(t, ts.URL, "http://localhost:5173")
+			defer conn.CloseNow()
+			start(t, conn, tc.updates)
+			if event := readEvent(t, conn); event.Type != "ready" {
+				t.Fatalf("got %#v, want ready", event)
+			}
+			if tc.supported {
+				event := readEvent(t, conn)
+				if event.Type != "turn_completed" || event.CompletionID != "source-item" || event.SourceText != "private source body" || event.TranslatedText != "private translated body" {
+					t.Fatalf("completed wire event = %#v", event)
+				}
+			}
+			if event := readEvent(t, conn); event.Type != "source_final" || event.Message != "legacy source" {
+				t.Fatalf("legacy event changed: %#v", event)
+			}
+			if event := readEvent(t, conn); event.Type != "finished" {
+				t.Fatalf("got %#v, want finished", event)
+			}
+			if strings.Contains(logs.String(), "private source body") || strings.Contains(logs.String(), "private translated body") {
+				t.Fatal("completion body logged")
+			}
+		})
+	}
+}
 
 var _ = errors.New

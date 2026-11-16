@@ -634,6 +634,12 @@ class FaceToFaceCoordinator<S> {
     }
 
     @Synchronized
+    fun clearTranscript() {
+        check(entries.isEmpty() && !playbackInProgress)
+        current = current.copy(turns = emptyList())
+    }
+
+    @Synchronized
     fun clearError() {
         if (current.phase == FaceToFacePhase.ERROR) {
             current = current.copy(phase = FaceToFacePhase.IDLE, error = null, sessionEndReason = null)

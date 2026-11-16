@@ -54,8 +54,11 @@ class FaceToFaceViewModel @JvmOverloads constructor(
     private val actionLock = Any()
     private val localHistory = LocalHistorySaveController(
         historySaver ?: LocalHistoryRepository.create(application).let { history -> LocalHistoryTurnSaver { history.recordCompletedTurn(it) } },
-        viewModelScope,
+        accountEpoch = { userId -> if (historySaver == null) LocalHistoryRepository.captureAccountEpoch(application, userId) else 0L },
     )
+    private val completedTransports = mutableSetOf<Long>()
+    private val terminalTransports = mutableSetOf<Long>()
+    private var transcriptAccount: String? = null
     private val localTurnOwnership = mutableMapOf<Long, LocalHistoryTurnOwnership>()
     private val playbackGeneration = AtomicLong()
     private val captureGeneration = AtomicLong()
@@ -119,6 +122,28 @@ class FaceToFaceViewModel @JvmOverloads constructor(
         applyTransition(transition)
         if (transition.accepted && transition.cancelSessions.isNotEmpty()) endCloudSession()
     }
+
+    fun isAccountBound(userId: String): Boolean = synchronized(actionLock) { transcriptAccount == userId }
+
+    fun bindAccount(userId: String?) = synchronized(actionLock) {
+        if (transcriptAccount != userId) {
+            cancel()
+            coordinator.clearTranscript()
+            completedTransports.clear()
+            terminalTransports.clear()
+            transcriptAccount = userId
+            publishState()
+        }
+    }
+
+    fun saveCurrentToHistory() = synchronized(actionLock) {
+        coordinator.state().turns.filter { it.finished }.forEach { captureCompletedTurn(it.id) }
+        localHistory.retryFailed()
+        localHistory.explainIfNoCompletedContent()
+        publishState()
+    }
+
+    fun retryHistorySave() { localHistory.retryFailed() }
 
     /** Pointer cancellation must discard only the pressed, unfinished manual turn. */
     fun manualCancel() = synchronized(actionLock) {
@@ -420,6 +445,7 @@ class FaceToFaceViewModel @JvmOverloads constructor(
                     return
                 }
                 connectingTurns -= turnId
+                terminalTransports += turnId
                 // A continuous transport owns many logical turns. They are persisted
                 // only at their final-pair boundary, never again at transport finish.
                 val work = coordinator.transportFinished(socket ?: return)
@@ -444,6 +470,14 @@ class FaceToFaceViewModel @JvmOverloads constructor(
                     captureCompletedTurn(turnId)
                 } else publishState()
             }
+            is AgentEvent.TurnCompleted -> {
+                val turn = coordinator.state().turns.firstOrNull { it.id == turnId } ?: return
+                val ownership = localTurnOwnership[turnId] ?: return
+                completedTransports += turnId
+                localHistory.saveTurn(ownership.copy(turnId = "${ownership.turnId}:${event.completionId}"),
+                    turn.sourceLanguage, turn.targetLanguage, event.sourceText, event.translatedText, System.currentTimeMillis())
+                publishState()
+            }
             is AgentEvent.SessionTerminated -> terminateSession(event.reason)
             is AgentEvent.Error -> handleSessionFailure(turnId, "${event.code}: ${event.message}")
         }
@@ -451,12 +485,13 @@ class FaceToFaceViewModel @JvmOverloads constructor(
 
     /** Finished is the durable boundary: never persist a partial or unmatched final pair. */
     private fun captureCompletedTurn(turnId: Long) {
+        if (turnId in completedTransports || turnId !in terminalTransports) return
         val turn = coordinator.state().turns.firstOrNull { it.id == turnId } ?: return
         if (!turn.finished) return
-        val completedCount = minOf(turn.sourceFinals.size, turn.translationFinals.size)
-        if (completedCount == 0) return
-        val sourceText = turn.sourceFinals.take(completedCount).joinToString(" ").trim()
-        val translatedText = turn.translationFinals.take(completedCount).joinToString(" ").trim()
+        // Legacy servers have no sentence identity: archive the entire completed
+        // transport as one block, never zip independently segmented final arrays.
+        val sourceText = turn.sourceFinals.joinToString(" ").trim()
+        val translatedText = turn.translationFinals.joinToString(" ").trim()
         if (sourceText.isBlank() || translatedText.isBlank()) return
         val ownership = localTurnOwnership[turnId] ?: return
         localHistory.saveTurn(
