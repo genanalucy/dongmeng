@@ -1,6 +1,8 @@
+> **历史证据，非现行操作或验收结论。** 来源：`079108bff4b55d1b3783ca8e99e3376a35804ee0` 的 `docs/deployment/app-ota-update.md`。原文中的“当前/本次”仅指记录当时，未测项保持未测；本轮未连接生产或真机。现行入口：[当前说明](../../../../../docs/deployment/download-center.md)；来源与内容处理见[批次索引](../../../../indexes/06-operations-and-test-materials.md)。
+
 # Android OTA 更新发布
 
-> **当前发布入口已迁移**：2026-11-13起，官网页面和正式/测试OTA由同一个快照生成。后续请使用 [下载中心同步流程](download-center.md) 更新 `site/download/releases.json` 并部署，不再仅替换旧 `/ota/debug-v*.json` 或只改Cloud API环境，否则与官网不同步。下文保留历史操作记录供回溯。
+> **当前发布入口已迁移**：2026-11-13起，官网页面和正式/测试OTA由同一个快照生成。后续请使用 [下载中心同步流程](../../../../../docs/deployment/download-center.md) 更新 `site/download/releases.json` 并部署，不再仅替换旧 `/ota/debug-v*.json` 或只改Cloud API环境，否则与官网不同步。下文保留历史操作记录供回溯。
 
 应用从 `GET /api/v1/app-update` 获取公开的更新元数据。未配置完整更新变量时接口固定返回 `{"available":false}`，不会向用户推送不完整更新。
 
@@ -28,7 +30,7 @@ APP_UPDATE_FORCE=false
 旧 Debug `20260920.1602` 检查更新时不传包名或通道，默认使用 `47-129-170-16.sslip.io`；正式 v20 锁定 `yszn.nlplayer.org`。当前在 Caddy 上仅对旧域名的精确路径 `/api/v1/app-update` 提供静态 Debug 元数据，其余 API 和 WebSocket 继续转发原后端。此方案是旧客户端兼容桥接，不是完整的包名/通道协议。
 
 - 元数据源：[`ota/debug-v22.json`](ota/debug-v22.json)，部署到 `/opt/dngmeng/ota/debug-v22.json`，文件权限 644。
-- Caddy 配置参考：[`Caddyfile.production`](Caddyfile.production) 中 sslip 站点的精确 `handle`；不要用此参考覆盖线上整个 Caddyfile，线上还有正式站点及其他服务。
+- Caddy 配置参考：[`Caddyfile.production`](../../../../../docs/deployment/Caddyfile.production) 中 sslip 站点的精确 `handle`；不要用此参考覆盖线上整个 Caddyfile，线上还有正式站点及其他服务。
 - Debug：`com.verba.interpretation.debug` / v22 / `20261105.0031`，已发布 APK 的 SHA-256 和签名校验通过。
 - 正式站点仍转发 Cloud API，`APP_UPDATE_*` 环境未修改，仍返回正式 v20。
 - 响应使用 `Cache-Control: no-store`；旧 300 秒缓存可能需等待最多 5 分钟。

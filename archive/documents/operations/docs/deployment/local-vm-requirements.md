@@ -1,3 +1,5 @@
+> **历史证据，非现行操作或验收结论。** 来源：`079108bff4b55d1b3783ca8e99e3376a35804ee0` 的 `docs/deployment/local-vm-requirements.md`。原文中的“当前/本次”仅指记录当时，未测项保持未测；本轮未连接生产或真机。现行入口：[当前说明](../../../../../docs/operations/README.md)；来源与内容处理见[批次索引](../../../../indexes/06-operations-and-test-materials.md)。
+
 # 本地服务器虚拟机需求（中等预算混合部署）
 
 **用途：** 承载翻译业务核心、Cloud API、翻译 Agent 与 PostgreSQL；通过主动加密隧道接受 AWS 新加坡入口转发。

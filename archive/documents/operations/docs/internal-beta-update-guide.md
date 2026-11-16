@@ -1,3 +1,5 @@
+> **历史Beta手册，不作为当前安装、注册或故障处置步骤。** 来源：`079108bff4b55d1b3783ca8e99e3376a35804ee0` 的 `docs/internal-beta-update-guide.md`。旧文中“任取最新Pre-release”和“签名冲突先卸载”的建议不继承为当前操作：卸载会清除本机数据，必须先保留数据并核对包、证书、来源与兼容性，不按历史手册自动卸载。当前版本与流程见[双通道发布](../../../../docs/deployment/download-center.md)、[用户测试入口](../../../../translation-test-kit/README.md)；来源/前后hash见[06索引](../../../indexes/06-operations-and-test-materials.md)。旧手机号/邮箱描述仅是当时文本，不代表v30已验收。
+
 # Android 内部 Beta 更新手册
 
 > 本版本仅供内部测试，不适用于生产环境。

@@ -1,3 +1,5 @@
+> **历史证据，非现行操作或验收结论。** 来源：`079108bff4b55d1b3783ca8e99e3376a35804ee0` 的 `docs/reviews/android-phase1-regression.md`。原文中的“当前/本次”仅指记录当时，未测项保持未测；本轮未连接生产或真机。现行入口：[当前说明](../../../../../translation-test-kit/README.md)；来源与内容处理见[批次索引](../../../../indexes/06-operations-and-test-materials.md)。
+
 # 第一阶段：Android 核心流程回归
 
 状态：原 Debug v22 基线已留存，但审核发现导航生命周期与列表入场缺陷，暂不分发该旧产物。修复后的 JVM/lint/构建通过，新增 UI 设备测试待执行；用户改为远程测试，所有人工验收仍未测。第一阶段未完成，此记录不是发布批准。
@@ -21,7 +23,7 @@
 | APK 文件名 | `verba-debug-v22-20261104.2216-8348e82.apk` |
 | APK SHA-256 | `e20a0fafe0c9949e319f05122a004265d7d00ba34fb6c2e89026913b66102232` |
 | 签名证书 SHA-256 | `a01bd76290417cdce645c2ff5d35e95b0286a58e194d7c39a6cfcd994638e5b4` |
-| 本机留存目录 | `/home/genanalucy/.local/share/verba-test-artifacts/debug-v22-8348e82-20261104.2216/` |
+| 本机留存目录 | `本机受限产物目录/debug-v22-8348e82-20261104.2216/` |
 | 默认 API / WS | `https://47-129-170-16.sslip.io` / `wss://47-129-170-16.sslip.io/ws/translate` |
 | 发布状态 | 仅本地留存，未发布 Release、未更新 OTA、未安装到设备 |
 
@@ -41,7 +43,7 @@
 - 准备时两个入口的 health 均 200；未发起登录请求、真实翻译或生产写入。未运行真实 PostgreSQL 集成或设备 instrumentation。
 - ADB 检测无设备，等待用户连接手机并授权后继续。
 
-正式对照仍为 v20 `20260915.0232`，见 [基线说明](../development/baselines.md)。Debug v22 不替代正式对照测试。
+正式对照仍为 v20 `20260915.0232`，见 [基线说明](../../../../../docs/development/baselines.md)。Debug v22 不替代正式对照测试。
 
 ## 审核后的修复与发布门槛
 
@@ -60,7 +62,7 @@
 - APK：`verba-debug-visual-v22-20261105.0031-21c9f50.apk`，包名 `com.verba.interpretation.debug`，versionCode `22`，versionName `20261105.0031`。
 - 源码：`21c9f50b2fd138b214c9b34a263b14c81f71e4a5`；设备测试修正提交 `d81b29d` 仅将预期导航文案改为实际“同传”，未改变运行时。
 - SHA-256：`93c47d42a0cae8599847d7cb6197a8bd8e32b5bc22f71f9651e18028a556a34e`；签名仍为既有 Debug 证书，APK v2 校验通过。
-- 本机目录：`/home/genanalucy/.local/share/verba-test-artifacts/debug-visual-v22-21c9f50-20261105.0031/`。
+- 本机目录：`本机受限产物目录/debug-visual-v22-21c9f50-20261105.0031/`。
 - 改动仅 Debug 样式：深浅主题蓝绿色主色、实色无描边内容卡、轻量导航、较小中性麦克风、原文/译文排版、账户图标与分组线。Release 保留原主题和视觉分支；不改变业务协议。
 - 385 项 JVM 单测通过（新增深浅色对比度检查），lint 无错误（48 Warning / 2 Hint），Debug、Release 与 AndroidTest 构建通过。
 - [设备 UI 回归](https://github.com/genanalucy/dongmeng/actions/runs/41869794465)成功，包含上轮生命周期/列表4项用例及新增320dp、200%字体导航用例。首次运行因测试误写“同声传译”失败，改为实际“同传”后通过。

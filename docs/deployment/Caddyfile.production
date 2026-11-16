@@ -1,3 +1,5 @@
+# Repository reference only; not a verified live configuration.
+# Current process: docs/deployment/download-center.md. Review live config before applying.
 47-129-170-16.sslip.io {
 	encode zstd gzip
 
