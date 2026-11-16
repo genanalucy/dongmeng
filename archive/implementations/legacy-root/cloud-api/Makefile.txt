@@ -1,0 +1,28 @@
+.PHONY: fmt tidy test vet run db-up db-down migrate-up migrate-down
+
+fmt:
+	gofmt -w .
+
+tidy:
+	go mod tidy
+
+test:
+	go test ./...
+
+vet:
+	go vet ./...
+
+run:
+	go run ./cmd/cloud-api
+
+db-up:
+	docker compose -f docker-compose.dev.yml up -d
+
+db-down:
+	docker compose -f docker-compose.dev.yml down
+
+migrate-up:
+	psql "$$DATABASE_URL" -v ON_ERROR_STOP=1 -f migrations/000001_initial.up.sql
+
+migrate-down:
+	psql "$$DATABASE_URL" -v ON_ERROR_STOP=1 -f migrations/000001_initial.down.sql

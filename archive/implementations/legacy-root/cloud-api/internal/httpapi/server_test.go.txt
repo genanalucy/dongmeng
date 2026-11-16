@@ -1,0 +1,31 @@
+package httpapi
+
+import (
+	"bytes"
+	"encoding/json"
+	"io"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+	"time"
+
+	"github.com/dngmeng/cloud-api/internal/auth"
+	"github.com/dngmeng/cloud-api/internal/domain"
+	"github.com/dngmeng/cloud-api/internal/store"
+	"github.com/google/uuid"
+)
+
+type testAPI struct{ handler http.Handler; store *store.Memory; tokens auth.TokenIssuer; now time.Time }
+func newTestAPI()testAPI{m:=store.NewMemory();tokens:=auth.TokenIssuer{Issuer:"test",Audience:"clients",AccessSecret:bytes.Repeat([]byte("a"),32),SessionSecret:bytes.Repeat([]byte("s"),32)};return testAPI{handler:New(m,tokens,slog.New(slog.NewTextHandler(io.Discard,nil)),[]string{"https://app.example"},"test",1<<20),store:m,tokens:tokens,now:time.Now()}}
+func (a testAPI) register(t *testing.T,email string,now time.Time)domain.User{t.Helper();hash,err:=auth.HashPassword("correct horse battery");if err!=nil{t.Fatal(err)};u,_,err:=a.store.Register(t.Context(),domain.RegisterParams{Email:email,PasswordHash:hash,Now:now});if err!=nil{t.Fatal(err)};return u}
+func (a testAPI) token(t *testing.T,u domain.User)string{t.Helper();v,err:=a.tokens.AccessToken(u.ID,u.Role,time.Hour,time.Now());if err!=nil{t.Fatal(err)};return v}
+func request(t *testing.T,h http.Handler,method,path,token string,body any)*httptest.ResponseRecorder{t.Helper();var r io.Reader;if body!=nil{raw,err:=json.Marshal(body);if err!=nil{t.Fatal(err)};r=bytes.NewReader(raw)};req:=httptest.NewRequest(method,path,r);if body!=nil{req.Header.Set("Content-Type","application/json")};if token!=""{req.Header.Set("Authorization","Bearer "+token)};rr:=httptest.NewRecorder();h.ServeHTTP(rr,req);return rr}
+
+func TestNoEntitlementRejectsTranslationSession(t *testing.T){a:=newTestAPI();u:=a.register(t,"expired@example.com",time.Now().Add(-4*24*time.Hour));rr:=request(t,a.handler,http.MethodPost,"/v1/translation-sessions",a.token(t,u),map[string]any{});if rr.Code!=http.StatusForbidden{t.Fatalf("status=%d body=%s",rr.Code,rr.Body.String())}}
+func TestNonAdminCannotAccessAdmin(t *testing.T){a:=newTestAPI();u:=a.register(t,"user@example.com",time.Now());rr:=request(t,a.handler,http.MethodGet,"/v1/admin/users",a.token(t,u),nil);if rr.Code!=http.StatusForbidden{t.Fatalf("status=%d body=%s",rr.Code,rr.Body.String())}}
+func TestAdminCreatesBatchAndAudit(t *testing.T){a:=newTestAPI();u:=a.register(t,"admin@example.com",time.Now());a.store.SetRole(u.ID,"admin");u.Role="admin";rr:=request(t,a.handler,http.MethodPost,"/v1/admin/redemption-code-batches",a.token(t,u),map[string]any{"name":"annual","count":2});if rr.Code!=http.StatusCreated{t.Fatalf("status=%d body=%s",rr.Code,rr.Body.String())};logs,err:=a.store.ListAuditLogs(t.Context(),10,0);if err!=nil||len(logs)!=1{t.Fatalf("audit logs=%d err=%v",len(logs),err)}}
+func TestUnknownJSONFieldRejected(t *testing.T){a:=newTestAPI();rr:=request(t,a.handler,http.MethodPost,"/v1/auth/login","",map[string]any{"email":"x@example.com","password":"passwordpassword","extra":true});if rr.Code!=http.StatusBadRequest{t.Fatalf("status=%d body=%s",rr.Code,rr.Body.String())}}
+func TestUnknownOriginRejectedAndRequestIDReturned(t *testing.T){a:=newTestAPI();req:=httptest.NewRequest(http.MethodGet,"/healthz",nil);req.Header.Set("Origin","https://evil.example");rr:=httptest.NewRecorder();a.handler.ServeHTTP(rr,req);if rr.Code!=http.StatusForbidden{t.Fatalf("status=%d",rr.Code)};if rr.Header().Get("X-Request-ID")==""{t.Fatal("missing request id response header")}}
+func TestArtifactOwnershipHTTP(t *testing.T){a:=newTestAPI();now:=time.Now();u1:=a.register(t,"artifact1@example.com",now);u2:=a.register(t,"artifact2@example.com",now);c,err:=a.store.CreateFeedbackConsent(t.Context(),u1.ID,true,now);if err!=nil{t.Fatal(err)};art,err:=a.store.CreateFeedbackArtifact(t.Context(),domain.CreateArtifactParams{UserID:u1.ID,ConsentID:c.ID,ObjectKey:"feedback/owned.wav",ExpiresAt:now.Add(time.Hour),Now:now});if err!=nil{t.Fatal(err)};rr:=request(t,a.handler,http.MethodGet,"/v1/feedback/artifacts/"+art.ID.String(),a.token(t,u2),nil);if rr.Code!=http.StatusNotFound{t.Fatalf("status=%d body=%s",rr.Code,rr.Body.String())}}
+func TestTranslationTokenClaims(t *testing.T){a:=newTestAPI();u:=a.register(t,"session@example.com",time.Now());rr:=request(t,a.handler,http.MethodPost,"/v1/translation-sessions",a.token(t,u),map[string]any{});if rr.Code!=http.StatusCreated{t.Fatalf("status=%d body=%s",rr.Code,rr.Body.String())};var out struct{SessionID uuid.UUID `json:"session_id"`;Token string `json:"token"`;Scope string `json:"scope"`};if err:=json.Unmarshal(rr.Body.Bytes(),&out);err!=nil{t.Fatal(err)};if out.SessionID==uuid.Nil||out.Token==""||out.Scope!="translation"{t.Fatalf("bad response: %+v",out)}}

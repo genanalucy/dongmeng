@@ -2,7 +2,7 @@
 
 这里保存经核实的旧方案、旧实现和过程证据，供查找来源与理解变更。归档内容默认是**历史证据**，不作为当前产品规范、运行入口或已验收结论。当前入口见[项目首页](../README.md)、[文档导航](../docs/README.md)与[模块地图](../docs/architecture/README.md)。
 
-本入口在资料迁移前建立；**本批没有搬移旧资料**。已迁入内容及原因由[批次索引目录](indexes/)逐项列明。尚未迁移的[阶段计划](../docs/superpowers/)和[评审记录](../docs/reviews/)仍在原处；[基线记录](../docs/development/baselines.md)也保留历史正文。索引为空不表示旧材料已删除，不能宣称归档已经全部完成。
+本入口在资料迁移前建立；**本批没有搬移旧资料**。已迁入内容及原因由[批次索引目录](indexes/)逐项列明。尚未迁移的[阶段计划](indexes/05-prototype-documents.md)和[评审记录](indexes/05-prototype-documents.md)仍在原处；[基线记录](../docs/development/baselines.md)也保留历史正文。索引为空不表示旧材料已删除，不能宣称归档已经全部完成。
 
 ## 稳定目录与分批索引
 

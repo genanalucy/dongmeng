@@ -1,0 +1,252 @@
+package store
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"time"
+
+	"github.com/dngmeng/cloud-api/internal/domain"
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+)
+
+type Postgres struct{ Pool *pgxpool.Pool }
+
+func (s *Postgres) Register(ctx context.Context, p domain.RegisterParams) (domain.User, domain.Entitlement, error) {
+	tx, err := s.Pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return domain.User{}, domain.Entitlement{}, err
+	}
+	defer tx.Rollback(ctx)
+	var u domain.User
+	err = tx.QueryRow(ctx, `INSERT INTO users DEFAULT VALUES RETURNING id, role::text, created_at`).Scan(&u.ID, &u.Role, &u.CreatedAt)
+	if err != nil {
+		return u, domain.Entitlement{}, err
+	}
+	u.Email = p.Email
+	if _, err = tx.Exec(ctx, `INSERT INTO user_identities(user_id,provider,identifier) VALUES($1,'email',$2)`, u.ID, p.Email); err != nil {
+		return u, domain.Entitlement{}, mapPGError(err)
+	}
+	if _, err = tx.Exec(ctx, `INSERT INTO password_credentials(user_id,password_hash) VALUES($1,$2)`, u.ID, p.PasswordHash); err != nil {
+		return u, domain.Entitlement{}, err
+	}
+	var e domain.Entitlement
+	err = tx.QueryRow(ctx, `INSERT INTO entitlements(user_id,kind,starts_at,expires_at) VALUES($1,'trial',$2,$2+interval '3 days') RETURNING id,user_id,kind::text,starts_at,expires_at`, u.ID, p.Now).Scan(&e.ID, &e.UserID, &e.Kind, &e.StartsAt, &e.ExpiresAt)
+	if err != nil {
+		return u, e, err
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return u, e, err
+	}
+	return u, e, nil
+}
+
+func (s *Postgres) UserByEmail(ctx context.Context, email string) (domain.User, string, error) {
+	var u domain.User
+	var hash string
+	err := s.Pool.QueryRow(ctx, `SELECT u.id,i.identifier,u.role::text,u.created_at,p.password_hash FROM users u JOIN user_identities i ON i.user_id=u.id AND i.provider='email' JOIN password_credentials p ON p.user_id=u.id WHERE i.identifier=$1`, email).Scan(&u.ID, &u.Email, &u.Role, &u.CreatedAt, &hash)
+	return u, hash, mapNotFound(err)
+}
+func (s *Postgres) UserByID(ctx context.Context, id uuid.UUID) (domain.User, error) {
+	var u domain.User
+	err := s.Pool.QueryRow(ctx, `SELECT u.id,COALESCE(i.identifier,''),u.role::text,u.created_at FROM users u LEFT JOIN user_identities i ON i.user_id=u.id AND i.provider='email' WHERE u.id=$1`, id).Scan(&u.ID, &u.Email, &u.Role, &u.CreatedAt)
+	return u, mapNotFound(err)
+}
+func (s *Postgres) CreateRefreshToken(ctx context.Context, p domain.CreateRefreshParams) (domain.RefreshToken, error) {
+	var t domain.RefreshToken
+	err := s.Pool.QueryRow(ctx, `INSERT INTO refresh_tokens(user_id,family_id,token_hash,expires_at) VALUES($1,$2,$3,$4) RETURNING id,user_id,family_id,token_hash,expires_at,revoked_at,replaced_by_id`, p.UserID, p.FamilyID, p.Hash, p.ExpiresAt).Scan(&t.ID, &t.UserID, &t.FamilyID, &t.TokenHash, &t.ExpiresAt, &t.RevokedAt, &t.ReplacedByID)
+	return t, err
+}
+func (s *Postgres) RotateRefreshToken(ctx context.Context, oldHash, newHash []byte, now, expires time.Time) (domain.RefreshToken, domain.RefreshToken, error) {
+	tx, err := s.Pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return domain.RefreshToken{}, domain.RefreshToken{}, err
+	}
+	defer tx.Rollback(ctx)
+	var old domain.RefreshToken
+	err = tx.QueryRow(ctx, `SELECT id,user_id,family_id,token_hash,expires_at,revoked_at,replaced_by_id FROM refresh_tokens WHERE token_hash=$1 FOR UPDATE`, oldHash).Scan(&old.ID, &old.UserID, &old.FamilyID, &old.TokenHash, &old.ExpiresAt, &old.RevokedAt, &old.ReplacedByID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return old, domain.RefreshToken{}, domain.ErrUnauthorized
+	}
+	if err != nil {
+		return old, domain.RefreshToken{}, err
+	}
+	if old.RevokedAt != nil {
+		_, err = tx.Exec(ctx, `UPDATE refresh_tokens SET revoked_at=COALESCE(revoked_at,$2),updated_at=$2 WHERE family_id=$1`, old.FamilyID, now)
+		if err != nil {
+			return old, domain.RefreshToken{}, err
+		}
+		if err = tx.Commit(ctx); err != nil {
+			return old, domain.RefreshToken{}, err
+		}
+		return old, domain.RefreshToken{}, domain.ErrUnauthorized
+	}
+	if !old.ExpiresAt.After(now) {
+		return old, domain.RefreshToken{}, domain.ErrUnauthorized
+	}
+	var next domain.RefreshToken
+	err = tx.QueryRow(ctx, `INSERT INTO refresh_tokens(user_id,family_id,token_hash,expires_at) VALUES($1,$2,$3,$4) RETURNING id,user_id,family_id,token_hash,expires_at,revoked_at,replaced_by_id`, old.UserID, old.FamilyID, newHash, expires).Scan(&next.ID, &next.UserID, &next.FamilyID, &next.TokenHash, &next.ExpiresAt, &next.RevokedAt, &next.ReplacedByID)
+	if err != nil {
+		return old, next, err
+	}
+	_, err = tx.Exec(ctx, `UPDATE refresh_tokens SET revoked_at=$2,replaced_by_id=$3,updated_at=$2 WHERE id=$1`, old.ID, now, next.ID)
+	if err != nil {
+		return old, next, err
+	}
+	err = tx.Commit(ctx)
+	return old, next, err
+}
+func (s *Postgres) RevokeRefreshToken(ctx context.Context, hash []byte, now time.Time) error {
+	tag, err := s.Pool.Exec(ctx, `UPDATE refresh_tokens SET revoked_at=COALESCE(revoked_at,$2),updated_at=$2 WHERE token_hash=$1`, hash, now)
+	if err == nil && tag.RowsAffected() == 0 {
+		return domain.ErrNotFound
+	}
+	return err
+}
+func (s *Postgres) ActiveEntitlement(ctx context.Context, userID uuid.UUID, now time.Time) (domain.Entitlement, error) {
+	var e domain.Entitlement
+	err := s.Pool.QueryRow(ctx, `SELECT id,user_id,kind::text,starts_at,expires_at FROM entitlements WHERE user_id=$1 AND starts_at<=$2 AND expires_at>$2 ORDER BY expires_at DESC LIMIT 1`, userID, now).Scan(&e.ID, &e.UserID, &e.Kind, &e.StartsAt, &e.ExpiresAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return e, domain.ErrNoEntitlement
+	}
+	return e, err
+}
+func (s *Postgres) CreateCodeBatch(ctx context.Context, p domain.CreateBatchParams) (domain.CodeBatch, error) {
+	tx, err := s.Pool.Begin(ctx)
+	if err != nil {
+		return domain.CodeBatch{}, err
+	}
+	defer tx.Rollback(ctx)
+	var b domain.CodeBatch
+	err = tx.QueryRow(ctx, `INSERT INTO redemption_code_batches(name,duration_days,created_by) VALUES($1,$2,$3) RETURNING id,name,duration_days,created_by,created_at`, p.Name, p.DurationDays, p.AdminID).Scan(&b.ID, &b.Name, &b.DurationDays, &b.CreatedBy, &b.CreatedAt)
+	if err != nil {
+		return b, err
+	}
+	for _, h := range p.CodeHashes {
+		if _, err = tx.Exec(ctx, `INSERT INTO redemption_codes(batch_id,code_hash) VALUES($1,$2)`, b.ID, h); err != nil {
+			return b, err
+		}
+	}
+	metadata, _ := json.Marshal(map[string]int{"count": len(p.CodeHashes)})
+	_, err = tx.Exec(ctx, `INSERT INTO admin_audit_logs(admin_id,action,target_type,target_id,metadata) VALUES($1,'redemption_batch.create','redemption_code_batch',$2,$3)`, p.AdminID, b.ID, metadata)
+	if err != nil {
+		return b, err
+	}
+	err = tx.Commit(ctx)
+	return b, err
+}
+func (s *Postgres) RedeemCode(ctx context.Context, userID uuid.UUID, hash []byte, now time.Time) (domain.Entitlement, error) {
+	tx, err := s.Pool.Begin(ctx)
+	if err != nil {
+		return domain.Entitlement{}, err
+	}
+	defer tx.Rollback(ctx)
+	var codeID uuid.UUID
+	var days int
+	var redeemed *uuid.UUID
+	err = tx.QueryRow(ctx, `SELECT c.id,b.duration_days,c.redeemed_by FROM redemption_codes c JOIN redemption_code_batches b ON b.id=c.batch_id WHERE c.code_hash=$1 FOR UPDATE OF c`, hash).Scan(&codeID, &days, &redeemed)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.Entitlement{}, domain.ErrInvalid
+	}
+	if err != nil {
+		return domain.Entitlement{}, err
+	}
+	if redeemed != nil {
+		return domain.Entitlement{}, domain.ErrConflict
+	}
+	tag, err := tx.Exec(ctx, `UPDATE redemption_codes SET redeemed_by=$2,redeemed_at=$3,updated_at=$3 WHERE id=$1 AND redeemed_by IS NULL`, codeID, userID, now)
+	if err != nil || tag.RowsAffected() != 1 {
+		return domain.Entitlement{}, domain.ErrConflict
+	}
+	var e domain.Entitlement
+	err = tx.QueryRow(ctx, `INSERT INTO entitlements(user_id,kind,starts_at,expires_at,source_redemption_code_id) VALUES($1,'package',$2,$2+($3||' days')::interval,$4) RETURNING id,user_id,kind::text,starts_at,expires_at`, userID, now, days, codeID).Scan(&e.ID, &e.UserID, &e.Kind, &e.StartsAt, &e.ExpiresAt)
+	if err != nil {
+		return e, err
+	}
+	err = tx.Commit(ctx)
+	return e, err
+}
+func (s *Postgres) CreateTranslationSession(ctx context.Context, v domain.TranslationSession) error {
+	_, err := s.Pool.Exec(ctx, `INSERT INTO translation_sessions(id,user_id,entitlement_id,jti,expires_at) VALUES($1,$2,$3,$4,$5)`, v.ID, v.UserID, v.EntitlementID, v.JTI, v.ExpiresAt)
+	return err
+}
+func (s *Postgres) CreateUsageRecord(ctx context.Context, p domain.CreateUsageParams) error {
+	tag, err := s.Pool.Exec(ctx, `INSERT INTO usage_records(user_id,translation_session_id,audio_seconds,characters,created_at) SELECT $1,$2,$3,$4,$5 FROM translation_sessions WHERE id=$2 AND user_id=$1`, p.UserID, p.SessionID, p.AudioSeconds, p.Characters, p.Now)
+	if err == nil && tag.RowsAffected() == 0 {
+		return domain.ErrNotFound
+	}
+	return err
+}
+func (s *Postgres) CreateFeedbackConsent(ctx context.Context, userID uuid.UUID, granted bool, now time.Time) (domain.FeedbackConsent, error) {
+	var c domain.FeedbackConsent
+	err := s.Pool.QueryRow(ctx, `INSERT INTO feedback_consents(user_id,granted,created_at) VALUES($1,$2,$3) RETURNING id,user_id,granted,created_at`, userID, granted, now).Scan(&c.ID, &c.UserID, &c.Granted, &c.CreatedAt)
+	return c, err
+}
+func (s *Postgres) CreateFeedbackArtifact(ctx context.Context, p domain.CreateArtifactParams) (domain.FeedbackArtifact, error) {
+	var a domain.FeedbackArtifact
+	err := s.Pool.QueryRow(ctx, `INSERT INTO feedback_artifacts(user_id,consent_id,object_key,expires_at,created_at) SELECT $1,id,$3,$4,$5 FROM feedback_consents WHERE id=$2 AND user_id=$1 AND granted=true RETURNING id,user_id,consent_id,object_key,expires_at,created_at`, p.UserID, p.ConsentID, p.ObjectKey, p.ExpiresAt, p.Now).Scan(&a.ID, &a.UserID, &a.ConsentID, &a.ObjectKey, &a.ExpiresAt, &a.CreatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return a, domain.ErrForbidden
+	}
+	return a, mapPGError(err)
+}
+func (s *Postgres) FeedbackArtifact(ctx context.Context, userID, id uuid.UUID) (domain.FeedbackArtifact, error) {
+	var a domain.FeedbackArtifact
+	err := s.Pool.QueryRow(ctx, `SELECT id,user_id,consent_id,object_key,expires_at,created_at FROM feedback_artifacts WHERE id=$1 AND user_id=$2`, id, userID).Scan(&a.ID, &a.UserID, &a.ConsentID, &a.ObjectKey, &a.ExpiresAt, &a.CreatedAt)
+	return a, mapNotFound(err)
+}
+func (s *Postgres) ListUsers(ctx context.Context, limit, offset int) ([]domain.User, error) {
+	rows, err := s.Pool.Query(ctx, `SELECT u.id,COALESCE(i.identifier,''),u.role::text,u.created_at FROM users u LEFT JOIN user_identities i ON i.user_id=u.id AND i.provider='email' ORDER BY u.created_at DESC LIMIT $1 OFFSET $2`, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []domain.User
+	for rows.Next() {
+		var u domain.User
+		if err := rows.Scan(&u.ID, &u.Email, &u.Role, &u.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, u)
+	}
+	return out, rows.Err()
+}
+func (s *Postgres) ListAuditLogs(ctx context.Context, limit, offset int) ([]domain.AuditLog, error) {
+	rows, err := s.Pool.Query(ctx, `SELECT id,admin_id,action,target_type,target_id,metadata,created_at FROM admin_audit_logs ORDER BY created_at DESC LIMIT $1 OFFSET $2`, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []domain.AuditLog
+	for rows.Next() {
+		var a domain.AuditLog
+		var raw []byte
+		if err := rows.Scan(&a.ID, &a.AdminID, &a.Action, &a.TargetType, &a.TargetID, &raw, &a.CreatedAt); err != nil {
+			return nil, err
+		}
+		if err = json.Unmarshal(raw, &a.Metadata); err != nil {
+			return nil, err
+		}
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+func mapNotFound(err error) error {
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.ErrNotFound
+	}
+	return err
+}
+func mapPGError(err error) error {
+	if err == nil {
+		return nil
+	}
+	var e interface{ SQLState() string }
+	if errors.As(err, &e) && e.SQLState() == "23505" {
+		return domain.ErrConflict
+	}
+	return fmt.Errorf("database: %w", err)
+}

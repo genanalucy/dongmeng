@@ -1,0 +1,132 @@
+package domain
+
+import (
+	"context"
+	"errors"
+	"time"
+
+	"github.com/google/uuid"
+)
+
+var (
+	ErrNotFound      = errors.New("not found")
+	ErrConflict      = errors.New("conflict")
+	ErrUnauthorized  = errors.New("unauthorized")
+	ErrForbidden     = errors.New("forbidden")
+	ErrInvalid       = errors.New("invalid input")
+	ErrNoEntitlement = errors.New("no active entitlement")
+)
+
+type User struct {
+	ID        uuid.UUID `json:"id"`
+	Email     string    `json:"email"`
+	Role      string    `json:"role"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+type Entitlement struct {
+	ID        uuid.UUID `json:"id"`
+	UserID    uuid.UUID `json:"user_id"`
+	Kind      string    `json:"kind"`
+	StartsAt  time.Time `json:"starts_at"`
+	ExpiresAt time.Time `json:"expires_at"`
+}
+
+type RefreshToken struct {
+	ID           uuid.UUID
+	UserID       uuid.UUID
+	FamilyID     uuid.UUID
+	TokenHash    []byte
+	ExpiresAt    time.Time
+	RevokedAt    *time.Time
+	ReplacedByID *uuid.UUID
+}
+
+type TranslationSession struct {
+	ID            uuid.UUID `json:"id"`
+	UserID        uuid.UUID `json:"user_id"`
+	EntitlementID uuid.UUID `json:"entitlement_id"`
+	JTI           uuid.UUID `json:"jti"`
+	ExpiresAt     time.Time `json:"expires_at"`
+}
+
+type FeedbackConsent struct {
+	ID        uuid.UUID `json:"id"`
+	UserID    uuid.UUID `json:"user_id"`
+	Granted   bool      `json:"granted"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+type FeedbackArtifact struct {
+	ID        uuid.UUID `json:"id"`
+	UserID    uuid.UUID `json:"user_id"`
+	ConsentID uuid.UUID `json:"consent_id"`
+	ObjectKey string    `json:"object_key"`
+	ExpiresAt time.Time `json:"expires_at"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+type AuditLog struct {
+	ID         uuid.UUID      `json:"id"`
+	AdminID    uuid.UUID      `json:"admin_id"`
+	Action     string         `json:"action"`
+	TargetType string         `json:"target_type"`
+	TargetID   *uuid.UUID     `json:"target_id,omitempty"`
+	Metadata   map[string]any `json:"metadata"`
+	CreatedAt  time.Time      `json:"created_at"`
+}
+
+type CodeBatch struct {
+	ID           uuid.UUID `json:"id"`
+	Name         string    `json:"name"`
+	DurationDays int       `json:"duration_days"`
+	CreatedBy    uuid.UUID `json:"created_by"`
+	CreatedAt    time.Time `json:"created_at"`
+}
+
+type RegisterParams struct {
+	Email, PasswordHash string
+	Now                 time.Time
+}
+type CreateRefreshParams struct {
+	UserID, FamilyID uuid.UUID
+	Hash             []byte
+	ExpiresAt        time.Time
+}
+type CreateBatchParams struct {
+	AdminID      uuid.UUID
+	Name         string
+	DurationDays int
+	CodeHashes   [][]byte
+	Now          time.Time
+}
+type CreateUsageParams struct {
+	UserID, SessionID uuid.UUID
+	AudioSeconds      int
+	Characters        int
+	Now               time.Time
+}
+type CreateArtifactParams struct {
+	UserID, ConsentID uuid.UUID
+	ObjectKey         string
+	ExpiresAt, Now    time.Time
+}
+
+type Store interface {
+	Register(context.Context, RegisterParams) (User, Entitlement, error)
+	UserByEmail(context.Context, string) (User, string, error)
+	UserByID(context.Context, uuid.UUID) (User, error)
+	CreateRefreshToken(context.Context, CreateRefreshParams) (RefreshToken, error)
+	RotateRefreshToken(context.Context, []byte, []byte, time.Time, time.Time) (RefreshToken, RefreshToken, error)
+	RevokeRefreshToken(context.Context, []byte, time.Time) error
+	ActiveEntitlement(context.Context, uuid.UUID, time.Time) (Entitlement, error)
+	CreateCodeBatch(context.Context, CreateBatchParams) (CodeBatch, error)
+	RedeemCode(context.Context, uuid.UUID, []byte, time.Time) (Entitlement, error)
+	CreateTranslationSession(context.Context, TranslationSession) error
+	CreateUsageRecord(context.Context, CreateUsageParams) error
+	CreateFeedbackConsent(context.Context, uuid.UUID, bool, time.Time) (FeedbackConsent, error)
+	CreateFeedbackArtifact(context.Context, CreateArtifactParams) (FeedbackArtifact, error)
+	FeedbackArtifact(context.Context, uuid.UUID, uuid.UUID) (FeedbackArtifact, error)
+	ListUsers(context.Context, int, int) ([]User, error)
+	ListAuditLogs(context.Context, int, int) ([]AuditLog, error)
+}

@@ -18,6 +18,8 @@ If Python is not installed, **do not install it yourself**. Stop and ask the use
 
 If the user prefers not to install Python, skip the CLI searches and rely on the Quick Reference sections above.
 
+> Run these commands from the repository root. The bundled scripts resolve their CSV data relative to the script location.
+
 > **Note:** On Windows, use `python` instead of `python3` to run scripts (e.g., `python scripts/search.py` instead of `python3 scripts/search.py`).
 
 ---
@@ -77,7 +79,7 @@ Extract key information from user request:
 Use `--design-system` when the task needs a coherent product-wide visual direction:
 
 ```bash
-python3 .agents/skills/ui-ux-pro-max/scripts/search.py "<product_type> <industry> <keywords>" --design-system [-p "Project Name"]
+python3 .pi/skills/ui-ux-pro-max/scripts/search.py "<product_type> <industry> <keywords>" --design-system [-p "Project Name"]
 ```
 
 This command:
@@ -88,7 +90,7 @@ This command:
 
 **Example:**
 ```bash
-python3 .agents/skills/ui-ux-pro-max/scripts/search.py "beauty spa wellness service" --design-system -p "Serenity Spa"
+python3 .pi/skills/ui-ux-pro-max/scripts/search.py "beauty spa wellness service" --design-system -p "Serenity Spa"
 ```
 
 ### Step 2b: Persist Design System (Master + Overrides Pattern)
@@ -96,7 +98,7 @@ python3 .agents/skills/ui-ux-pro-max/scripts/search.py "beauty spa wellness serv
 After verifying the design system, save it for **hierarchical retrieval across sessions** with `--persist` and an explicit project root:
 
 ```bash
-python3 .agents/skills/ui-ux-pro-max/scripts/search.py "<query>" --design-system --persist -p "Project Name" --output-dir "<project-root>"
+python3 .pi/skills/ui-ux-pro-max/scripts/search.py "<query>" --design-system --persist -p "Project Name" --output-dir "<project-root>"
 ```
 
 This creates:
@@ -105,7 +107,7 @@ This creates:
 
 **With page-specific override:**
 ```bash
-python3 .agents/skills/ui-ux-pro-max/scripts/search.py "<query>" --design-system --persist -p "Project Name" --page "dashboard" --output-dir "<project-root>"
+python3 .pi/skills/ui-ux-pro-max/scripts/search.py "<query>" --design-system --persist -p "Project Name" --page "dashboard" --output-dir "<project-root>"
 ```
 
 This also creates:
@@ -132,7 +134,7 @@ Now, generate the code...
 Three optional 1-10 sliders that tune `--design-system` output without changing your query. Add any combination of them to the same command:
 
 ```bash
-python3 .agents/skills/ui-ux-pro-max/scripts/search.py "<query>" --design-system --variance <1-10> --motion <1-10> --density <1-10>
+python3 .pi/skills/ui-ux-pro-max/scripts/search.py "<query>" --design-system --variance <1-10> --motion <1-10> --density <1-10>
 ```
 
 | Dial | Low (1-3) | Mid (4-7) | High (8-10) |
@@ -147,7 +149,7 @@ python3 .agents/skills/ui-ux-pro-max/scripts/search.py "<query>" --design-system
 
 **Example:**
 ```bash
-python3 .agents/skills/ui-ux-pro-max/scripts/search.py "internal analytics dashboard" --design-system --variance 8 --motion 7 --density 8 -p "Ops Console"
+python3 .pi/skills/ui-ux-pro-max/scripts/search.py "internal analytics dashboard" --design-system --variance 8 --motion 7 --density 8 -p "Ops Console"
 ```
 
 ### Step 3: Supplement with Detailed Searches (as needed)
@@ -155,7 +157,7 @@ python3 .agents/skills/ui-ux-pro-max/scripts/search.py "internal analytics dashb
 After getting the design system, use domain searches to get additional details:
 
 ```bash
-python3 .agents/skills/ui-ux-pro-max/scripts/search.py "<keyword>" --domain <domain> [-n <max_results>]
+python3 .pi/skills/ui-ux-pro-max/scripts/search.py "<keyword>" --domain <domain> [-n <max_results>]
 ```
 
 **When to use detailed searches:**
@@ -180,13 +182,13 @@ python3 .agents/skills/ui-ux-pro-max/scripts/search.py "<keyword>" --domain <dom
 Get implementation-specific best practices for the user's stack:
 
 ```bash
-python3 .agents/skills/ui-ux-pro-max/scripts/search.py "<keyword>" --stack <stack>
+python3 .pi/skills/ui-ux-pro-max/scripts/search.py "<keyword>" --stack <stack>
 ```
 
 Example for a known React Native implementation concern:
 
 ```bash
-python3 .agents/skills/ui-ux-pro-max/scripts/search.py "virtualized list" --stack react-native
+python3 .pi/skills/ui-ux-pro-max/scripts/search.py "virtualized list" --stack react-native
 ```
 
 ---
@@ -217,8 +219,8 @@ python3 .agents/skills/ui-ux-pro-max/scripts/search.py "virtualized list" --stac
 **JavaFX enterprise examples:**
 
 ```bash
-python3 .agents/skills/ui-ux-pro-max/scripts/search.py "atlantafx primer enterprise theme" --stack javafx
-python3 .agents/skills/ui-ux-pro-max/scripts/search.py "enterprise tableview density permission" --stack javafx
+python3 .pi/skills/ui-ux-pro-max/scripts/search.py "atlantafx primer enterprise theme" --stack javafx
+python3 .pi/skills/ui-ux-pro-max/scripts/search.py "enterprise tableview density permission" --stack javafx
 ```
 
 ---
@@ -236,7 +238,7 @@ python3 .agents/skills/ui-ux-pro-max/scripts/search.py "enterprise tableview den
 ### Step 2: Generate Design System
 
 ```bash
-python3 .agents/skills/ui-ux-pro-max/scripts/search.py "AI search tool modern minimal" --design-system -p "AI Search"
+python3 .pi/skills/ui-ux-pro-max/scripts/search.py "AI search tool modern minimal" --design-system -p "AI Search"
 ```
 
 **Output:** Complete design system with pattern, style, colors, typography, effects, and anti-patterns.
@@ -245,16 +247,16 @@ python3 .agents/skills/ui-ux-pro-max/scripts/search.py "AI search tool modern mi
 
 ```bash
 # Get style options for a modern tool product
-python3 .agents/skills/ui-ux-pro-max/scripts/search.py "minimalism dark mode" --domain style
+python3 .pi/skills/ui-ux-pro-max/scripts/search.py "minimalism dark mode" --domain style
 
 # Get UX best practices for search interaction and loading
-python3 .agents/skills/ui-ux-pro-max/scripts/search.py "search loading animation" --domain ux
+python3 .pi/skills/ui-ux-pro-max/scripts/search.py "search loading animation" --domain ux
 ```
 
 ### Step 4: Stack Guidelines
 
 ```bash
-python3 .agents/skills/ui-ux-pro-max/scripts/search.py "streaming suspense" --stack nextjs
+python3 .pi/skills/ui-ux-pro-max/scripts/search.py "streaming suspense" --stack nextjs
 ```
 
 **Then:** Synthesize design system + detailed searches and implement the design.
@@ -267,10 +269,10 @@ The `--design-system` flag supports two output formats:
 
 ```bash
 # ASCII box (default) - best for terminal display
-python3 .agents/skills/ui-ux-pro-max/scripts/search.py "fintech crypto" --design-system
+python3 .pi/skills/ui-ux-pro-max/scripts/search.py "fintech crypto" --design-system
 
 # Markdown - best for documentation
-python3 .agents/skills/ui-ux-pro-max/scripts/search.py "fintech crypto" --design-system -f markdown
+python3 .pi/skills/ui-ux-pro-max/scripts/search.py "fintech crypto" --design-system -f markdown
 ```
 
 ---
@@ -316,7 +318,7 @@ Scope notice: The rules below are for App UI (iOS/Android/React Native/Flutter),
 
 ### Icons & Visual Elements
 
-- 默认图标库使用 **Phosphor (`@phosphor-icons/react`)**。`src/ui-ux-pro-max/data/icons.csv` 中列出的只是常用推荐图标，不是完整集合。
+- 默认图标库使用 **Phosphor (`@phosphor-icons/react`)**。`.pi/skills/ui-ux-pro-max/data/icons.csv` 中列出的只是常用推荐图标，不是完整集合。
 - 当推荐表中找不到合适的图标时：
   - **优先继续从 Phosphor 的完整图标集中选择任何语义更贴切的图标**；
   - 如果 Phosphor 也没有理想选项，可以使用 **Heroicons (`@heroicons/react`)** 作为备选，注意保持风格一致（线性/填充、笔画粗细、圆角风格）。
