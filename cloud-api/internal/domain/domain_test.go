@@ -104,12 +104,33 @@ func TestParsePhoneBoundaries(t *testing.T) {
 	}
 }
 
+func TestParseLoginIdentifierRejectsInternalPhoneEmail(t *testing.T) {
+	for _, value := range []string{
+		"phone-internal@reserved.invalid",
+		"PHONE-INTERNAL@RESERVED.INVALID",
+		"  phone-internal@reserved.invalid  ",
+		"  Phone-Internal@Reserved.Invalid  ",
+	} {
+		t.Run(value, func(t *testing.T) {
+			if _, err := ParseLoginIdentifier(value); !errors.Is(err, ErrInvalid) {
+				t.Fatal("internal phone email was accepted for login")
+			}
+			if email, err := ParseEmail(value); err != nil || email.String() != "phone-internal@reserved.invalid" {
+				t.Fatal("ordinary email parsing changed")
+			}
+		})
+	}
+}
+
 func TestParseLoginIdentifierPrioritizesCanonicalPhoneThenEmailThenUsername(t *testing.T) {
 	for _, test := range []struct {
 		name, value, wantKind, wantValue string
 	}{
 		{name: "phone", value: " +8613800138000 ", wantKind: "phone", wantValue: "+8613800138000"},
 		{name: "email", value: " User@Example.COM ", wantKind: "email", wantValue: "user@example.com"},
+		{name: "reserved domain without phone prefix", value: " User@Reserved.Invalid ", wantKind: "email", wantValue: "user@reserved.invalid"},
+		{name: "phone prefix on another domain", value: " Phone-User@Example.COM ", wantKind: "email", wantValue: "phone-user@example.com"},
+		{name: "phone prefix on subdomain", value: " Phone-User@Mail.Reserved.Invalid ", wantKind: "email", wantValue: "phone-user@mail.reserved.invalid"},
 		{name: "username", value: " Alice_01 ", wantKind: "username", wantValue: "alice_01"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
