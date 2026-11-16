@@ -258,6 +258,34 @@ func TestMultiIdentityAuthHTTPContractIsStrictAndDoesNotExposePrivateIdentities(
 	}
 }
 
+func TestLoginRejectsInternalPhoneEmailWithCorrectPassword(t *testing.T) {
+	hash, err := auth.HashPassword("Aa123456")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, identifier := range []string{
+		"phone-internal@reserved.invalid",
+		"PHONE-INTERNAL@RESERVED.INVALID",
+		"  phone-internal@reserved.invalid  ",
+		"  Phone-Internal@Reserved.Invalid  ",
+	} {
+		t.Run(identifier, func(t *testing.T) {
+			// The database boundary can resolve the internal email to a user with
+			// a matching password, as it does in the PostgreSQL lifecycle test.
+			store := &adminContractStore{enabled: true, phoneUser: domain.User{ID: uuid.New(), Phone: "+8613800138000", Role: string(domain.RoleUser)}, phoneHash: hash}
+			router, _, _ := newAdminContractRouter(t, store)
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader(`{"identifier":"`+identifier+`","password":"Aa123456"}`))
+			req.Header.Set("Content-Type", "application/json")
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, req)
+			body := response.Body.String()
+			if response.Code != http.StatusUnauthorized || !strings.Contains(body, `"error":"invalid_credentials"`) || strings.Contains(body, "access_token") || strings.Contains(body, "refresh_token") {
+				t.Fatalf("internal phone email login must return generic 401 without tokens; got status %d", response.Code)
+			}
+		})
+	}
+}
+
 func TestMultiIdentityLoginCanonicalizesEachAcceptedInputIndependently(t *testing.T) {
 	hash, err := auth.HashPassword("Aa123456")
 	if err != nil {
@@ -266,9 +294,13 @@ func TestMultiIdentityLoginCanonicalizesEachAcceptedInputIndependently(t *testin
 	for _, test := range []struct {
 		name, identifier, phone, email, username string
 	}{
-		{name: "phone", identifier: "13800138000", phone: "+8613800138000"},
-		{name: "email", identifier: "Alice@Example.COM", email: "alice@example.com"},
-		{name: "username", identifier: "Alice_01", username: "alice_01"},
+		{name: "phone", identifier: " 13800138000 ", phone: "+8613800138000"},
+		{name: "canonical phone", identifier: " +8613800138000 ", phone: "+8613800138000"},
+		{name: "email", identifier: " Alice@Example.COM ", email: "alice@example.com"},
+		{name: "reserved domain without phone prefix", identifier: " User@Reserved.Invalid ", email: "user@reserved.invalid"},
+		{name: "phone prefix on another domain", identifier: " Phone-User@Example.COM ", email: "phone-user@example.com"},
+		{name: "phone prefix on subdomain", identifier: " Phone-User@Mail.Reserved.Invalid ", email: "phone-user@mail.reserved.invalid"},
+		{name: "username", identifier: " Alice_01 ", username: "alice_01"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			store := &adminContractStore{enabled: true, phoneUser: domain.User{ID: uuid.New(), Phone: "+8613800138000", Role: string(domain.RoleUser)}, phoneHash: hash}
