@@ -53,6 +53,17 @@ bash scripts/deploy-download-release.sh <new-bundle-directory>
 - APK与网页/两OTA已通过统一发布工具切换到快照`downloads-20261113T104226Z-1445042`；两APK完整公网下载SHA匹配，正式公网OTA21/测试OTA27核对通过。新下载URL使用`https://yszn.nlplayer.org/downloads/`，旧sslip文件和链接继续保留。
 - 仅改名，不换域名、不变包、不把Debug界面功能带入正式。用户旧版首次安装仍显示旧名，覆盖升级后才显示新名。源码签名配置、私钥和APK构建产物未入Git。
 
+## Debug v30当前会话导出与保存（北京时间2026-11-17）
+
+- 实现`cd920a1`，Debug30/`20261117.0343`。三工作台更多提供保存到历史/重试、明文TXT和JSON导出；系统SAF选位置，冻结点击快照，取消/写入关闭失败及账号变更有独立处理，不申请全存储权限。进程重建安全取消导出，不将正文写Bundle；用户选择的外部文档提供方可能留部分文件，失败提示检查。
+- Qwen3.8官方conversation.item.created的previous_item_id明确关联原译文；两侧final加response成功产出turn_completed。仅supportsCompletedTurns显式true的新Debug收到事件，旧正式不收新类型。Android以完成身份幂等保存，运行中的同传不必等transport结束；旧协议仅实际Finished后以完整transport块归档，不zip两个final数组。
+- 保存采用application-owned IO，稳定turn PK与Room事务/outbox；失败可重试、重复请求不重复记录，配额保留，删除tombstone/持久账号epoch阻止迟到复活，云同步使用冻结凭据核验所属账号。未改schema版本。只有Room commit是持久接纳，未commit瞬时内容不保证断电/强杀恢复；失败队列仍属进程内重试，不冒称未提交队列跨进程持久化。
+- 状态区区分保存中/已保存到本机/失败重试，成功可进历史；没有完成内容主动保存会说明。账号切换清旧正文且导出需绑定账号；外部写按有界块与撤销互斥。撤销无法收回此前已由用户主动交付的字节，外部明文需用户妥善保管。
+- 441单测通过，lint0error/50warning/2hint，Debug与AndroidTest构建通过；Agent默认/officialast test/vet/build通过。双轴审查发现跨账号正文、提前主动保存重复、导出撤销和过期凭据静默停止同步问题，修复后二次静态复核原P1/P2均消除。云端Android CI`43942661747`、设备`43942651603`/`43942661999`成功，覆盖Room、反馈、导出菜单等；无真实语音收费测试、未验真实文档提供方/长时翻译/跨设备全流程。
+- 用户单独授权Agent上线。2026-11-16T19:52:20Z部署且provider=qwen/model=qwen3.8-livetranslate-flash-realtime/env未变，运行二进制hash `ddb8310343a995f776459708c56339d8278f6a5afbf045cfdb25d169839a1a40`，备份`/opt/dngmeng/backups/completed-turns-20261116T195220Z`，无模型fallback。
+- DebugAPK SHA256 `21ea23d51b04ee0017419a8e85800ec6feeb43d3a8612966733778bfebb91798`，原包名证书不变，tag`android-debug-yilu-20261117-v30`指向实现。正式21原APK复用；统一快照`downloads-20261116T195255Z-3771633`。
+- 两APK完整公网hash、页面清单及双OTA与bundle核验通过；正式公网OTA仍21、Debug30；正式下载页/Agent/Cloud/admin200。4项发布脚本测试与shell语法通过。手机覆盖安装与用户对话真实性未代验。
+
 ## Debug v29静音空白气泡修复（2026-11-16）
 
 - 用户确认参考11月独立工作台之前v25的无空泡体验，不回滚整套UI。实现`51a7670`，Debug29/`20261116.2307`；无原译文不渲染气泡，输入仍finish等待迟到字幕；Finished且播放drain后才移除纯空结果。保留translation-only/source-only内容、不删除新一轮。v28短句松手/连续修复保持。
