@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <meta name="description" content="译路随行 Android 下载：普通用户请选择正式版，内部测试人员可选择测试版。查看版本、更新说明及安装须知。">
+  <title>译路随行 · Android 下载</title>
+  <style>
+    :root {
+      --ink: #213b31;
+      --muted: #56665d;
+      --green: #216047;
+      --green-hover: #184c37;
+      --line: #d8e2db;
+      --soft: #eef5ef;
+      --paper: #ffffff;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: #f4f6f3;
+      color: var(--ink);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      font-size: 16px;
+      line-height: 1.7;
+      -webkit-text-size-adjust: 100%;
+    }
+    .page { max-width: 1080px; margin: 0 auto; padding: 40px 24px 32px; }
+    .masthead {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding-bottom: 24px;
+      border-bottom: 1px solid var(--line);
+    }
+    .brand { display: flex; align-items: center; gap: 12px; font-weight: 700; }
+    .brand-mark {
+      display: grid;
+      place-items: center;
+      width: 40px;
+      height: 40px;
+      flex: 0 0 40px;
+      border-radius: 12px;
+      background: var(--green);
+      color: white;
+      font-size: 22px;
+    }
+    .platform { color: var(--muted); font-size: 14px; }
+    .hero { padding: 56px 0 32px; }
+    .eyebrow { margin: 0 0 12px; color: var(--green); font-size: 13px; font-weight: 700; letter-spacing: .12em; }
+    h1 { margin: 0 0 16px; font-size: clamp(30px, 5vw, 46px); line-height: 1.25; letter-spacing: -.03em; }
+    .intro { max-width: 640px; margin: 0; color: var(--muted); font-size: 17px; }
+    .compatibility { display: inline-block; margin: 20px 0 0; padding: 6px 12px; border: 1px solid var(--line); border-radius: 8px; font-size: 13px; }
+    .channels { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; align-items: stretch; }
+    .channel { display: flex; flex-direction: column; min-width: 0; padding: 28px; border: 1px solid var(--line); border-radius: 20px; background: var(--paper); }
+    .channel.production { border: 2px solid var(--green); padding: 27px; box-shadow: 0 8px 28px #213b310a; }
+    .channel-header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+    h2 { margin: 0; font-size: 24px; line-height: 1.4; }
+    .badge { padding: 4px 10px; border-radius: 6px; background: var(--soft); color: var(--green); font-size: 12px; font-weight: 700; }
+    .badge.testing { background: #edf0ed; color: #49574e; }
+    .description { margin: 16px 0 24px; color: var(--muted); }
+    .metadata { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 10px 20px; margin: 0 0 24px; font-size: 14px; }
+    dt { color: var(--muted); }
+    dd { min-width: 0; margin: 0; overflow-wrap: anywhere; }
+    .download {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 52px;
+      min-width: 48px;
+      padding: 12px 18px;
+      border: 1px solid var(--green);
+      border-radius: 10px;
+      background: var(--green);
+      color: white;
+      font-size: 16px;
+      font-weight: 700;
+      text-align: center;
+      text-decoration: none;
+      cursor: pointer;
+    }
+    .download:hover, .download:active { background: var(--green-hover); }
+    .download.secondary { border-color: #65766b; background: white; color: var(--ink); }
+    .download.secondary:hover, .download.secondary:active { background: var(--soft); }
+    a:focus-visible { outline: 3px solid #123c2c; outline-offset: 4px; }
+    .notes { margin-top: 24px; padding-top: 20px; border-top: 1px solid var(--line); }
+    h3 { margin: 0 0 10px; font-size: 14px; }
+    .release-notes { margin: 0; color: var(--muted); font-size: 14px; white-space: pre-wrap; overflow-wrap: anywhere; }
+    .checksum { margin-top: auto; padding-top: 24px; }
+    .checksum h3 { color: var(--muted); font-size: 12px; letter-spacing: .04em; }
+    .checksum code { display: block; padding: 12px; border-radius: 8px; background: #f4f6f3; color: #49574e; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 12px; line-height: 1.8; overflow-wrap: anywhere; word-break: break-all; user-select: all; }
+    .guide { margin-top: 32px; padding: 28px; border: 1px solid var(--line); border-radius: 20px; background: #eef2ed; }
+    .guide h2 { font-size: 20px; }
+    .guide-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; margin-top: 20px; }
+    .guide h3 { margin-bottom: 6px; font-size: 15px; }
+    .guide p { margin: 0; color: var(--muted); font-size: 14px; overflow-wrap: anywhere; }
+    footer { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px 24px; margin-top: 24px; color: var(--muted); font-size: 12px; }
+    footer p { margin: 0; overflow-wrap: anywhere; }
+    @media (max-width: 680px) {
+      .page { padding: 24px 16px; }
+      .masthead { align-items: flex-start; flex-direction: column; gap: 12px; padding-bottom: 20px; }
+      .hero { padding: 36px 0 24px; }
+      .channels, .guide-grid { grid-template-columns: minmax(0, 1fr); gap: 20px; }
+      .channel, .guide { padding: 24px 20px; border-radius: 16px; }
+      .channel.production { padding: 23px 19px; }
+      .intro { font-size: 16px; }
+      .metadata { column-gap: 16px; }
+      .guide { margin-top: 24px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <header class="masthead">
+      <div class="brand"><span class="brand-mark" aria-hidden="true">译</span><span>译路随行</span></div>
+      <span class="platform">Android 应用下载</span>
+    </header>
+    <main>
+      <section class="hero" aria-labelledby="page-title">
+        <p class="eyebrow">译路随行 · 下载中心</p>
+        <h1 id="page-title">译路随行</h1>
+        <p class="intro">选择适合你的版本。普通用户请选择正式版；测试版仅面向了解风险的内部测试人员。</p>
+        <p class="compatibility">系统要求：Android 8.0 及以上</p>
+      </section>
+      <div class="channels">
+        <section class="channel production" aria-labelledby="production-title">
+          <div class="channel-header">
+            <h2 id="production-title">正式版</h2>
+            <span class="badge">推荐 · 普通用户</span>
+          </div>
+          <p class="description">日常使用请选择此通道。已有正式版用户请下载新版，直接覆盖安装。</p>
+          <dl class="metadata">
+            <dt>版本</dt><dd>${production_version_name}</dd>
+            <dt>包名</dt><dd>com.verba.interpretation</dd>
+            <dt>版本号</dt><dd>${production_version_code}</dd>
+            <dt>文件大小</dt><dd>${production_size}</dd>
+          </dl>
+          <a class="download" href="${production_url}" download>下载正式版 APK</a>
+          <div class="notes">
+            <h3>更新说明</h3>
+            <p class="release-notes">${production_notes}</p>
+          </div>
+          <div class="checksum">
+            <h3>文件校验 · SHA-256</h3>
+            <code>${production_sha256}</code>
+          </div>
+        </section>
+        <section class="channel" aria-labelledby="debug-title">
+          <div class="channel-header">
+            <h2 id="debug-title">测试版</h2>
+            <span class="badge testing">内部测试 · 谨慎安装</span>
+          </div>
+          <p class="description">用于内部测试，可能出现功能不稳定、崩溃或数据异常。请勿作为日常使用的首选。</p>
+          <dl class="metadata">
+            <dt>版本</dt><dd>${debug_version_name}</dd>
+            <dt>包名</dt><dd>com.verba.interpretation.debug</dd>
+            <dt>版本号</dt><dd>${debug_version_code}</dd>
+            <dt>文件大小</dt><dd>${debug_size}</dd>
+          </dl>
+          <a class="download secondary" href="${debug_url}" download>下载测试版 APK</a>
+          <div class="notes">
+            <h3>更新说明</h3>
+            <p class="release-notes">${debug_notes}</p>
+          </div>
+          <div class="checksum">
+            <h3>文件校验 · SHA-256</h3>
+            <code>${debug_sha256}</code>
+          </div>
+        </section>
+      </div>
+      <section class="guide" aria-labelledby="guide-title">
+        <h2 id="guide-title">安装前，请先了解</h2>
+        <div class="guide-grid">
+          <div>
+            <h3>双通道可共存</h3>
+            <p>正式版与测试版使用不同包名，可同时安装，互不覆盖。请注意区分应用，两者数据不保证互通。</p>
+          </div>
+          <div>
+            <h3>更新请覆盖安装，不要先卸载</h3>
+            <p>同一通道更新时，请直接安装新版 APK。不要为更新而卸载旧版，以免丢失本地数据。若安装失败，请先检查系统提示，不要急于卸载。</p>
+          </div>
+          <div>
+            <h3>安装仍需系统确认</h3>
+            <p>下载完成后，打开 APK 并按 Android 系统提示确认安装；系统可能要求允许当前浏览器或文件管理器安装未知应用，请核实来源后再授权。Android 8.0 及以上为最低系统要求，实际兼容性以设备使用情况为准。</p>
+          </div>
+          <div>
+            <h3>公开下载与文件校验</h3>
+            <p>APK 为公开明文分发文件，不含签名私钥。下载后可计算文件的 SHA-256，与对应通道的校验值核对，以检查文件是否一致。</p>
+          </div>
+        </div>
+      </section>
+    </main>
+    <footer>
+      <p>译路随行 · Android 双通道下载</p>
+      <p>页面更新于 ${updated_at}</p>
+    </footer>
+  </div>
+</body>
+</html>

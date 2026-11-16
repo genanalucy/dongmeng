@@ -6,6 +6,16 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class AgentProtocolTest {
+    @org.junit.Test fun parsesExplicitCompletedTurnAndAdvertisesOptInOnly() {
+        val event = AgentProtocol.parse("""{"type":"turn_completed","completionId":"source-a","sourceText":"你好","translatedText":"Hello"}""")
+        org.junit.Assert.assertEquals(AgentEvent.TurnCompleted("source-a", "你好", "Hello"), event)
+        org.junit.Assert.assertFalse(StartMessage("id", "zh", "en").toJson().contains("supportsCompletedTurns"))
+        org.junit.Assert.assertTrue(StartMessage("id", "zh", "en", supportsCompletedTurns = true).toJson().contains("supportsCompletedTurns"))
+        org.junit.Assert.assertThrows(ProtocolException::class.java) {
+            AgentProtocol.parse("""{"type":"turn_completed","completionId":"","sourceText":"你好","translatedText":"Hello"}""")
+        }
+    }
+
     @Test fun startMatchesCurrentAgentContract() {
         val json = JSONObject(StartMessage("123e4567-e89b-12d3-a456-426614174000", "zh", "en").toJson())
         assertEquals("start", json.getString("type"))

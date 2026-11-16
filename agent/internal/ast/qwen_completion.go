@@ -1,0 +1,196 @@
+package ast
+
+import "strings"
+
+const (
+	qwenCompletionMaxRecords       = 4096
+	qwenCompletionMaxTextBytes     = 32 * 1024
+	qwenCompletionMaxIDBytes       = 256
+	qwenCompletionMaxOutputs       = 64
+	qwenCompletionMaxRetainedBytes = 2 * 1024 * 1024
+)
+
+type qwenCompletionWireItem struct {
+	ID   string `json:"id"`
+	Role string `json:"role"`
+	Type string `json:"type"`
+}
+
+type qwenCompletionSource struct {
+	text    string
+	emitted bool
+	invalid bool
+}
+
+type qwenCompletionItem struct {
+	sourceID   string
+	responseID string
+	text       string
+	invalid    bool
+}
+
+type qwenCompletionResponse struct {
+	status  string
+	outputs map[string]bool
+	invalid bool
+}
+
+// qwenCompletionCollector is confined to readLoop. It never infers associations
+// from output indexes, arrival order, or text. Tombstones last for the session:
+// on capacity exhaustion it fails closed rather than forgetting deduplication
+// IDs and potentially emitting a replay. Live subtitle/audio events are unaffected.
+type qwenCompletionCollector struct {
+	sources   map[string]*qwenCompletionSource
+	items     map[string]*qwenCompletionItem
+	responses map[string]*qwenCompletionResponse
+	disabled  bool
+}
+
+func validQwenCompletionID(id string) bool {
+	return id != "" && len(id) <= qwenCompletionMaxIDBytes
+}
+
+func (c *qwenCompletionCollector) consume(event qwenEvent) []Event {
+	if c.disabled {
+		return nil
+	}
+	if c.sources == nil {
+		c.sources = make(map[string]*qwenCompletionSource)
+		c.items = make(map[string]*qwenCompletionItem)
+		c.responses = make(map[string]*qwenCompletionResponse)
+	}
+	switch event.Type {
+	case "conversation.item.input_audio_transcription.completed":
+		if !validQwenCompletionID(event.ItemID) {
+			return nil
+		}
+		source := c.sources[event.ItemID]
+		if source == nil {
+			source = &qwenCompletionSource{}
+			c.sources[event.ItemID] = source
+		}
+		if source.emitted {
+			return nil
+		}
+		if !validQwenCompletionText(event.Transcript) || (source.text != "" && source.text != event.Transcript) {
+			source.invalid = true
+		} else {
+			source.text = event.Transcript
+		}
+	case "conversation.item.created":
+		if event.Item.Role != "assistant" || event.Item.Type != "message" ||
+			!validQwenCompletionID(event.Item.ID) || !validQwenCompletionID(event.PreviousItemID) {
+			return nil
+		}
+		item := c.item(event.Item.ID)
+		if item.sourceID != "" && item.sourceID != event.PreviousItemID {
+			item.invalid = true
+		}
+		item.sourceID = event.PreviousItemID
+	case "response.audio_transcript.done", "response.text.done":
+		if event.Type == "response.text.done" {
+			event.Transcript = event.Text
+		}
+		if !validQwenCompletionID(event.ItemID) || !validQwenCompletionID(event.ResponseID) {
+			return nil
+		}
+		item := c.item(event.ItemID)
+		if source := c.sources[item.sourceID]; source != nil && source.emitted {
+			return nil
+		}
+		if !validQwenCompletionText(event.Transcript) ||
+			(item.responseID != "" && item.responseID != event.ResponseID) ||
+			(item.text != "" && item.text != event.Transcript) {
+			item.invalid = true
+		}
+		item.responseID = event.ResponseID
+		if !item.invalid {
+			item.text = event.Transcript
+		}
+	case "response.done":
+		if !validQwenCompletionID(event.Response.ID) {
+			return nil
+		}
+		outputs := make(map[string]bool)
+		invalid := len(event.Response.Output) > qwenCompletionMaxOutputs
+		if !invalid {
+			for _, output := range event.Response.Output {
+				if output.Role == "assistant" && output.Type == "message" && validQwenCompletionID(output.ID) {
+					outputs[output.ID] = true
+				}
+			}
+		}
+		response := c.responses[event.Response.ID]
+		if response == nil {
+			c.responses[event.Response.ID] = &qwenCompletionResponse{status: event.Response.Status, outputs: outputs, invalid: invalid}
+		} else if response.status != event.Response.Status || !sameQwenOutputs(response.outputs, outputs) || invalid {
+			response.invalid = true
+		}
+	default:
+		return nil
+	}
+	if len(c.sources) > qwenCompletionMaxRecords || len(c.items) > qwenCompletionMaxRecords || len(c.responses) > qwenCompletionMaxRecords || c.retainedBytes() > qwenCompletionMaxRetainedBytes {
+		c.disabled = true
+		c.sources, c.items, c.responses = nil, nil, nil
+		return nil
+	}
+	var completed []Event
+	for itemID, item := range c.items {
+		source := c.sources[item.sourceID]
+		response := c.responses[item.responseID]
+		if item.invalid || item.text == "" || source == nil || source.invalid || source.emitted || source.text == "" ||
+			response == nil || response.invalid || response.status != "completed" || !response.outputs[itemID] {
+			continue
+		}
+		completed = append(completed, Event{Type: "turn_completed", CompletionID: item.sourceID, SourceText: source.text, TranslatedText: item.text})
+		source.emitted = true
+		source.text = ""
+		for _, sibling := range c.items {
+			if sibling.sourceID == item.sourceID {
+				sibling.text = ""
+			}
+		}
+	}
+	return completed
+}
+
+func (c *qwenCompletionCollector) item(id string) *qwenCompletionItem {
+	if c.items[id] == nil {
+		c.items[id] = &qwenCompletionItem{}
+	}
+	return c.items[id]
+}
+
+// Bound retained payload bytes as well as record counts. No transcript is logged.
+func (c *qwenCompletionCollector) retainedBytes() int {
+	n := 0
+	for id, source := range c.sources {
+		n += len(id) + len(source.text)
+	}
+	for id, item := range c.items {
+		n += len(id) + len(item.sourceID) + len(item.responseID) + len(item.text)
+	}
+	for id, response := range c.responses {
+		n += len(id) + len(response.status)
+		for outputID := range response.outputs {
+			n += len(outputID)
+		}
+	}
+	return n
+}
+
+func validQwenCompletionText(text string) bool {
+	return len(text) <= qwenCompletionMaxTextBytes && strings.TrimSpace(text) != ""
+}
+
+func sameQwenOutputs(a, b map[string]bool) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for id := range a {
+		if !b[id] {
+			return false
+		}
+	}
+	return true
+}

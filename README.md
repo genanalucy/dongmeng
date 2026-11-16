@@ -55,7 +55,8 @@ Cloud API 的真实 PostgreSQL 集成测试需要专用隔离数据库，见 [Cl
 
 ## 发布与部署
 
-- [正式 OTA 操作](docs/deployment/app-ota-update.md)
+- [官网双通道下载与发布同步](docs/deployment/download-center.md)（后续发布入口，页面和 OTA 使用同一版本清单）
+- [正式 OTA 历史操作](docs/deployment/app-ota-update.md)
 - [内部测试版说明](docs/internal-beta-update-guide.md)
 - [生产 Caddy 配置参考](docs/deployment/Caddyfile.production)
 - [Cloud API 接口](cloud-api/API.md)

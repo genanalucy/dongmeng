@@ -8,12 +8,14 @@ data class StartMessage(
     val targetLanguage: String,
     val userId: String? = null,
     val installId: String? = null,
+    val supportsCompletedTurns: Boolean = false,
 ) {
     fun toJson(): String = JSONObject()
         .put("type", "start").put("sessionId", sessionId).put("mode", "s2s")
         .put("sourceLanguage", sourceLanguage).put("targetLanguage", targetLanguage)
         .put("targetAudioFormat", "pcm").put("targetAudioRate", 16_000)
         .apply {
+            if (supportsCompletedTurns) put("supportsCompletedTurns", true)
             userId?.let { put("userId", it) }
             installId?.let { put("installId", it) }
         }.toString()
@@ -45,6 +47,7 @@ sealed interface AgentEvent {
     ) : AgentEvent {
         enum class Kind { SOURCE_PARTIAL, SOURCE_FINAL, TRANSLATION_PARTIAL, TRANSLATION_FINAL }
     }
+    data class TurnCompleted(val completionId: String, val sourceText: String, val translatedText: String) : AgentEvent
     data class SessionTerminated(val reason: TranslationSessionEndReason) : AgentEvent
     data class Error(val code: String, val message: String) : AgentEvent
 }
@@ -57,6 +60,13 @@ object AgentProtocol {
             throw ProtocolException("消息不是有效 JSON。", error)
         }
         return when (val type = json.optString("type")) {
+            "turn_completed" -> {
+                val id = json.optString("completionId").trim()
+                val source = json.optString("sourceText").trim()
+                val translation = json.optString("translatedText").trim()
+                if (id.isEmpty() || id.length > 512 || source.isEmpty() || translation.isEmpty()) throw ProtocolException("完成事件内容无效。")
+                AgentEvent.TurnCompleted(id, source, translation)
+            }
             "ready" -> AgentEvent.Ready
             "finished" -> AgentEvent.Finished
             "detected_language" -> detectedLanguage(json)

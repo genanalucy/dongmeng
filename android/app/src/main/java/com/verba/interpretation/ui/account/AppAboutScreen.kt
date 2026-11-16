@@ -73,7 +73,7 @@ fun AppAboutScreen(
             item {
                 Surface(modifier = Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.medium, color = MaterialTheme.colorScheme.surfaceContainerLow) {
                     Column(Modifier.padding(16.dp)) {
-                        Text("言枢智能翻译", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                        Text(com.verba.interpretation.brand.BrandConfig.appName, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                         Text("版本 ${BuildConfig.VERSION_NAME}", color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 6.dp))
                     }
                 }
@@ -111,13 +111,14 @@ private fun DownloadProgressIndicator(progress: AppUpdateProgress?, verifying: B
     }
 }
 
-private fun formatDownloadProgress(progress: AppUpdateProgress?): String {
+internal fun formatDownloadProgress(progress: AppUpdateProgress?): String {
     val downloaded = progress?.downloadedBytes ?: 0L
     val total = progress?.totalBytes
     val downloadedLabel = "%.1f MB".format(java.util.Locale.ROOT, downloaded / 1024f / 1024f)
     return if (total != null && total > 0) {
         val percentage = (downloaded * 100 / total).coerceIn(0, 100)
-        "$downloadedLabel / %.1f MB（$percentage%）${formatDownloadSpeed(progress)}".format(java.util.Locale.ROOT, total / 1024f / 1024f)
+        val totalLabel = "%.1f MB".format(java.util.Locale.ROOT, total / 1024f / 1024f)
+        "$downloadedLabel / $totalLabel（$percentage%）${formatDownloadSpeed(progress)}"
     } else {
         "已下载 $downloadedLabel${formatDownloadSpeed(progress)}"
     }

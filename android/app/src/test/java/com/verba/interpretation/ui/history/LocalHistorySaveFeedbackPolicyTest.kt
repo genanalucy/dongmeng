@@ -23,7 +23,7 @@ import org.junit.Test
  */
 class LocalHistorySaveFeedbackPolicyTest {
     @Test
-    fun successfulSaveStaysSilentThroughTheRealStateMachine() = runBlocking {
+    fun successfulSaveShowsLocalDurabilityThroughTheRealStateMachine() = runBlocking {
         val saves = GateSaver()
         val controller = LocalHistorySaveController(saves, CoroutineScope(Dispatchers.Default))
         val conversation = controller.startConversation("user", "solo")
@@ -31,16 +31,16 @@ class LocalHistorySaveFeedbackPolicyTest {
         val job = requireNotNull(controller.saveTurn(turn, "zh", "en", "你好", "hello", 1))
 
         waitFor { controller.state.value.status == LocalHistorySaveStatus.SAVING }
-        assertNull("in-flight saves must not render feedback", controller.state.value.visibleFeedback())
+        assertEquals("正在保存到本机…", controller.state.value.visibleFeedback()?.text)
 
         saves.gate("你好").complete(conversation.sessionId)
         job.join()
         assertEquals(LocalHistorySaveStatus.SAVED, controller.state.value.status)
-        assertNull("a completed save must not render feedback", controller.state.value.visibleFeedback())
+        assertEquals("已保存到本机", controller.state.value.visibleFeedback()?.text)
     }
 
     @Test
-    fun repeatedSuccessfulSavesStaySilent() = runBlocking {
+    fun repeatedSuccessfulSavesShareOneSavedStatus() = runBlocking {
         val saves = GateSaver()
         val controller = LocalHistorySaveController(saves, CoroutineScope(Dispatchers.Default))
         val conversation = controller.startConversation("user", "face")
@@ -55,7 +55,7 @@ class LocalHistorySaveFeedbackPolicyTest {
 
         assertEquals(LocalHistorySaveStatus.SAVED, controller.state.value.status)
         assertEquals(0, controller.state.value.pendingCount)
-        assertNull(controller.state.value.visibleFeedback())
+        assertEquals("已保存到本机", controller.state.value.visibleFeedback()?.text)
     }
 
     @Test
@@ -96,8 +96,10 @@ class LocalHistorySaveFeedbackPolicyTest {
                 val feedback = LocalHistorySaveState(status, "session-1", errorCode, 0).visibleFeedback()
                 if (status == LocalHistorySaveStatus.FAILED) {
                     assertEquals("failure copy must stay fixed", LOCAL_HISTORY_SAVE_FAILED_TEXT, requireNotNull(feedback).text)
+                } else if (status == LocalHistorySaveStatus.IDLE) {
+                    assertNull(feedback)
                 } else {
-                    assertNull("$status must stay silent regardless of errorCode", feedback)
+                    assertEquals(if (status == LocalHistorySaveStatus.SAVING) "正在保存到本机…" else "已保存到本机", feedback?.text)
                 }
             }
         }

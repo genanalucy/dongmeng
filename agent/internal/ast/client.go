@@ -27,15 +27,16 @@ func ErrorLogID(err error) string {
 
 // StartRequest is the validated Browser-to-Agent session configuration.
 type StartRequest struct {
-	SessionID          string
-	Mode               string
-	SourceLanguage     string
-	TargetLanguage     string
-	TargetAudioFormat  string
-	TargetAudioRate    int
-	Provider           string
-	CandidateLanguages []string
-	Voice              string
+	SessionID              string
+	Mode                   string
+	SourceLanguage         string
+	TargetLanguage         string
+	TargetAudioFormat      string
+	TargetAudioRate        int
+	Provider               string
+	CandidateLanguages     []string
+	Voice                  string
+	SupportsCompletedTurns bool
 }
 
 // Client starts an AST session. A production codec is deliberately absent until
@@ -70,6 +71,9 @@ type Event struct {
 	TargetLanguage string `json:"targetLanguage,omitempty"`
 	Binary         []byte `json:"-"`
 	UpstreamStatus int32  `json:"-"`
+	CompletionID   string `json:"completionId,omitempty"`
+	SourceText     string `json:"sourceText,omitempty"`
+	TranslatedText string `json:"translatedText,omitempty"`
 }
 
 // UnavailableClient is the explicit safe default. It never claims the AST

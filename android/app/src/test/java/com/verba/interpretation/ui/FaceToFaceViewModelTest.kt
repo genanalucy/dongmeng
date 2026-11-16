@@ -62,12 +62,260 @@ class FaceToFaceViewModelTest {
         effects.drain()
     }
 
+    @Test fun completedTurnIsSavedBeforeTransportFinishWithoutDuplicateAggregate() {
+        val saved = java.util.concurrent.CopyOnWriteArrayList<com.verba.interpretation.history.CompletedTurn>()
+        val model = FaceToFaceViewModel(Application(), runtime,
+            TranslationSessionCoordinator(cloud, CoroutineScope(dispatcher), { 0L }, dispatcher),
+            LocalHistoryTurnSaver { saved += it; requireNotNull(it.localSessionId) }, playback, effects)
+        model.manualPress(FaceToFaceSide.LEFT)
+        dispatcher.scheduler.runCurrent()
+        effects.drain()
+        val socket = runtime.sockets.single()
+        socket.source("你好")
+        socket.translation("Hello")
+        socket.event(AgentEvent.TurnCompleted("utterance-1", "你好", "Hello"))
+        assertNotNull(awaitTrue(2000) { saved.size == 1 })
+        model.manualRelease()
+        effects.drain()
+        socket.event(AgentEvent.Finished)
+        model.saveCurrentToHistory()
+        playback.drain()
+        assertEquals(1, saved.size)
+        model.cancel()
+        effects.drain()
+    }
+
+    @Test fun changingAccountClearsTranscriptBeforeExportCanBeRequested() {
+        vm.bindAccount("user-a")
+        start()
+        runtime.sockets.single().source("private A")
+        assertTrue(vm.isAccountBound("user-a"))
+        vm.bindAccount("user-b")
+        effects.drain()
+        assertTrue(vm.state.value.turns.isEmpty())
+        assertFalse(vm.state.value.captureActive)
+        assertFalse(vm.isAccountBound("user-a"))
+        assertTrue(vm.isAccountBound("user-b"))
+    }
+
+    @Test fun autoContinuesAfterFinalPairAndPlaybackWithoutAnotherTap() {
+        start()
+        val socket = runtime.sockets.single()
+        socket.source("第一句")
+        socket.translation("First sentence")
+        socket.tts(byteArrayOf(1, 0))
+        effects.drain()
+        socket.event(AgentEvent.Finished)
+        playback.drain()
+        effects.drain()
+        dispatcher.scheduler.runCurrent()
+        assertEquals("连续模式完成一句后应继续收音，而不是停在待机", FaceToFacePhase.LISTENING, vm.state.value.phase)
+        assertTrue(vm.state.value.captureActive)
+    }
+
+    @Test fun rapidPauseResumeDoesNotExecuteAnObsoleteCaptureStart() {
+        vm.startAuto()
+        dispatcher.scheduler.runCurrent()
+        // Delay the real capture executor as on a busy device. All three
+        // transitions are queued before the first microphone start executes.
+        vm.pauseAuto()
+        vm.resumeAuto()
+        effects.drain()
+        assertEquals("已过期的开始任务不得重复启动同一麦克风", 1, runtime.captureStarts)
+    }
+
+    @Test fun manualReleaseBeforeAnySubtitleFinishesCapturedInputAndAcceptsLateResults() {
+        vm.setMode(FaceToFaceMode.MANUAL)
+        vm.manualPress(FaceToFaceSide.LEFT)
+        dispatcher.scheduler.runCurrent()
+        effects.drain()
+        val socket = runtime.sockets.single()
+        runtime.packet?.invoke(ByteArray(2560))
+        vm.manualRelease()
+        effects.drain()
+        assertEquals(0, socket.cancels)
+        assertEquals(1, socket.finishes)
+        assertEquals(1, socket.audioPackets)
+        assertEquals(FaceToFacePhase.PROCESSING, vm.state.value.phase)
+        socket.event(AgentEvent.Ready)
+        socket.source("短句")
+        socket.translation("Short sentence")
+        socket.tts(byteArrayOf(1, 0))
+        socket.event(AgentEvent.Finished)
+        playback.drain()
+        assertEquals("Short sentence", vm.state.value.turns.single().translatedText)
+        assertEquals(listOf(PlaybackRoute.RIGHT), runtime.routes)
+        assertEquals(FaceToFacePhase.IDLE, vm.state.value.phase)
+    }
+
+    @Test fun silentManualReleaseWaitsForFinishThenRemovesEmptyTurnWithoutCanceling() {
+        vm.setMode(FaceToFaceMode.MANUAL)
+        vm.manualPress(FaceToFaceSide.LEFT)
+        dispatcher.scheduler.runCurrent()
+        effects.drain()
+        val socket = runtime.sockets.single()
+        runtime.packet?.invoke(ByteArray(2560))
+        vm.manualRelease()
+        effects.drain()
+        assertEquals(1, socket.finishes)
+        assertEquals(0, socket.cancels)
+        assertEquals(1, vm.state.value.turns.size)
+        socket.event(AgentEvent.Finished)
+        playback.drain()
+        effects.drain()
+        dispatcher.scheduler.runCurrent()
+        assertTrue(vm.state.value.turns.isEmpty())
+        assertEquals(FaceToFacePhase.IDLE, vm.state.value.phase)
+        assertTrue(vm.state.value.configurationEditable)
+        assertEquals(1, cloud.ends)
+    }
+
+    @Test fun autoKeepsListeningAcrossThreeCompletedUtterancesOnOneCloudGrant() {
+        start()
+        repeat(3) { index ->
+            val socket = runtime.sockets.last()
+            socket.source("句子 $index")
+            socket.translation("Sentence $index")
+            socket.tts(byteArrayOf(1, 0))
+            effects.drain()
+            socket.event(AgentEvent.Finished)
+            playback.drain()
+            effects.drain()
+            assertEquals(FaceToFacePhase.LISTENING, vm.state.value.phase)
+            assertEquals("zh" to "en", runtime.sockets.last().languages)
+        }
+        assertEquals(4, runtime.sockets.size)
+        assertEquals(1, cloud.opens)
+        assertEquals(0, cloud.ends)
+        assertEquals(3, vm.state.value.turns.count { it.finished })
+    }
+
+    @Test fun pauseStopAndCancelDuringPlaybackNeverAutomaticallyReopenCapture() {
+        for (stop in listOf(vm::pauseAuto, vm::stopAuto, vm::cancel)) {
+            vm.cancel()
+            effects.drain()
+            vm.startAuto()
+            dispatcher.scheduler.runCurrent()
+            effects.drain()
+            val count = runtime.sockets.size
+            val socket = runtime.sockets.last()
+            socket.source("一句")
+            socket.translation("One sentence")
+            socket.tts(byteArrayOf(1, 0))
+            effects.drain()
+            stop()
+            socket.event(AgentEvent.Finished)
+            playback.drain()
+            effects.drain()
+            assertEquals(count, runtime.sockets.size)
+            assertFalse(vm.state.value.captureActive)
+        }
+    }
+
+    @Test fun autoFailureAfterFinalPairStopsInsteadOfSilentlyReconnecting() {
+        start()
+        val socket = runtime.sockets.single()
+        socket.source("一句")
+        socket.translation("One sentence")
+        effects.drain()
+        socket.event(AgentEvent.Error("UPSTREAM_FAILED", "failed"))
+        playback.drain()
+        effects.drain()
+        assertEquals(FaceToFacePhase.ERROR, vm.state.value.phase)
+        assertEquals(1, runtime.sockets.size)
+        assertFalse(vm.state.value.captureActive)
+    }
+
+    @Test fun oldCaptureCallbacksCannotSendIntoAResumedTurn() {
+        start()
+        val oldPacket = runtime.packet!!
+        vm.pauseAuto()
+        vm.resumeAuto()
+        effects.drain()
+        oldPacket(ByteArray(2560))
+        assertEquals(0, runtime.sockets.last().audioPackets)
+        runtime.packet!!.invoke(ByteArray(2560))
+        assertEquals(1, runtime.sockets.last().audioPackets)
+    }
+
+    @Test fun autoFinalPairInReverseOrderAlsoCompletesAndContinues() {
+        start()
+        val socket = runtime.sockets.single()
+        socket.translation("One sentence")
+        socket.source("一句")
+        effects.drain()
+        assertEquals(1, socket.finishes)
+        socket.event(AgentEvent.Finished)
+        playback.drain()
+        effects.drain()
+        assertEquals(FaceToFacePhase.LISTENING, vm.state.value.phase)
+        assertEquals(2, runtime.sockets.size)
+    }
+
+    @Test fun prematureAutoFinishStopsCaptureWithoutReopeningPaidSession() {
+        start()
+        runtime.sockets.single().event(AgentEvent.Finished)
+        playback.drain()
+        effects.drain()
+        assertEquals(FaceToFacePhase.ERROR, vm.state.value.phase)
+        assertFalse(vm.state.value.captureActive)
+        assertEquals(1, runtime.sockets.size)
+    }
+
+    @Test fun obsoleteCaptureStartResultCannotFailResumedSession() {
+        runtime.onCaptureStart = {
+            runtime.onCaptureStart = { CaptureResult.Started }
+            vm.pauseAuto()
+            vm.resumeAuto()
+            CaptureResult.Error("obsolete start failed")
+        }
+        start()
+        effects.drain()
+        assertEquals(FaceToFacePhase.LISTENING, vm.state.value.phase)
+        assertNull(vm.state.value.error)
+        assertEquals(2, runtime.captureStarts)
+    }
+
+    @Test fun cancelBeforeReadyUnlocksConfigurationEvenWhenSocketNeverCallsBack() {
+        vm.startAuto()
+        dispatcher.scheduler.runCurrent()
+        effects.drain()
+        assertTrue(vm.state.value.connectionPending)
+        vm.cancel()
+        effects.drain()
+        assertFalse(vm.state.value.connectionPending)
+        assertTrue(vm.state.value.configurationEditable)
+        vm.swapLanguages()
+        assertEquals("en", vm.state.value.leftLanguage)
+        vm.setMode(FaceToFaceMode.MANUAL)
+        assertEquals(FaceToFaceMode.MANUAL, vm.state.value.mode)
+    }
+
+    @Test fun connectingGrantAndSocketLockLanguageChangesUntilReadyOrCancel() {
+        vm.startAuto()
+        assertTrue(vm.state.value.connectionPending)
+        assertFalse(vm.state.value.configurationEditable)
+        vm.swapLanguages()
+        assertEquals("zh", vm.state.value.leftLanguage)
+        dispatcher.scheduler.runCurrent()
+        effects.drain()
+        assertTrue(vm.state.value.connectionPending)
+        runtime.sockets.single().event(AgentEvent.Ready)
+        assertFalse(vm.state.value.connectionPending)
+        assertTrue(vm.state.value.captureActive)
+        vm.cancel()
+        effects.drain()
+        assertFalse(vm.state.value.connectionPending)
+        assertTrue(vm.state.value.configurationEditable)
+    }
+
     @Test fun manualModeStartsNextPressBeforePreviousTurnFinishes() {
         vm.setMode(FaceToFaceMode.MANUAL)
         assertEquals(FaceToFaceMode.MANUAL, vm.state.value.mode)
         vm.manualPress(FaceToFaceSide.LEFT)
         dispatcher.scheduler.runCurrent()
         assertEquals(1, runtime.sockets.size)
+        effects.drain()
         assertEquals(FaceToFacePhase.LISTENING, vm.state.value.phase)
         runtime.sockets.single().source("第一轮")
         assertEquals("第一轮", vm.state.value.turns.single().sourceText)
@@ -340,12 +588,13 @@ private class RecordingRuntime : FaceToFaceRuntime {
     val routes = mutableListOf<PlaybackRoute>()
     var onPlay: (ByteArray) -> Unit = {}
     var onStopCapture: () -> Unit = { packet = null }
+    var onCaptureStart: () -> CaptureResult = { CaptureResult.Started }
     override fun createSocket(onEvent: (AgentEvent) -> Unit, onTts: (ByteArray, Long?, String?) -> Unit, onFailure: (String) -> Unit) =
         RecordingSocket(onEvent, onTts) { onStart() }.also { sockets += it }
     override fun startCapture(onPacket: (ByteArray) -> Unit, onError: (String) -> Unit, onLevel: (Float) -> Unit): CaptureResult {
         captureStarts++
         packet = onPacket
-        return CaptureResult.Started
+        return onCaptureStart()
     }
     override fun stopCapture() { captureStops++; onStopCapture() }
     override fun play(pcm: ByteArray, route: PlaybackRoute): Result<Unit> { routes += route; onPlay(pcm); return Result.success(Unit) }
@@ -362,12 +611,13 @@ private class RecordingSocket(
     var cancels = 0
     var languages: Pair<String, String>? = null
     var sendSucceeds = true
+    var audioPackets = 0
     override fun start(source: String, target: String, grant: TranslationSessionGrant): Boolean {
         languages = source to target
         onStart()
         return true
     }
-    override fun sendAudio(packet: ByteArray) = sendSucceeds
+    override fun sendAudio(packet: ByteArray): Boolean { audioPackets++; return sendSucceeds }
     override fun finish() { finishes++ }
     override fun cancel() { cancels++ }
     fun source(text: String) = event(AgentEvent.Subtitle(AgentEvent.Subtitle.Kind.SOURCE_FINAL, text))

@@ -8,6 +8,8 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performSemanticsAction
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.performTouchInput
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.verba.interpretation.ui.FaceToFacePhase
@@ -101,11 +103,11 @@ class EarMicButtonTest {
 
         compose.onNodeWithContentDescription("右耳，English，开始右侧临时接话，译文送至左耳")
             .assertIsDisplayed()
-            .performClick()
+            .performSemanticsAction(SemanticsActions.OnClick) { it() }
         compose.waitForIdle()
         compose.onNodeWithContentDescription("右耳，English，结束右侧临时接话，译文送至左耳")
             .assertIsDisplayed()
-            .performClick()
+            .performSemanticsAction(SemanticsActions.OnClick) { it() }
 
         assertEquals(listOf("start", "end"), events)
     }

@@ -195,18 +195,19 @@ func (s *Server) translate(w http.ResponseWriter, r *http.Request) {
 }
 
 type startMessage struct {
-	Type               string   `json:"type"`
-	SessionID          string   `json:"sessionId"`
-	UserID             string   `json:"userId"`
-	InstallID          string   `json:"installId"`
-	Mode               string   `json:"mode"`
-	SourceLanguage     string   `json:"sourceLanguage"`
-	TargetLanguage     string   `json:"targetLanguage"`
-	TargetAudioFormat  string   `json:"targetAudioFormat"`
-	TargetAudioRate    int      `json:"targetAudioRate"`
-	Provider           string   `json:"provider"`
-	CandidateLanguages []string `json:"candidateLanguages"`
-	Voice              string   `json:"voice"`
+	Type                   string   `json:"type"`
+	SessionID              string   `json:"sessionId"`
+	UserID                 string   `json:"userId"`
+	InstallID              string   `json:"installId"`
+	Mode                   string   `json:"mode"`
+	SourceLanguage         string   `json:"sourceLanguage"`
+	TargetLanguage         string   `json:"targetLanguage"`
+	TargetAudioFormat      string   `json:"targetAudioFormat"`
+	TargetAudioRate        int      `json:"targetAudioRate"`
+	Provider               string   `json:"provider"`
+	CandidateLanguages     []string `json:"candidateLanguages"`
+	Voice                  string   `json:"voice"`
+	SupportsCompletedTurns bool     `json:"supportsCompletedTurns,omitempty"`
 }
 
 type finishMessage struct {
@@ -221,6 +222,9 @@ type browserEvent struct {
 	Language       string `json:"language,omitempty"`
 	SegmentID      int64  `json:"segmentId,omitempty"`
 	TargetLanguage string `json:"targetLanguage,omitempty"`
+	CompletionID   string `json:"completionId,omitempty"`
+	SourceText     string `json:"sourceText,omitempty"`
+	TranslatedText string `json:"translatedText,omitempty"`
 }
 
 type outgoingMessage struct {
@@ -471,6 +475,10 @@ func (s *Server) runConnection(parent context.Context, conn *websocket.Conn, ses
 				return
 			}
 			emit(browserEvent{Type: event.Type, Message: event.Message, LogID: event.LogID, SegmentID: event.SegmentID, TargetLanguage: event.TargetLanguage})
+		case "turn_completed":
+			if start.SupportsCompletedTurns {
+				emit(browserEvent{Type: event.Type, CompletionID: event.CompletionID, SourceText: event.SourceText, TranslatedText: event.TranslatedText})
+			}
 		case "finished":
 			upstreamTerminal = true
 			emit(browserEvent{Type: "finished"})
@@ -637,7 +645,7 @@ func parseStart(payload []byte, authRequired bool) (connectionStart, error) {
 		return connectionStart{}, errors.New("INVALID_START")
 	}
 	return connectionStart{
-		StartRequest: ast.StartRequest{SessionID: message.SessionID, Mode: message.Mode, SourceLanguage: message.SourceLanguage, TargetLanguage: message.TargetLanguage, TargetAudioFormat: message.TargetAudioFormat, TargetAudioRate: message.TargetAudioRate, Provider: "volcengine"},
+		StartRequest: ast.StartRequest{SessionID: message.SessionID, Mode: message.Mode, SourceLanguage: message.SourceLanguage, TargetLanguage: message.TargetLanguage, TargetAudioFormat: message.TargetAudioFormat, TargetAudioRate: message.TargetAudioRate, Provider: "volcengine", SupportsCompletedTurns: message.SupportsCompletedTurns},
 		UserID:       message.UserID, InstallID: message.InstallID,
 	}, nil
 }

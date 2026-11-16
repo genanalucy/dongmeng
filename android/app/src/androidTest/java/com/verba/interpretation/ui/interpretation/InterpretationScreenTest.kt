@@ -28,13 +28,22 @@ class InterpretationScreenTest {
             onStart = { starts += 1 },
         )
 
-        compose.onNodeWithText("中文 原文").assertIsDisplayed()
-        compose.onNodeWithText("English 译文").assertIsDisplayed()
-        compose.onNodeWithText("译文会显示在这里").assertIsDisplayed()
+        compose.onNodeWithText("中文").assertIsDisplayed()
+        compose.onNodeWithText("English").assertIsDisplayed()
+        compose.onNodeWithText("系统麦克风 · 实时同传").assertIsDisplayed()
         compose.onNodeWithContentDescription("开始同传").assertIsDisplayed()
         compose.onNodeWithContentDescription("开始同传").performClick()
         assertEquals(1, starts)
         compose.onAllNodesWithText("正在翻译").assertCountEquals(0)
+    }
+
+    @Test
+    fun subtitleSizesCanChangeWithoutStartingSession() {
+        var starts = 0
+        setScreen(InterpretationUiState(), onStart = { starts++ })
+        compose.onNodeWithText("字号").performClick()
+        compose.onNodeWithContentDescription("字幕字号：大").performClick()
+        compose.runOnIdle { assertEquals(0, starts) }
     }
 
     @Test
@@ -75,12 +84,12 @@ class InterpretationScreenTest {
     }
 
     @Test
-    fun controlsExposeOnlyIconsWhileKeepingAccessibleLabels() {
+    fun controlsShowPrimaryActionTextAndKeepAccessibleLabels() {
         setScreen(state = InterpretationUiState(phase = SessionPhase.RUNNING))
 
         compose.onNodeWithContentDescription("暂停同传").assertIsDisplayed()
         compose.onNodeWithContentDescription("结束同传").assertIsDisplayed()
-        compose.onAllNodesWithText("暂停").assertCountEquals(0)
+        compose.onNodeWithText("暂停").assertIsDisplayed()
         compose.onAllNodesWithText("结束").assertCountEquals(0)
     }
 

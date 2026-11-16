@@ -4,6 +4,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
@@ -27,21 +28,22 @@ class LocalHistorySaveFeedbackTest {
     }
 
     @Test
-    fun savingRendersNothing() {
+    fun savingShowsPendingLocalStatus() {
         setFeedback(LocalHistorySaveState(status = LocalHistorySaveStatus.SAVING, sessionId = "session-saving", pendingCount = 1))
-        assertSilent()
+        compose.onNodeWithText("正在保存到本机…").assertExists()
     }
 
     @Test
-    fun savedRendersNothing() {
+    fun savedShowsCommittedLocalStatusAndHistoryAction() {
         val opened = mutableListOf<String>()
         setFeedback(
             LocalHistorySaveState(status = LocalHistorySaveStatus.SAVED, sessionId = "session-saved"),
             canOpenHistory = true,
             onViewHistory = opened::add,
         )
-        assertSilent()
-        assertEquals(emptyList<String>(), opened)
+        compose.onNodeWithText("已保存到本机").assertExists()
+        compose.onNodeWithText("查看历史").performClick()
+        assertEquals(listOf("session-saved"), opened)
     }
 
     @Test
