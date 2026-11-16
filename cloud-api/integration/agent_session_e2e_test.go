@@ -316,9 +316,19 @@ type e2eGrant struct {
 
 func newE2ECloud(t *testing.T, db *store.Postgres, fixtures *pgxpool.Pool, issuer auth.TokenIssuer, now time.Time) e2eCloud {
 	t.Helper()
+	captcha, err := auth.NewCaptchaService(auth.CaptchaService{
+		AnswerPepper:       bytes.Repeat([]byte("i"), auth.MinimumSecretBytes),
+		RateLimitKeySecret: bytes.Repeat([]byte("j"), auth.MinimumSecretBytes),
+		GenerateSlide:      pinnedSlideCaptcha{},
+		Clock:              func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatal("prepare E2E captcha service")
+	}
 	router := httpapi.NewRouter(httpapi.RouterOptions{
 		Config:   config.Config{Environment: "test", AllowedOrigins: []string{e2eOrigin}, DatabaseTimeout: time.Second, RateLimitRPS: 100, RateLimitBurst: 100},
 		Database: readyDatabase{}, Store: db, Tokens: issuer, Now: func() time.Time { return now },
+		Captcha: &captcha,
 	})
 	server := httptest.NewServer(router)
 	t.Cleanup(server.Close)
@@ -327,7 +337,14 @@ func newE2ECloud(t *testing.T, db *store.Postgres, fixtures *pgxpool.Pool, issue
 
 func (c e2eCloud) createGrant(t *testing.T) e2eGrant {
 	t.Helper()
-	status, register := c.json(t, http.MethodPost, "/api/v1/auth/register", nil, map[string]string{"email": c.email, "password": c.pass})
+	status, challenge := c.json(t, http.MethodGet, "/api/v1/auth/captcha", nil, nil)
+	if status != http.StatusOK || challenge["captcha_id"] == nil {
+		t.Fatal("request Cloud E2E captcha")
+	}
+	status, register := c.json(t, http.MethodPost, "/api/v1/auth/register", nil, map[string]any{
+		"username": uniqueUsername("e2e"), "email": c.email, "password": c.pass,
+		"captcha_id": challenge["captcha_id"], "captcha_x": 137,
+	})
 	if status != http.StatusCreated || register == nil {
 		t.Fatal("create Cloud E2E user")
 	}
@@ -340,7 +357,7 @@ func (c e2eCloud) createGrant(t *testing.T) e2eGrant {
 		}
 	})
 
-	status, login := c.json(t, http.MethodPost, "/api/v1/auth/login", nil, map[string]string{"email": c.email, "password": c.pass})
+	status, login := c.json(t, http.MethodPost, "/api/v1/auth/login", nil, map[string]string{"identifier": c.email, "password": c.pass})
 	if status != http.StatusOK {
 		t.Fatal("Cloud E2E login")
 	}

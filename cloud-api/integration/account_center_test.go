@@ -4,16 +4,17 @@ package integration_test
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"testing"
 	"time"
 
-	"github.com/dngmeng/cloud-api/internal/auth"
 	"github.com/dngmeng/cloud-api/internal/domain"
 	"github.com/dngmeng/cloud-api/internal/migrate"
 	"github.com/dngmeng/cloud-api/internal/store"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"golang.org/x/crypto/argon2"
 )
 
 // This test is intentionally environment-gated by isolatedPostgresTestDSN. It
@@ -38,10 +39,11 @@ func TestAccountCenterStoreOwnershipEntitlementsAndIdentityTransaction(t *testin
 	t.Cleanup(raw.Close)
 
 	now := time.Now().UTC().Truncate(time.Microsecond)
-	hash, err := auth.HashPassword("weak")
-	if err != nil {
-		t.Fatal(err)
-	}
+	// Persist a pre-policy weak credential directly. The current password-creation
+	// API rejects it; identity completion must still verify an existing Argon2 hash.
+	salt := []byte("legacy-test-salt")
+	hash := "$argon2id$v=19$m=65536,t=3,p=2$" + base64.RawStdEncoding.EncodeToString(salt) + "$" +
+		base64.RawStdEncoding.EncodeToString(argon2.IDKey([]byte("weak"), salt, 3, 65536, 2, 32))
 	ownerEmail, otherEmail := integrationEmail(), integrationEmail()
 	var owner, other, legacy uuid.UUID
 	t.Cleanup(func() {
@@ -49,10 +51,10 @@ func TestAccountCenterStoreOwnershipEntitlementsAndIdentityTransaction(t *testin
 		defer cancel()
 		_, _ = raw.Exec(cleanup, `DELETE FROM users WHERE id=ANY($1)`, []uuid.UUID{owner, other, legacy})
 	})
-	if err := raw.QueryRow(ctx, `INSERT INTO users(email,password_hash) VALUES($1,$2) RETURNING id`, ownerEmail, hash).Scan(&owner); err != nil {
+	if err := raw.QueryRow(ctx, `INSERT INTO users(email,password_hash,username) VALUES($1,$2,$3) RETURNING id`, ownerEmail, hash, uniqueUsername("owner")).Scan(&owner); err != nil {
 		t.Fatal("insert owner")
 	}
-	if err := raw.QueryRow(ctx, `INSERT INTO users(email,password_hash) VALUES($1,$2) RETURNING id`, otherEmail, hash).Scan(&other); err != nil {
+	if err := raw.QueryRow(ctx, `INSERT INTO users(email,password_hash,username) VALUES($1,$2,$3) RETURNING id`, otherEmail, hash, uniqueUsername("other")).Scan(&other); err != nil {
 		t.Fatal("insert other")
 	}
 	legacyEmail := integrationEmail()
@@ -67,7 +69,7 @@ func TestAccountCenterStoreOwnershipEntitlementsAndIdentityTransaction(t *testin
 		at      time.Time
 	}{{owner, 7, now.Add(-2 * time.Minute)}, {other, 99, now.Add(-time.Minute)}, {owner, 11, now}} {
 		entitlement := uuid.New()
-		if _, err := raw.Exec(ctx, `INSERT INTO entitlements(id,user_id,kind,starts_at,expires_at) VALUES($1,$2,'trial',$3,$4)`, entitlement, fixture.user, now.Add(-time.Hour), now.Add(24*time.Hour)); err != nil {
+		if _, err := raw.Exec(ctx, `INSERT INTO entitlements(id,user_id,kind,starts_at,expires_at) VALUES($1,$2,'trial',$3,$4)`, entitlement, fixture.user, now.Add(-time.Hour), now.Add(71*time.Hour)); err != nil {
 			t.Fatal("insert entitlement")
 		}
 		session := uuid.New()
@@ -96,7 +98,7 @@ func TestAccountCenterStoreOwnershipEntitlementsAndIdentityTransaction(t *testin
 		t.Fatalf("owner empty page = %#v, %v", page, err)
 	}
 
-	// Weak legacy current credentials are verified by bcrypt and the old email
+	// Weak legacy current credentials are verified by Argon2 and the old email
 	// remains untouched while empty username/phone are completed.
 	requestedLegacyEmail := integrationEmail()
 	updated, err := db.UpdateIdentity(ctx, domain.UpdateIdentityParams{UserID: legacy, Username: "legacy_01", Email: requestedLegacyEmail, Phone: "+8613800138000", CurrentPassword: "weak"})
