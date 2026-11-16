@@ -10,6 +10,21 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class ConversationDisplayBubbleTest {
+    @Test fun silentTurnsNeverCreateBubblesButDelayedTextStillAppears() {
+        val empty = FaceToFaceTurn(80, FaceToFaceSide.LEFT, "zh", "en", PlaybackRoute.RIGHT)
+        for (phase in listOf(FaceToFacePhase.LISTENING, FaceToFacePhase.PROCESSING, FaceToFacePhase.IDLE)) {
+            assertEquals(emptyList<ConversationDisplayBubble>(), displayConversationBubbles(listOf(empty), phase))
+            assertEquals(emptyList<ConversationDisplayBubble>(), displayConversationBubbles(listOf(empty.copy(finished = true)), phase))
+        }
+        val whitespace = empty.copy(sourcePartial = "  ", translationPartial = "\n")
+        assertEquals(emptyList<ConversationDisplayBubble>(), displayConversationBubbles(listOf(whitespace)))
+        val delayed = empty.copy(sourcePartial = "你好")
+        val bubble = displayConversationBubbles(listOf(delayed), FaceToFacePhase.PROCESSING).single()
+        assertEquals("80:0", bubble.key)
+        assertEquals("你好", bubble.sourceText)
+        assertEquals("Hello", displayConversationBubbles(listOf(delayed.copy(translationFinals = listOf("Hello"), finished = true))).single().translationText)
+    }
+
     @Test fun visualSpecsKeepConversationAndFaceTypographyDistinct() {
         assertEquals(19f, ConversationTimelineVisualSpec.Conversation.sourceFontSize.value)
         assertEquals(22f, ConversationTimelineVisualSpec.Conversation.translationFontSize.value)

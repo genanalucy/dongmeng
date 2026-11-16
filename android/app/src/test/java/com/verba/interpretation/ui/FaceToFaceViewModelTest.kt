@@ -112,6 +112,28 @@ class FaceToFaceViewModelTest {
         assertEquals(FaceToFacePhase.IDLE, vm.state.value.phase)
     }
 
+    @Test fun silentManualReleaseWaitsForFinishThenRemovesEmptyTurnWithoutCanceling() {
+        vm.setMode(FaceToFaceMode.MANUAL)
+        vm.manualPress(FaceToFaceSide.LEFT)
+        dispatcher.scheduler.runCurrent()
+        effects.drain()
+        val socket = runtime.sockets.single()
+        runtime.packet?.invoke(ByteArray(2560))
+        vm.manualRelease()
+        effects.drain()
+        assertEquals(1, socket.finishes)
+        assertEquals(0, socket.cancels)
+        assertEquals(1, vm.state.value.turns.size)
+        socket.event(AgentEvent.Finished)
+        playback.drain()
+        effects.drain()
+        dispatcher.scheduler.runCurrent()
+        assertTrue(vm.state.value.turns.isEmpty())
+        assertEquals(FaceToFacePhase.IDLE, vm.state.value.phase)
+        assertTrue(vm.state.value.configurationEditable)
+        assertEquals(1, cloud.ends)
+    }
+
     @Test fun autoKeepsListeningAcrossThreeCompletedUtterancesOnOneCloudGrant() {
         start()
         repeat(3) { index ->

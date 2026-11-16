@@ -556,7 +556,14 @@ class FaceToFaceCoordinator<S> {
         val first = entries[turnId]
         if (drained) {
             first?.audioPendingDrain = false
-            if (first?.transport?.finished == true && first.tts.isEmpty()) entries.remove(turnId)
+            if (first?.transport?.finished == true && first.tts.isEmpty()) {
+                entries.remove(turnId)
+                // Only after upstream Finished and audible drain is no text a
+                // confirmed empty result. Never discard while subtitles are pending.
+                current = current.copy(turns = current.turns.filterNot {
+                    it.id == turnId && it.sourceText.isBlank() && it.translatedText.isBlank()
+                })
+            }
             if (first?.continuousAutoSegment == true && first.logicalComplete && !first.transport.finished && first.tts.isEmpty()) {
                 return null
             }

@@ -10,6 +10,23 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class FaceToFaceCoordinatorTest {
+    @Test fun emptyResultDrainsWithoutRemovingNewerTurnOrTranslationOnlyText() {
+        val coordinator = FaceToFaceCoordinator<String>()
+        coordinator.manualPress(1, FaceToFaceSide.LEFT, "silent")
+        coordinator.endManualInput()
+        coordinator.manualPress(2, FaceToFaceSide.RIGHT, "spoken")
+        coordinator.updateSubtitle(2, SubtitleKind.TRANSLATION_FINAL, "译文")
+        coordinator.transportFinished("silent")
+        coordinator.playbackWorkFinished(1, drained = true)
+        assertEquals(listOf(2L), coordinator.state().turns.map { it.id })
+        assertTrue(coordinator.state().captureActive)
+        coordinator.endManualInput()
+        coordinator.transportFinished("spoken")
+        coordinator.playbackWorkFinished(2, drained = true)
+        assertEquals("译文", coordinator.state().turns.single().translatedText)
+        assertTrue(coordinator.canCloseCloudSession())
+    }
+
     @Test fun playbackIndicatorTracksAudioUntilAudibleDrain() {
         val coordinator = FaceToFaceCoordinator<String>()
         coordinator.manualPress(1L, FaceToFaceSide.LEFT, "socket")

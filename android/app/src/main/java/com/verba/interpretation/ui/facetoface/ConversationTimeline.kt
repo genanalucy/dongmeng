@@ -92,7 +92,10 @@ internal fun displayConversationBubbles(
 ): List<ConversationDisplayBubble> {
     val liveTurnId = activeTurnId ?: activeConversationTurnId(turns, phase)
     return turns.filter { turn ->
-        turn.finished || phase != FaceToFacePhase.ERROR
+        // Pending audio is not a transcript article. Keep its transport alive for
+        // delayed subtitles, but never render a bubble with no readable content.
+        (turn.finished || phase != FaceToFacePhase.ERROR) &&
+            (turn.sourceText.isNotBlank() || turn.translatedText.isNotBlank())
     }.flatMap { turn ->
         val alignment = faceToFaceTurnAlignment(turn)
         val live = turn.id == liveTurnId && !turn.finished
