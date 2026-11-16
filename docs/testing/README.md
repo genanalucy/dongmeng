@@ -26,7 +26,7 @@ bash scripts/check.sh all
 | `web` | 辅助 Web npm 同上 | 辅助原型与协议调试工具，不是完整产品 |
 | `download` | 既有四项 Python 单测与发布脚本 `bash -n` | 本地清单、快照和路由迁移；不上传、不部署、不访问公网APK |
 | `navigation` | 当前首页、代理入口、领域入口、文档/归档索引（含archive/indexes各批次）、testing/architecture与工作树说明的本地 Markdown 链接 | 只验证目标存在，不验证标题锚点、外部URL、裸代码路径；不扫描历史正文的旧约束 |
-| `tooling` | `scripts/*.sh` Bash语法；检查CLI和导航的行为测试 | Python3/Bash；工具技能安装另见其说明，不复制本机缓存 |
+| `tooling` | `scripts/*.sh` Bash语法；检查CLI、导航、CI路径选择与技能安装的行为测试 | Python3/Bash；工具技能安装另见其说明，不复制本机缓存 |
 | `db` | Cloud `go test -json -tags=integration -count=1 ./integration` | 显式专用PostgreSQL；包含启动独立 Agent harness 的跨进程授权测试；任何skip或没有完成测试均FAIL |
 | `manual` | 输出人工验收指针 | 始终SKIP，见[真机验收](manual-acceptance.md) |
 
