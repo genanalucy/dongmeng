@@ -1,0 +1,239 @@
+package store
+
+import (
+	"bytes"
+	"context"
+	"sync"
+	"time"
+
+	"github.com/dngmeng/cloud-api/internal/domain"
+	"github.com/google/uuid"
+)
+
+type memoryUser struct {
+	user domain.User
+	hash string
+}
+type memoryCode struct {
+	batch      domain.CodeBatch
+	redeemedBy *uuid.UUID
+}
+
+type Memory struct {
+	mu           sync.Mutex
+	users        map[uuid.UUID]memoryUser
+	emails       map[string]uuid.UUID
+	entitlements []domain.Entitlement
+	refresh      map[string]domain.RefreshToken
+	codes        map[string]memoryCode
+	sessions     map[uuid.UUID]domain.TranslationSession
+	consents     map[uuid.UUID]domain.FeedbackConsent
+	artifacts    map[uuid.UUID]domain.FeedbackArtifact
+	audits       []domain.AuditLog
+}
+
+func NewMemory() *Memory {
+	return &Memory{users: map[uuid.UUID]memoryUser{}, emails: map[string]uuid.UUID{}, refresh: map[string]domain.RefreshToken{}, codes: map[string]memoryCode{}, sessions: map[uuid.UUID]domain.TranslationSession{}, consents: map[uuid.UUID]domain.FeedbackConsent{}, artifacts: map[uuid.UUID]domain.FeedbackArtifact{}}
+}
+func (s *Memory) Register(_ context.Context, p domain.RegisterParams) (domain.User, domain.Entitlement, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.emails[p.Email]; ok {
+		return domain.User{}, domain.Entitlement{}, domain.ErrConflict
+	}
+	u := domain.User{ID: uuid.New(), Email: p.Email, Role: "user", CreatedAt: p.Now}
+	e := domain.Entitlement{ID: uuid.New(), UserID: u.ID, Kind: "trial", StartsAt: p.Now, ExpiresAt: p.Now.Add(72 * time.Hour)}
+	s.users[u.ID] = memoryUser{u, p.PasswordHash}
+	s.emails[p.Email] = u.ID
+	s.entitlements = append(s.entitlements, e)
+	return u, e, nil
+}
+func (s *Memory) UserByEmail(_ context.Context, email string) (domain.User, string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	id, ok := s.emails[email]
+	if !ok {
+		return domain.User{}, "", domain.ErrNotFound
+	}
+	v := s.users[id]
+	return v.user, v.hash, nil
+}
+func (s *Memory) UserByID(_ context.Context, id uuid.UUID) (domain.User, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	v, ok := s.users[id]
+	if !ok {
+		return domain.User{}, domain.ErrNotFound
+	}
+	return v.user, nil
+}
+func (s *Memory) SetRole(id uuid.UUID, role string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	v := s.users[id]
+	v.user.Role = role
+	s.users[id] = v
+}
+func (s *Memory) CreateRefreshToken(_ context.Context, p domain.CreateRefreshParams) (domain.RefreshToken, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	t := domain.RefreshToken{ID: uuid.New(), UserID: p.UserID, FamilyID: p.FamilyID, TokenHash: p.Hash, ExpiresAt: p.ExpiresAt}
+	s.refresh[string(p.Hash)] = t
+	return t, nil
+}
+func (s *Memory) RotateRefreshToken(_ context.Context, oldHash, newHash []byte, now, expires time.Time) (domain.RefreshToken, domain.RefreshToken, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	old, ok := s.refresh[string(oldHash)]
+	if !ok {
+		return old, domain.RefreshToken{}, domain.ErrUnauthorized
+	}
+	if old.RevokedAt != nil {
+		for k, t := range s.refresh {
+			if t.FamilyID == old.FamilyID {
+				n := now
+				t.RevokedAt = &n
+				s.refresh[k] = t
+			}
+		}
+		return old, domain.RefreshToken{}, domain.ErrUnauthorized
+	}
+	if !old.ExpiresAt.After(now) {
+		return old, domain.RefreshToken{}, domain.ErrUnauthorized
+	}
+	next := domain.RefreshToken{ID: uuid.New(), UserID: old.UserID, FamilyID: old.FamilyID, TokenHash: newHash, ExpiresAt: expires}
+	n := now
+	old.RevokedAt = &n
+	old.ReplacedByID = &next.ID
+	s.refresh[string(oldHash)] = old
+	s.refresh[string(newHash)] = next
+	return old, next, nil
+}
+func (s *Memory) RevokeRefreshToken(_ context.Context, h []byte, now time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	t, ok := s.refresh[string(h)]
+	if !ok {
+		return domain.ErrNotFound
+	}
+	t.RevokedAt = &now
+	s.refresh[string(h)] = t
+	return nil
+}
+func (s *Memory) ActiveEntitlement(_ context.Context, id uuid.UUID, now time.Time) (domain.Entitlement, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var best domain.Entitlement
+	for _, e := range s.entitlements {
+		if e.UserID == id && !e.StartsAt.After(now) && e.ExpiresAt.After(now) && e.ExpiresAt.After(best.ExpiresAt) {
+			best = e
+		}
+	}
+	if best.ID == uuid.Nil {
+		return best, domain.ErrNoEntitlement
+	}
+	return best, nil
+}
+func (s *Memory) CreateCodeBatch(_ context.Context, p domain.CreateBatchParams) (domain.CodeBatch, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	b := domain.CodeBatch{ID: uuid.New(), Name: p.Name, DurationDays: p.DurationDays, CreatedBy: p.AdminID, CreatedAt: p.Now}
+	for _, h := range p.CodeHashes {
+		s.codes[string(h)] = memoryCode{batch: b}
+	}
+	s.audits = append(s.audits, domain.AuditLog{ID: uuid.New(), AdminID: p.AdminID, Action: "redemption_batch.create", TargetType: "redemption_code_batch", TargetID: &b.ID, CreatedAt: p.Now})
+	return b, nil
+}
+func (s *Memory) RedeemCode(_ context.Context, userID uuid.UUID, h []byte, now time.Time) (domain.Entitlement, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	c, ok := s.codes[string(h)]
+	if !ok {
+		return domain.Entitlement{}, domain.ErrInvalid
+	}
+	if c.redeemedBy != nil {
+		return domain.Entitlement{}, domain.ErrConflict
+	}
+	id := userID
+	c.redeemedBy = &id
+	s.codes[string(h)] = c
+	e := domain.Entitlement{ID: uuid.New(), UserID: userID, Kind: "package", StartsAt: now, ExpiresAt: now.Add(time.Duration(c.batch.DurationDays) * 24 * time.Hour)}
+	s.entitlements = append(s.entitlements, e)
+	return e, nil
+}
+func (s *Memory) CreateTranslationSession(_ context.Context, v domain.TranslationSession) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.sessions[v.ID] = v
+	return nil
+}
+func (s *Memory) CreateUsageRecord(_ context.Context, p domain.CreateUsageParams) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	v, ok := s.sessions[p.SessionID]
+	if !ok || v.UserID != p.UserID {
+		return domain.ErrNotFound
+	}
+	return nil
+}
+func (s *Memory) CreateFeedbackConsent(_ context.Context, userID uuid.UUID, granted bool, now time.Time) (domain.FeedbackConsent, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	c := domain.FeedbackConsent{ID: uuid.New(), UserID: userID, Granted: granted, CreatedAt: now}
+	s.consents[c.ID] = c
+	return c, nil
+}
+func (s *Memory) CreateFeedbackArtifact(_ context.Context, p domain.CreateArtifactParams) (domain.FeedbackArtifact, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	c, ok := s.consents[p.ConsentID]
+	if !ok || c.UserID != p.UserID || !c.Granted {
+		return domain.FeedbackArtifact{}, domain.ErrForbidden
+	}
+	for _, a := range s.artifacts {
+		if a.ObjectKey == p.ObjectKey {
+			return domain.FeedbackArtifact{}, domain.ErrConflict
+		}
+	}
+	a := domain.FeedbackArtifact{ID: uuid.New(), UserID: p.UserID, ConsentID: p.ConsentID, ObjectKey: p.ObjectKey, ExpiresAt: p.ExpiresAt, CreatedAt: p.Now}
+	s.artifacts[a.ID] = a
+	return a, nil
+}
+func (s *Memory) FeedbackArtifact(_ context.Context, userID, id uuid.UUID) (domain.FeedbackArtifact, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	a, ok := s.artifacts[id]
+	if !ok || a.UserID != userID {
+		return a, domain.ErrNotFound
+	}
+	return a, nil
+}
+func (s *Memory) ListUsers(_ context.Context, limit, offset int) ([]domain.User, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := []domain.User{}
+	for _, v := range s.users {
+		out = append(out, v.user)
+	}
+	if offset >= len(out) {
+		return []domain.User{}, nil
+	}
+	out = out[offset:]
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
+}
+func (s *Memory) ListAuditLogs(_ context.Context, limit, offset int) ([]domain.AuditLog, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if offset >= len(s.audits) {
+		return []domain.AuditLog{}, nil
+	}
+	out := append([]domain.AuditLog(nil), s.audits[offset:]...)
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
+}
+func EqualHash(a, b []byte) bool { return bytes.Equal(a, b) }
