@@ -54,6 +54,6 @@ npm --prefix web run test
 python3 -m unittest discover -s scripts -p 'test_download_release.py'
 ```
 
-Agent 默认无 tag 构建使用安全占位客户端；Qwen 路径由运行配置选择。真实火山链路另需 `make officialast-check` 准备固定官方协议并检查 `officialast` 构建，不发起真实翻译。Cloud API 与授权契约是两个独立 Go 模块。真实数据库集成需要[专用隔离测试库](cloud-api/README.md)，未配置时的跳过不算通过；两份前端还各有 `typecheck`、`lint`、`build` 检查。详见[模块检查边界](docs/architecture/README.md#已有检查入口)。
+Agent 默认无 tag 构建使用安全占位客户端；Qwen 路径由运行配置选择。真实火山构建先执行 `bash scripts/prepare-official-ast.sh` 下载并核对固定官方协议，再执行 `bash scripts/check.sh officialast` 检查 `officialast` 构建，不发起真实翻译。`make officialast-check` 仅为后一步检查的别名，不会准备协议。Cloud API 与授权契约是两个独立 Go 模块。真实数据库集成需要[专用隔离测试库](cloud-api/README.md)，未配置时的跳过不算通过；两份前端还各有 `typecheck`、`lint`、`build` 检查。详见[模块检查边界](docs/architecture/README.md#已有检查入口)。
 
 Android 包名为 Debug `com.verba.interpretation.debug`、正式 `com.verba.interpretation`，两通道不能混同。安装验收同时记录源码提交、包名、版本、签名和 APK SHA-256；不要靠卸载或清数据掩盖覆盖安装问题。合入源码、部署服务和发布 APK 分别执行；本次导航整理不代表已部署或完成真机验收。

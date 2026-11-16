@@ -59,7 +59,7 @@ Agent 源码配置允许 `qwen` 与 `volcengine`，空配置默认火山；默�
 | Android | `(cd android && ./gradlew --no-daemon testDebugUnitTest lintDebug assembleDebug)` | JVM 单测、静态检查、Debug 构建；不证明真机音频、文件提供方或跨设备同步 |
 | Android 模拟器 | `(cd android && ./gradlew --no-daemon connectedDebugAndroidTest)`；[既有 motion workflow](../../.github/workflows/android-motion-regression.yml) | 仪器测试需要设备；workflow 仅显式筛选部分测试类，不等于所有设备场景 |
 | Agent 默认 | `(cd agent && go test ./... && go vet ./...)` | 默认测试与静态检查；不能代替真实火山构建或收费供应商调用 |
-| Agent 火山构建 | `make officialast-check`，定义见 [Makefile](../../Makefile) | 准备固定官方协议并 test/vet/build；需要网络及生成依赖，不发起真实翻译 |
+| Agent 火山构建 | 先 `bash scripts/prepare-official-ast.sh`，再 `bash scripts/check.sh officialast`；后一步可用 `make officialast-check`，定义见 [Makefile](../../Makefile) | 准备步骤联网下载并核对固定官方协议；检查步骤仅 test/vet/build，需要已生成依赖，不发起真实翻译 |
 | Cloud API | `(cd cloud-api && go test ./... && go vet ./...)` | 默认模块测试；不自动进入嵌套契约模块或带 tag 的数据库集成 |
 | Cloud → Agent 授权约定 | `(cd cloud-api/contracttest && go test ./... && go vet ./...)` | 独立模块验证签发与消费约定；不是 Android → 生产供应商的端到端验证 |
 | 专用 PostgreSQL 集成 | 配置[专用隔离库](../../cloud-api/README.md)后，`(cd cloud-api && go test -tags=integration -count=1 -v ./integration)` | 必须检查实际执行与 skip；跨进程 Agent harness 不是真实供应商或 Android 端到端 |
