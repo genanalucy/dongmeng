@@ -53,6 +53,13 @@ bash scripts/deploy-download-release.sh <new-bundle-directory>
 - APK与网页/两OTA已通过统一发布工具切换到快照`downloads-20261113T104226Z-1445042`；两APK完整公网下载SHA匹配，正式公网OTA21/测试OTA27核对通过。新下载URL使用`https://yszn.nlplayer.org/downloads/`，旧sslip文件和链接继续保留。
 - 仅改名，不换域名、不变包、不把Debug界面功能带入正式。用户旧版首次安装仍显示旧名，覆盖升级后才显示新名。源码签名配置、私钥和APK构建产物未入Git。
 
+## Debug v29静音空白气泡修复（2026-11-16）
+
+- 用户确认参考11月独立工作台之前v25的无空泡体验，不回滚整套UI。实现`51a7670`，Debug29/`20261116.2307`；无原译文不渲染气泡，输入仍finish等待迟到字幕；Finished且播放drain后才移除纯空结果。保留translation-only/source-only内容、不删除新一轮。v28短句松手/连续修复保持。
+- 新增显示映射与VM静音结束清理回归均先red后green，另覆盖旧空句结束不删新句及单边文字保留。408单测通过，lint无error（48warning），Debug和AndroidTest构建成功。云端Android CI`43893327120`、模拟器UI回归`43893327143`成功。无新增收费语音请求，未做真机安装或声音验收。
+- 原Debug包名证书不变，APK SHA256 `0068e8d967f878952b03e5a194f7a7323d4f8ab843bf19e472e1c8e0b92db7cb`，GitHub tag `android-debug-yilu-20261116-v29`固定实现提交。正式21APK直接复用，未重建未改清单production项。
+- 统一工具切换快照`downloads-20261116T151732Z-3411128`，双APK公网完整下载hash、网站清单/页面、两OTA对照bundle成功；独立检查正式公网OTA仍21、Debug29及hash，下载页/Agent/Cloud/admin均200。4项发布脚本测试及shell语法检查通过。后台模型保持Qwen3.8。
+
 ## Debug v28输入与连续模式修复（2026-11-15）
 
 - 实现`064b789`，Debug28/`20261115.2103`，固定原Debug包名及证书。正式21/`20261113.1836`整个清单及APK保持不变。
