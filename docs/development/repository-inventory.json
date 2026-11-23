@@ -1,0 +1,434 @@
+{
+  "date": "2026-11-23",
+  "repository": "genanalucy/dongmeng",
+  "base_main": "f26d6902fc8586a89d5b6bb8f7e4bda90ab1b334",
+  "pr_relationship": {
+    "pr_1_head": "dc587eff340abe4b8d59a6667e2fc34c81e30e0a",
+    "pr_1_ahead_of_main": 35,
+    "pr_2_head": "23a7346bb2e5c9363e474ab1028aaf2d79548df8",
+    "pr_2_ahead_of_main": 71,
+    "pr_2_contains_pr_1": true,
+    "pr_2_additional_commits_after_pr_1": 36
+  },
+  "branches": [
+    {
+      "name": "android",
+      "sha": "0fc66d029e9d0729cbaebd96f4ab25673c47e24b",
+      "relative_to_main": {
+        "ahead": 22,
+        "behind": 261
+      },
+      "included_in": {
+        "main": false,
+        "pr_1": false,
+        "pr_2": false
+      },
+      "other_remote_branches_containing_tip": [
+        "android-cloud-auth"
+      ],
+      "commits_not_in_any_other_current_remote_branch": 0,
+      "recommendation": "保留待语义评审"
+    },
+    {
+      "name": "android-cloud-auth",
+      "sha": "35445f18f743752310e595df6378d433ec7c7fd1",
+      "relative_to_main": {
+        "ahead": 29,
+        "behind": 261
+      },
+      "included_in": {
+        "main": false,
+        "pr_1": false,
+        "pr_2": false
+      },
+      "other_remote_branches_containing_tip": [],
+      "commits_not_in_any_other_current_remote_branch": 7,
+      "recommendation": "保留待语义评审"
+    },
+    {
+      "name": "android-ui-redesign",
+      "sha": "a32f2159ed1ec5fcd6009e3c7489b79cb012e7b2",
+      "relative_to_main": {
+        "ahead": 12,
+        "behind": 25
+      },
+      "included_in": {
+        "main": false,
+        "pr_1": false,
+        "pr_2": false
+      },
+      "other_remote_branches_containing_tip": [
+        "baseline/20261104/azure-experiments",
+        "baseline/20261104/legacy-remote-ui"
+      ],
+      "commits_not_in_any_other_current_remote_branch": 0,
+      "recommendation": "可退役候选，需单独决定"
+    },
+    {
+      "name": "baseline/20261104/android-integration",
+      "sha": "8e625a67ebcffe0a5776228f5ac4ba907f05391a",
+      "relative_to_main": {
+        "ahead": 0,
+        "behind": 13
+      },
+      "included_in": {
+        "main": true,
+        "pr_1": true,
+        "pr_2": true
+      },
+      "other_remote_branches_containing_tip": [
+        "chore/repo-organization",
+        "main",
+        "test/android-phase1-baseline"
+      ],
+      "commits_not_in_any_other_current_remote_branch": 0,
+      "recommendation": "保留来源快照"
+    },
+    {
+      "name": "baseline/20261104/azure-experiments",
+      "sha": "aeec6aa3b8b55dffaf91b752dbbb24c2ee224f16",
+      "relative_to_main": {
+        "ahead": 16,
+        "behind": 25
+      },
+      "included_in": {
+        "main": false,
+        "pr_1": false,
+        "pr_2": false
+      },
+      "other_remote_branches_containing_tip": [],
+      "commits_not_in_any_other_current_remote_branch": 4,
+      "recommendation": "保留待语义评审"
+    },
+    {
+      "name": "baseline/20261104/legacy-remote-ui",
+      "sha": "a32f2159ed1ec5fcd6009e3c7489b79cb012e7b2",
+      "relative_to_main": {
+        "ahead": 12,
+        "behind": 25
+      },
+      "included_in": {
+        "main": false,
+        "pr_1": false,
+        "pr_2": false
+      },
+      "other_remote_branches_containing_tip": [
+        "android-ui-redesign",
+        "baseline/20261104/azure-experiments"
+      ],
+      "commits_not_in_any_other_current_remote_branch": 0,
+      "recommendation": "保留来源快照"
+    },
+    {
+      "name": "baseline/20261104/local-main",
+      "sha": "bec885983928973849757f5d31df38b903b116a8",
+      "relative_to_main": {
+        "ahead": 0,
+        "behind": 227
+      },
+      "included_in": {
+        "main": true,
+        "pr_1": true,
+        "pr_2": true
+      },
+      "other_remote_branches_containing_tip": [
+        "chore/repo-organization",
+        "main",
+        "test/android-phase1-baseline"
+      ],
+      "commits_not_in_any_other_current_remote_branch": 0,
+      "recommendation": "保留来源快照"
+    },
+    {
+      "name": "baseline/20261104/remote-main",
+      "sha": "3ca49501390eefdcefb47e6da0f0fe271b1f993a",
+      "relative_to_main": {
+        "ahead": 0,
+        "behind": 244
+      },
+      "included_in": {
+        "main": true,
+        "pr_1": true,
+        "pr_2": true
+      },
+      "other_remote_branches_containing_tip": [
+        "android-ui-redesign",
+        "baseline/20261104/android-integration",
+        "baseline/20261104/azure-experiments",
+        "baseline/20261104/legacy-remote-ui",
+        "baseline/20261104/local-main",
+        "chore/repo-organization",
+        "internal-beta-integration",
+        "main",
+        "release/yilu-production-v21",
+        "test/android-phase1-baseline"
+      ],
+      "commits_not_in_any_other_current_remote_branch": 0,
+      "recommendation": "可退役候选，需单独决定"
+    },
+    {
+      "name": "chore/repo-organization",
+      "sha": "23a7346bb2e5c9363e474ab1028aaf2d79548df8",
+      "relative_to_main": {
+        "ahead": 71,
+        "behind": 0
+      },
+      "included_in": {
+        "main": false,
+        "pr_1": false,
+        "pr_2": true
+      },
+      "other_remote_branches_containing_tip": [],
+      "commits_not_in_any_other_current_remote_branch": 36,
+      "recommendation": "保留"
+    },
+    {
+      "name": "internal-beta-integration",
+      "sha": "4e01129e29c0c6b3b53a11f7e240b6d63bfb20d5",
+      "relative_to_main": {
+        "ahead": 0,
+        "behind": 210
+      },
+      "included_in": {
+        "main": true,
+        "pr_1": true,
+        "pr_2": true
+      },
+      "other_remote_branches_containing_tip": [
+        "android-ui-redesign",
+        "baseline/20261104/android-integration",
+        "baseline/20261104/azure-experiments",
+        "baseline/20261104/legacy-remote-ui",
+        "chore/repo-organization",
+        "main",
+        "release/yilu-production-v21",
+        "test/android-phase1-baseline"
+      ],
+      "commits_not_in_any_other_current_remote_branch": 0,
+      "recommendation": "可退役候选，需单独决定"
+    },
+    {
+      "name": "main",
+      "sha": "f26d6902fc8586a89d5b6bb8f7e4bda90ab1b334",
+      "relative_to_main": {
+        "ahead": 0,
+        "behind": 0
+      },
+      "included_in": {
+        "main": true,
+        "pr_1": true,
+        "pr_2": true
+      },
+      "other_remote_branches_containing_tip": [
+        "chore/repo-organization",
+        "test/android-phase1-baseline"
+      ],
+      "commits_not_in_any_other_current_remote_branch": 0,
+      "recommendation": "保留"
+    },
+    {
+      "name": "release/yilu-production-v21",
+      "sha": "20da583d39eb39d47e2ad104143f4ab185317b1a",
+      "relative_to_main": {
+        "ahead": 1,
+        "behind": 16
+      },
+      "included_in": {
+        "main": false,
+        "pr_1": false,
+        "pr_2": false
+      },
+      "other_remote_branches_containing_tip": [],
+      "commits_not_in_any_other_current_remote_branch": 1,
+      "recommendation": "保留"
+    },
+    {
+      "name": "test/android-phase1-baseline",
+      "sha": "dc587eff340abe4b8d59a6667e2fc34c81e30e0a",
+      "relative_to_main": {
+        "ahead": 35,
+        "behind": 0
+      },
+      "included_in": {
+        "main": false,
+        "pr_1": true,
+        "pr_2": true
+      },
+      "other_remote_branches_containing_tip": [
+        "chore/repo-organization"
+      ],
+      "commits_not_in_any_other_current_remote_branch": 0,
+      "recommendation": "保留"
+    }
+  ],
+  "releases": [
+    {
+      "tag": "android-debug-yilu-20261117-v30",
+      "name": "译路随行 Debug v30 · 当前会话导出与可靠保存",
+      "classification": "预发布",
+      "published_at": "2026-11-16T19:52:56Z",
+      "url": "https://github.com/genanalucy/dongmeng/releases/tag/android-debug-yilu-20261117-v30"
+    },
+    {
+      "tag": "android-debug-yilu-20261116-v29",
+      "name": "译路随行 Debug v29 · 修复静音空白气泡",
+      "classification": "预发布",
+      "published_at": "2026-11-16T15:17:32Z",
+      "url": "https://github.com/genanalucy/dongmeng/releases/tag/android-debug-yilu-20261116-v29"
+    },
+    {
+      "tag": "android-debug-yilu-20261115-v28",
+      "name": "译路随行 Debug v28 · 修复松手与连续翻译",
+      "classification": "预发布",
+      "published_at": "2026-11-15T13:12:48Z",
+      "url": "https://github.com/genanalucy/dongmeng/releases/tag/android-debug-yilu-20261115-v28"
+    },
+    {
+      "tag": "android-debug-yilu-20261113-v27",
+      "name": "译路随行 测试版 v27",
+      "classification": "预发布",
+      "published_at": "2026-11-13T10:41:47Z",
+      "url": "https://github.com/genanalucy/dongmeng/releases/tag/android-debug-yilu-20261113-v27"
+    },
+    {
+      "tag": "android-production-yilu-20261113-v21",
+      "name": "译路随行 正式版 v21",
+      "classification": "正式发布",
+      "published_at": "2026-11-13T10:41:24Z",
+      "url": "https://github.com/genanalucy/dongmeng/releases/tag/android-production-yilu-20261113-v21"
+    },
+    {
+      "tag": "android-debug-workbench-20261110-v26",
+      "name": "Android Debug v26 — Focused Translation Workbench",
+      "classification": "预发布",
+      "published_at": "2026-11-10T11:50:35Z",
+      "url": "https://github.com/genanalucy/dongmeng/releases/tag/android-debug-workbench-20261110-v26"
+    },
+    {
+      "tag": "android-debug-guidance-20261110-v25",
+      "name": "Android Debug v25 — Translation Controls and Guidance",
+      "classification": "预发布",
+      "published_at": "2026-11-10T06:28:30Z",
+      "url": "https://github.com/genanalucy/dongmeng/releases/tag/android-debug-guidance-20261110-v25"
+    },
+    {
+      "tag": "android-debug-update-progress-20261105-v24",
+      "name": "Android Debug v24 — Manual Update Progress Fix",
+      "classification": "预发布",
+      "published_at": "2026-11-04T19:16:15Z",
+      "url": "https://github.com/genanalucy/dongmeng/releases/tag/android-debug-update-progress-20261105-v24"
+    },
+    {
+      "tag": "android-debug-nav-corners-20261105-v23",
+      "name": "Android Debug v23 — Rounded Navigation Feedback",
+      "classification": "预发布",
+      "published_at": "2026-11-04T18:24:18Z",
+      "url": "https://github.com/genanalucy/dongmeng/releases/tag/android-debug-nav-corners-20261105-v23"
+    },
+    {
+      "tag": "android-debug-visual-trial-20261105-v22",
+      "name": "Android Debug v22 — Refined UI Trial",
+      "classification": "预发布",
+      "published_at": "2026-11-04T16:44:50Z",
+      "url": "https://github.com/genanalucy/dongmeng/releases/tag/android-debug-visual-trial-20261105-v22"
+    },
+    {
+      "tag": "android-debug-internal-beta-20260915-0225",
+      "name": "Android Debug Internal Beta 20260915.0225",
+      "classification": "预发布",
+      "published_at": "2026-09-20T06:40:34Z",
+      "url": "https://github.com/genanalucy/dongmeng/releases/tag/android-debug-internal-beta-20260915-0225"
+    },
+    {
+      "tag": "android-debug-internal-beta-20260920-liquid-glass",
+      "name": "Android Debug Internal Beta 20260920 Liquid Glass",
+      "classification": "预发布",
+      "published_at": "2026-09-20T06:17:17Z",
+      "url": "https://github.com/genanalucy/dongmeng/releases/tag/android-debug-internal-beta-20260920-liquid-glass"
+    },
+    {
+      "tag": "android-production-20260915-v20",
+      "name": "言枢智能翻译 20260915 v20",
+      "classification": "正式发布",
+      "published_at": "2026-09-14T18:37:54Z",
+      "url": "https://github.com/genanalucy/dongmeng/releases/tag/android-production-20260915-v20"
+    },
+    {
+      "tag": "android-debug-internal-beta-20260914-log-export",
+      "name": "Android Debug Internal Beta 20260914 Log Export",
+      "classification": "预发布",
+      "published_at": "2026-09-13T16:54:27Z",
+      "url": "https://github.com/genanalucy/dongmeng/releases/tag/android-debug-internal-beta-20260914-log-export"
+    },
+    {
+      "tag": "android-debug-internal-beta-20260913-diagnostic-log",
+      "name": "Android Debug Internal Beta 20260913 Diagnostic Log",
+      "classification": "预发布",
+      "published_at": "2026-09-13T15:44:25Z",
+      "url": "https://github.com/genanalucy/dongmeng/releases/tag/android-debug-internal-beta-20260913-diagnostic-log"
+    },
+    {
+      "tag": "android-debug-internal-beta-20260913-auto-mode-ui",
+      "name": "Android Debug Internal Beta 20260913 Auto Mode UI",
+      "classification": "预发布",
+      "published_at": "2026-09-13T15:29:43Z",
+      "url": "https://github.com/genanalucy/dongmeng/releases/tag/android-debug-internal-beta-20260913-auto-mode-ui"
+    },
+    {
+      "tag": "android-debug-internal-beta-20260913-auto-json",
+      "name": "Android Debug Internal Beta 20260913 Auto JSON",
+      "classification": "预发布",
+      "published_at": "2026-09-13T14:26:38Z",
+      "url": "https://github.com/genanalucy/dongmeng/releases/tag/android-debug-internal-beta-20260913-auto-json"
+    },
+    {
+      "tag": "android-production-20260913-72e8f75",
+      "name": "言枢智能翻译 20260913.2030",
+      "classification": "正式发布",
+      "published_at": "2026-09-13T12:31:24Z",
+      "url": "https://github.com/genanalucy/dongmeng/releases/tag/android-production-20260913-72e8f75"
+    },
+    {
+      "tag": "android-debug-internal-beta-20260912-stability",
+      "name": "Android Debug Internal Beta 20260912 Stability",
+      "classification": "预发布",
+      "published_at": "2026-09-12T07:37:28Z",
+      "url": "https://github.com/genanalucy/dongmeng/releases/tag/android-debug-internal-beta-20260912-stability"
+    },
+    {
+      "tag": "android-debug-internal-beta-20260912-auto-entry",
+      "name": "Android Debug Internal Beta 20260912 Auto Entry",
+      "classification": "预发布",
+      "published_at": "2026-09-12T07:05:38Z",
+      "url": "https://github.com/genanalucy/dongmeng/releases/tag/android-debug-internal-beta-20260912-auto-entry"
+    },
+    {
+      "tag": "android-debug-internal-beta-20260912-continuous-auto",
+      "name": "Android Debug Internal Beta 20260912 Continuous Auto",
+      "classification": "预发布",
+      "published_at": "2026-09-12T06:47:48Z",
+      "url": "https://github.com/genanalucy/dongmeng/releases/tag/android-debug-internal-beta-20260912-continuous-auto"
+    },
+    {
+      "tag": "android-debug-internal-beta-20260911-azure",
+      "name": "Android Debug Internal Beta 20260911.0502",
+      "classification": "预发布",
+      "published_at": "2026-09-11T06:23:16Z",
+      "url": "https://github.com/genanalucy/dongmeng/releases/tag/android-debug-internal-beta-20260911-azure"
+    },
+    {
+      "tag": "android-debug-internal-beta-20260910-3b6fb7c",
+      "name": "Android Debug Internal Beta 20260911.0154",
+      "classification": "预发布",
+      "published_at": "2026-09-10T17:55:09Z",
+      "url": "https://github.com/genanalucy/dongmeng/releases/tag/android-debug-internal-beta-20260910-3b6fb7c"
+    },
+    {
+      "tag": "android-production-20260910-3002067",
+      "name": "言枢智能翻译 20260910.0312",
+      "classification": "正式发布",
+      "published_at": "2026-09-09T19:14:39Z",
+      "url": "https://github.com/genanalucy/dongmeng/releases/tag/android-production-20260910-3002067"
+    }
+  ]
+}
