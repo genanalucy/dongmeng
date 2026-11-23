@@ -10,11 +10,14 @@
 
 1. 打开「对话」，分别选择双方使用的语言。客户端提供中文、英语、法语和越南语，两侧须选择不同语言。[语言选项](../android/app/src/main/java/com/verba/interpretation/ui/LanguageConfig.kt)
 2. 在默认的「按住说话模式」中，按住自己语言一侧的麦克风，说完一句后松手。对方用另一侧麦克风回答。屏幕按轮次显示原文和译文，服务返回译音后由手机播放。
-3. 两个人共看一块屏幕时，可点「视图」切换「对话视图」或「面对面视图」。需要连续收音时，在空闲状态打开右上角更多菜单，选择「连续翻译模式」。两支麦克风中间的按钮用于开始、暂停和继续，更多菜单中可结束连续翻译。[面对面界面](../android/app/src/main/java/com/verba/interpretation/ui/facetoface/FaceToFaceScreen.kt) · [模式菜单](../android/app/src/main/java/com/verba/interpretation/ui/facetoface/FaceToFaceOverflowMenu.kt)
+3. 两个人共看一块屏幕时，可点「视图」切换「对话视图」或「面对面视图」。需要连续收音时，在空闲状态打开右上角更多菜单，选择「连续翻译模式」。
+4. 点带 **L** 标记的麦克风开始收音，再点一次暂停，暂停后点同一支麦克风继续。它在「对话视图」的左侧，在「面对面视图」的近端。收音或暂停时，从更多菜单选择「结束连续翻译」。只有 Debug 包的双麦「对话视图」额外提供居中的开始、暂停和继续按钮。[麦克风控件](../android/app/src/main/java/com/verba/interpretation/ui/facetoface/EarMicControls.kt) · [视图布局](../android/app/src/main/java/com/verba/interpretation/ui/facetoface/FaceToFaceScreen.kt) · [模式菜单](../android/app/src/main/java/com/verba/interpretation/ui/facetoface/FaceToFaceOverflowMenu.kt)
 
 ## 听一个人连续发言
 
-打开「同传」，选好发言语言和译入语言，点「开始」。发言时可对照原文和译文；中途休息点「暂停」，再点「继续」恢复收音。发言结束后点结束按钮，等待剩余字幕处理完成。下次开始前可用两种语言之间的交换按钮反转方向。[同传界面](../android/app/src/main/java/com/verba/interpretation/ui/interpretation/InterpretationScreen.kt)
+打开「同传」，选好发言语言和译入语言，点「开始」。发言时可对照原文和译文；中途休息点「暂停」，再点「继续」恢复收音。发言结束后点结束按钮，等待剩余字幕处理完成。
+
+会话回到空闲状态后，正式包可用两个语言选择器反转方向。每个菜单都会排除另一侧已选的语言。例如，要把「中文 → 英语」改为「英语 → 中文」，先把左侧发言语言改为法语，再把右侧译入语言改为中文，最后把左侧改为英语。只有 Debug 包在两个选择器之间提供一键交换按钮。[同传语言栏](../android/app/src/main/java/com/verba/interpretation/ui/interpretation/InterpretationScreen.kt)
 
 ## 找回记录、分享和检查更新
 
