@@ -1,5 +1,10 @@
 # 项目文档导航
 
+## 使用 Android 应用
+
+- [功能与使用指南](android-features.md)涵盖登录、面对面对话、同传和历史记录。
+- [手动测试与反馈](testing/README.md)提供对话文案、翻译质量表和可打印的 PDF。
+
 ## 理解与开发
 
 - [项目结构与模块职责](architecture.md)：Android、Cloud、翻译服务、管理后台和 Web 的关系。
@@ -7,7 +12,6 @@
 - [GitHub 仓库与版本状态](development/repository-status.md)：分支、PR、Release 及待收口项目。
 - [Android 工程说明](../android/README.md)。
 - [Web 与 Agent 本地开发](development/web-prototype.md)：辅助原型、火山 AST 准备和本地排障。
-- [测试材料](../translation-test-kit/README.md)：多语言场景、质量和反馈表。
 
 ## 接口、部署与运维
 

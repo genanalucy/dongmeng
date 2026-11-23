@@ -39,7 +39,7 @@ adb -s <serial> shell dumpsys package com.verba.interpretation.debug
 | 范围 | 在仓库根目录执行 | 验证边界 |
 |---|---|---|
 | Android | 进入 `android/` 执行上述 Gradle 命令 | 单测、lint、编译；不代表真机音频通过 |
-| Agent | `(cd agent && go test ./... && go vet ./...)` | 默认安全构建，不调用真实翻译 |
+| Agent | `(cd agent && go test ./... && go vet ./...)` | 默认构建的单测与静态检查 |
 | 火山 AST 构建 | `make officialast-check` | 下载并校验官方附件、生成本地协议代码、测试/vet/构建；不进行翻译请求 |
 | Cloud API | `(cd cloud-api && go test ./... && go vet ./...)` | 未配置隔离数据库时不覆盖真实 PostgreSQL 集成 |
 | Web | `npm --prefix web ci` 后执行 `test`、`typecheck`、`lint`、`build` | 本地辅助原型 |
@@ -57,6 +57,6 @@ CI 定义见 [Android CI](../../.github/workflows/android-ci.yml)，目前只覆
 - 正式包：`com.verba.interpretation`。
 - 当前默认端点来自 [构建配置](../../android/app/build.gradle.kts)；App 的本地设置可能覆盖默认值。
 - 历史包校验值及标签/源码错位说明见 [2026-11-04 基线归档](../../archive/documents/2026-11-04-development-baseline.md)。保留原标签和附件，不将重新构建的包冒充原二进制。
-- 手动操作与结果使用[测试材料](../../translation-test-kit/README.md)记录。
+- 手动操作与结果使用[测试材料](../testing/README.md)记录。
 
 既有 v30 真机验收、长时间翻译和并发验证仍未完成。本轮目录整理不改变这些结论。
