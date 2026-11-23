@@ -15,6 +15,6 @@
 - [早期 Android 工程说明](documents/android-initial-guide.md)、[早期内测安装说明](documents/internal-beta-update-guide.md)。
 - [Web/macOS 原型规格](documents/web-macos-translation-app-spec.md)：保留产品和音频协议知识，去掉面向编码代理的措辞。
 
-共 47 份项目资料移入本目录；另外两份原根目录对话测试文案移入[测试材料](../translation-test-kit/README.md)。逐文件来源见[迁移索引](source-index.md)。
+共 47 份项目资料移入本目录；另外两份原根目录对话测试文案现位于[测试材料](../docs/testing/README.md)。逐文件来源见[迁移索引](source-index.md)。
 
 历史正文中的命令、绝对路径和“当前”是当时的记录。保留这些文字便于追溯；实际 Markdown 导航已调整到新位置。

@@ -27,8 +27,8 @@
 | `.superpowers/sdd/2026-09-02-email-verification-registration/task-7-fix-round-4-report.md` | [查看](../archive/documents/implementation-reports/2026-09-02-email-verification-registration/task-7-fix-round-4-report.md) |
 | `.superpowers/sdd/2026-09-02-email-verification-registration/task-7-report.md` | [查看](../archive/documents/implementation-reports/2026-09-02-email-verification-registration/task-7-report.md) |
 | `android/README.md` | [查看](../archive/documents/android-initial-guide.md) |
-| `dialogue-translation-test-scenarios.md` | [查看](../translation-test-kit/dialogue-translation-test-scenarios.md) |
-| `dialogue-translation-test-scenarios.pdf` | [查看](../translation-test-kit/dialogue-translation-test-scenarios.pdf) |
+| `dialogue-translation-test-scenarios.md` | [查看](../docs/testing/dialogue-translation-test-scenarios.md) |
+| `dialogue-translation-test-scenarios.pdf` | [查看](../docs/testing/dialogue-translation-test-scenarios.pdf) |
 | `docs/development/baselines.md` | [查看](../archive/documents/2026-11-04-development-baseline.md) |
 | `docs/internal-beta-update-guide.md` | [查看](../archive/documents/internal-beta-update-guide.md) |
 | `docs/reviews/android-account-redesign-design.md` | [查看](../archive/documents/reviews/android-account-redesign-design.md) |

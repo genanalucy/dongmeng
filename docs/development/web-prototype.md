@@ -4,7 +4,7 @@
 
 这是一个本机回环部署的面对面翻译原型：Web 负责设备选择、麦克风采集、手动半双工 PTT、自动交替录音与左右声道播放；Go Agent 提供 `127.0.0.1:18765` 上的 health 和 WebSocket 边界。浏览器开发服务器默认在 `http://127.0.0.1:5173`，并将 `/api`、`/ws` 代理至 Agent。
 
-> **构建模式**：默认 Go 构建不依赖本地官方 protobuf，并安全返回 `AST_CODEC_UNAVAILABLE`；使用 `officialast` build tag 的构建会启用真实火山引擎 AST 2.0 WebSocket、字幕与 PCM TTS 链路。官方生成代码不纳入 Git，须先运行固定 URL 与 SHA256 校验的准备脚本。
+当前 Agent 在默认构建和 `officialast` 构建中都把翻译会话交给 Qwen。会话需要在服务端配置 `DASHSCOPE_API_KEY` 和 `QWEN_API_HOST`（仅主机名）。`officialast` 标签用于编译仓库保留的火山 AST 实现。[Agent 入口](../../agent/cmd/translator-agent/main.go) · [供应商路由](../../agent/internal/ast/qwen.go)
 
 ## 环境要求
 
@@ -22,7 +22,7 @@ npm --prefix web ci
 
 ## 凭据脚本与本地环境
 
-不要手工复制、粘贴或提交凭据。使用交互式脚本创建仅本机可读的 `agent/.env.local`：
+本地翻译联调时，在启动 Agent 的环境中提供上述两个 Qwen 变量。若要验证火山 AST 客户端，可使用交互式脚本配置其凭据：
 
 ```bash
 ./scripts/setup-volcengine-env.sh
@@ -34,7 +34,7 @@ npm --prefix web ci
 - 旧版：`VOLCENGINE_APP_ID` 和 `VOLCENGINE_ACCESS_TOKEN`（可选 `VOLCENGINE_SECRET_KEY`）；
 - 可选：`VOLCENGINE_RESOURCE_ID`，未设置时使用 `volc.service_type.10053`。
 
-`make dev` 与 `scripts/smoke-local.sh` 会在该文件存在时静默加载它，不会输出其中任何变量或值。两者会自动准备经过固定 SHA256 校验的官方生成代码，并使用 `officialast` build tag 启动真实 AST 客户端。
+`make dev` 与 `scripts/smoke-local.sh` 会在该文件存在时静默加载它。两者会准备经过 SHA256 校验的官方生成代码，并使用 `officialast` 标签构建 Agent。
 
 ## 启动 Agent 与 Web
 
@@ -57,14 +57,10 @@ make dev
 
 ### 分开启动（排障用）
 
-终端一，加载本地环境后启动 Agent：
+终端一，配置好 Qwen 环境变量后启动 Agent：
 
 ```bash
-set -a
-source agent/.env.local
-set +a
-make prepare-official-ast
-(cd agent && go run -tags officialast ./cmd/translator-agent)
+(cd agent && go run ./cmd/translator-agent)
 ```
 
 终端二启动 Web：
@@ -73,7 +69,7 @@ make prepare-official-ast
 npm --prefix web run dev
 ```
 
-### 启用真实 AST 客户端
+### 验证火山 AST 客户端构建
 
 先下载并校验官方 Go Demo，再从归档中仅抽取非 gRPC `pb.go`，机械重写 Go import 到本模块：
 
@@ -142,13 +138,7 @@ curl --fail http://127.0.0.1:18765/api/health
 
 面对面页面提供两种录音控制。**手动 PTT** 保持严格半双工：一侧按住说话时另一侧不可开始，直到翻译和播放结束。**自动交替** 点击开始后默认持续录制左耳侧；右耳用户按住右侧按钮可立即抢话，松开后立即恢复左侧录音。自动模式始终只有一侧麦克风采集，但上一 Turn 的翻译和 TTS 可与下一 Turn 录音并行；多个 TTS Turn 按创建顺序播放，避免中英文 PCM 交错。点击“停止连续录音”只停止采集和自动重启，已说完的后台 Turn 仍会完成翻译与播放；离页、设备断开或全局错误则取消全部后台 Turn。
 
-当前固定语言为中文 ↔ English；说话者耳静音，译文目标为对方耳。使用 tagged 构建时，Agent 发送官方 protobuf `StartSession`、`TaskRequest`、`FinishSession`，等待 `SessionStarted` 后才向 Browser 报 `ready`，并将字幕映射成 JSON、将 TTS PCM 作为二进制 WebSocket 消息发送。火山的 `TTSSentenceStart` / `TTSSentenceEnd` 只在 Agent 内部消费，不进入 Browser 协议；零 TTS 和多分句 TTS 均由同一套 `ready → PCM* → finished` 生命周期处理。
-
-## `AST_CODEC_UNAVAILABLE` 的含义
-
-这不是凭据泄露、麦克风权限、TWS 连接或 Vite 代理错误。它仅表示当前运行的是**默认无 tag 构建**：`ast.NewConfiguredClient` 在 `!officialast` 下返回安全的 `UnavailableClient`，使默认测试和构建不需要本地官方生成代码，也不会错误声明服务已就绪。
-
-需要真实翻译时，先执行 `make prepare-official-ast`，再使用 `-tags officialast` 构建或运行。真实客户端通过 `github.com/coder/websocket` 的自定义 `HTTPHeader` 发送新版 API Key 或旧版 App ID/Access Token，并保留握手响应的 `X-Tt-Logid` 用于事件和错误排查；日志与浏览器事件都不会包含凭据。
+Web 原型使用中文 ↔ English；说话者耳静音，译音送到对方耳。Agent 将字幕映射成 JSON 事件，将 TTS PCM 作为二进制 WebSocket 消息发送。
 
 ## Web 品牌与字幕体验
 
@@ -204,12 +194,12 @@ EC2 上的 Cloud API 邮箱验证码注册通过本机 Postfix 提交；Postfix 
 | 现象 | 检查与处理 |
 | --- | --- |
 | `make: command not found` | 安装 GNU Make，或直接运行 `./scripts/dev.sh`、`./scripts/smoke-local.sh` 和 README 中的底层命令。 |
-| Agent 启动即报 `INVALID_CONFIGURATION` | 运行 `./scripts/setup-volcengine-env.sh`，确保只配置 API Key 或完整的 APP ID + Access Token，不混用；不要在终端打印或提交 `.env.local`。 |
+| Agent 启动即报 `INVALID_CONFIGURATION` | 检查启动进程是否同时获得两个 Qwen 配置变量。若也设置了火山凭据，请检查 API Key 与旧版 App ID/Access Token 是否混用。 |
 | Agent 无法绑定 / Web health 为 offline | 检查 `127.0.0.1:18765` 是否被占用；停止旧 Agent 后运行 `make dev`，在页面点击“手动检测”。 |
 | 浏览器访问失败或 Vite 启动失败 | 检查 `5173` 端口及 `npm --prefix web ci` 是否完成；必要时运行 `npm --prefix web run dev` 查看 Vite 错误。 |
 | 麦克风下拉为空/权限被拒 | 按 [macOS + Chrome 麦克风权限](#macos--chrome-麦克风权限) 重新授权，然后刷新设备。 |
 | TWS 未显示或播放无声 | 在 macOS 蓝牙中重新连接；刷新设备并重新选择输出。没有页面内输出选择时，在系统声音设置中设为默认输出。 |
 | 左右耳测试失败或声道不对 | 先确认目标 TWS 已选中、音量非零和系统声道平衡；重新选择输出并测试。若设备/浏览器不支持单独输出选择，使用系统默认输出。 |
 | Local 模式显示 Agent 离线 | 运行 `make dev` 或单独启动 Agent，访问 health URL 后在页面点“手动检测”；确认页面使用 `127.0.0.1:5173` 或 `localhost:5173`。 |
-| Local 模式报 `AST_CODEC_UNAVAILABLE` | 当前运行的是默认无 tag 构建；执行 `make prepare-official-ast`，再用 `-tags officialast` 构建并启动 Agent。 |
+| 开始会话时报 `QWEN_CONFIGURATION_MISSING` | Qwen 客户端缺少 API Key 或主机名。核对 Agent 运行环境后重新启动。 |
 | smoke 失败但单元测试通过 | 确认 `curl`、`python3`、可用端口和 Node/Go 依赖；脚本会清理临时进程，可在修正环境后重试。 |

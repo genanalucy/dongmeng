@@ -2,6 +2,8 @@
 
 项目主产品，原生 Kotlin + Jetpack Compose 单 Activity，包含收音/播放、单人同传、面对面翻译、Cloud 账户和历史功能。模块关系见[项目架构](../docs/architecture.md)，版本与候选功能见[仓库状态](../docs/development/repository-status.md)。
 
+登录、两种工作台的操作步骤和真机预期结果见 [Android 功能与使用指南](../docs/android-features.md)。
+
 ## Mac 开发
 
 1. 用 Android Studio 打开本目录，安装 SDK Platform 36、Build Tools 36.0.0。
@@ -32,6 +34,6 @@ WebSocket 使用相应主机的 `/ws/translate`。这些是[当前 main 构建�
 真机验证包括两种翻译模式、开始/停止、暂停/恢复、方向切换、字幕配对、尾音播放、耳机声道、断网与返回页面。单测通过不能替代这些操作；当前 v30 尚待维护者验收。
 
 - [安装、哈希与测试包识别](../docs/development/baselines.md)
-- [质量检查与反馈材料](../translation-test-kit/README.md)
+- [质量检查与反馈材料](../docs/testing/README.md)
 - [OTA 发布](../docs/deployment/app-ota-update.md)
 - [早期 Android 说明归档](../archive/documents/android-initial-guide.md)：保留原始验证步骤，内含旧端点和旧 UI 行为，不能直接当作当前验收规格。
